@@ -1,0 +1,15 @@
+# ---------------------------------------------------------------------------
+# BrewFlow POS — Drift code generation configuration
+# ---------------------------------------------------------------------------
+# store_date_time_values_as_text: stores DateTime columns as ISO-8601 TEXT
+# instead of unix integers. Preserves sub-second precision and keeps
+# lexicographic ordering equal to chronological ordering — required for
+# future sync conflict handling.
+# ---------------------------------------------------------------------------
+
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          store_date_time_values_as_text: true

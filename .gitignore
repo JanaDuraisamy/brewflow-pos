@@ -1,0 +1,18 @@
+# BrewFlow root .gitignore
+# Real environment values must never be committed.
+# Only the template (.env.example) is tracked.
+.env
+.env.*
+!.env.example
+
+# Temporary test/output dumps (do not commit)
+test_output.txt
+ctrl_log.txt
+orders_test_log.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Nested Flutter/Dart build artifacts are already ignored by
+# brewflow_pos/.gitignore (build/, .dart_tool/, .idea/, etc.)

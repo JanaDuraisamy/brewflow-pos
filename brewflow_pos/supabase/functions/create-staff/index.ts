@@ -7,14 +7,18 @@
 //
 // Responsibilities:
 // 1. Verify the caller's JWT (must be a logged-in user).
-// 2. Authorize the caller as OWNER using the `user_profiles` table in the
-//    connected Postgres database (role = 'OWNER', is_active). The local
-//    Drift store cannot be read server-side; this row is the cloud-side
-//    source of truth and is created during bootstrap/sync (Step 3 wires the
-//    automatic mirror of the local OWNER profile).
+// 2. Authorize the caller as an active OWNER of the TARGET shop using the
+//    `user_shop_memberships` table (Phase 2 authoritative authorization). The
+//    target shop is supplied in the body (shop_id); when omitted it defaults
+//    to the caller's sole active OWNER membership shop — a multi-shop owner
+//    MUST pass shop_id explicitly (cross-business creation is otherwise
+//    rejected).
 // 3. Create the staff auth identity with the service role (server-side env
 //    SUPABASE_SERVICE_ROLE_KEY, injected by the platform — never shipped).
-// 4. Return { id, email } matching the client contract
+// 4. Write the cloud identity: an active `user_shop_memberships` STAFF row for
+//    the target shop, plus a matching `user_profiles` STAFF row so the
+//    staff/bootstrap customer surface (`user_profiles.shop_id`) stays in sync.
+// 5. Return { id, email } matching the client contract
 //    (SupabaseStaffProvisioning → AuthUser) or a typed error:
 //      400 INVALID_INPUT | 401 UNAUTHENTICATED | 403 FORBIDDEN
 //      409 DUPLICATE_EMAIL | 500 PROVISIONING_FAILED
@@ -38,6 +42,7 @@ interface CreateStaffRequest {
   email?: string;
   password?: string;
   display_name?: string;
+  shop_id?: string;
 }
 
 Deno.serve(async (req: Request) => {
@@ -76,23 +81,7 @@ Deno.serve(async (req: Request) => {
       return json(401, { error: 'UNAUTHENTICATED' });
     }
 
-    // --- 2. Authorize the caller as an active OWNER ------------------------
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    const { data: callerProfile, error: profileError } = await adminClient
-      .from('user_profiles')
-      .select('role, is_active')
-      .eq('auth_user_id', user.id)
-      .single();
-    if (
-      profileError ||
-      !callerProfile ||
-      callerProfile.role !== 'OWNER' ||
-      !callerProfile.is_active
-    ) {
-      return json(403, { error: 'FORBIDDEN' });
-    }
-
-    // --- 3. Validate input --------------------------------------------------
+    // --- 2. Parse + validate input -----------------------------------------
     const body = (await req.json().catch(() => null)) as
       | CreateStaffRequest
       | null;
@@ -101,6 +90,53 @@ Deno.serve(async (req: Request) => {
     const displayName = body?.display_name?.trim() || undefined;
     if (!email || !email.includes('@') || password.length < 6) {
       return json(400, { error: 'INVALID_INPUT' });
+    }
+
+    // --- 3. Authorize the caller as OWNER of the target shop ---------------
+    // The service role reads memberships (RLS bypass); the caller's OWNER
+    // claim for the target shop is the whole authorization decision.
+    const adminClient = createClient(supabaseUrl, serviceRoleKey);
+
+    const targetShopId = body?.shop_id?.trim() || null;
+
+    const { data: memberships, error: membershipsError } = targetShopId
+      ? await adminClient
+          .from('user_shop_memberships')
+          .select('shop_id, role, is_active')
+          .eq('auth_user_id', user.id)
+          .eq('shop_id', targetShopId)
+          .eq('role', 'OWNER')
+          .eq('is_active', true)
+          .maybeSingle()
+      : await adminClient
+          .from('user_shop_memberships')
+          .select('shop_id, role, is_active')
+          .eq('auth_user_id', user.id)
+          .eq('role', 'OWNER')
+          .eq('is_active', true);
+
+    if (membershipsError) {
+      return json(500, { error: 'PROVISIONING_FAILED' });
+    }
+
+    let resolvedShopId: string;
+    if (memberships) {
+      resolvedShopId = memberships.shop_id;
+    } else if (!targetShopId) {
+      // No explicit shop: caller must own EXACTLY one shop to create staff.
+      const { data: owned, error: ownedError } = await adminClient
+        .from('user_shop_memberships')
+        .select('shop_id')
+        .eq('auth_user_id', user.id)
+        .eq('role', 'OWNER')
+        .eq('is_active', true);
+      if (ownedError || !owned || owned.length !== 1) {
+        return json(400, { error: 'INVALID_INPUT' });
+      }
+      resolvedShopId = owned[0].shop_id;
+    } else {
+      // Explicit shop but the caller is not an active OWNER of it.
+      return json(403, { error: 'FORBIDDEN' });
     }
 
     // --- 4. Create the staff auth identity (service role, server-side) -----
@@ -116,6 +152,42 @@ Deno.serve(async (req: Request) => {
       if (status === 422 || createError?.message.includes('already')) {
         return json(409, { error: 'DUPLICATE_EMAIL' });
       }
+      return json(500, { error: 'PROVISIONING_FAILED' });
+    }
+
+    // --- 5. Write cloud identity: STAFF membership + profile ---------------
+    // Idempotent upserts keyed on natural/primary keys. The membership row is
+    // the Phase 2 authorization source; the profile keeps user_profiles in
+    // sync for the existing bootstrap/read path.
+    const { error: membershipError } = await adminClient
+      .from('user_shop_memberships')
+      .upsert(
+        {
+          auth_user_id: created.user.id,
+          shop_id: resolvedShopId,
+          role: 'STAFF',
+          is_active: true,
+        },
+        { onConflict: 'auth_user_id,shop_id' },
+      );
+    if (membershipError) {
+      return json(500, { error: 'PROVISIONING_FAILED' });
+    }
+
+    const { error: profileError } = await adminClient
+      .from('user_profiles')
+      .upsert(
+        {
+          auth_user_id: created.user.id,
+          email: created.user.email,
+          role: 'STAFF',
+          shop_id: resolvedShopId,
+          display_name: displayName ?? null,
+          is_active: true,
+        },
+        { onConflict: 'auth_user_id' },
+      );
+    if (profileError) {
       return json(500, { error: 'PROVISIONING_FAILED' });
     }
 

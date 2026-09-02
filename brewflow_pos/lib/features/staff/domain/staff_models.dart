@@ -53,12 +53,18 @@ final class StaffCreateInput {
     required this.email,
     required this.password,
     this.displayName,
+    this.shopId,
     this.permissions = defaultStaffPermissions,
   });
 
   final String email;
   final String password;
   final String? displayName;
+
+  /// The target shop the new staff member is scoped to. When null the server
+  /// infers the caller's sole owned shop (backward-compatible single-shop
+  /// flow). Explicit for multi-shop owners to avoid cross-business ambiguity.
+  final String? shopId;
   final Set<Permission> permissions;
 }
 

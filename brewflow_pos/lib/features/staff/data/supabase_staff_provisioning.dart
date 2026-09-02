@@ -42,6 +42,7 @@ final class SupabaseStaffProvisioning implements StaffProvisioningService {
           'email': input.email,
           'password': input.password,
           if (input.displayName != null) 'display_name': input.displayName,
+          if (input.shopId != null) 'shop_id': input.shopId,
         },
       );
       final data = response.data;

@@ -24,9 +24,11 @@ final class _Canned {
 }
 
 final class _FakeFunctionsClient extends FunctionsClient {
-  _FakeFunctionsClient(this.canned) : super('https://example.supabase.co', {});
+  _FakeFunctionsClient(this.canned, [this.captured])
+    : super('https://example.supabase.co', {});
 
   final _Canned canned;
+  final List<Object?>? captured;
 
   @override
   Future<FunctionResponse> invoke(
@@ -39,6 +41,7 @@ final class _FakeFunctionsClient extends FunctionsClient {
     String? region,
     Future<void>? abortSignal,
   }) async {
+    captured?.add(body);
     if (canned.exception != null) {
       throw canned.exception!;
     }
@@ -177,5 +180,45 @@ void main() {
         throwsA(isA<ProvisioningFailure>()),
       );
     });
+
+    test('forwards an explicit shop_id to the function body', () async {
+      final captured = <Object?>[];
+      final service = SupabaseStaffProvisioning(
+        _FakeFunctionsClient(
+          _Canned.success({'id': 'auth-1', 'email': 'ava@brewflow.example'}),
+          captured,
+        ),
+      );
+
+      await service.createStaffAuthUser(
+        const StaffCreateInput(
+          email: 'ava@brewflow.example',
+          password: 'secret123',
+          shopId: 'food-truck-shop',
+        ),
+      );
+
+      expect(captured, hasLength(1));
+      final body = captured.single as Map;
+      expect(body['shop_id'], 'food-truck-shop');
+    });
+
+    test(
+      'omits shop_id when not provided (single-shop compatibility)',
+      () async {
+        final captured = <Object?>[];
+        final service = SupabaseStaffProvisioning(
+          _FakeFunctionsClient(
+            _Canned.success({'id': 'auth-1', 'email': 'ava@brewflow.example'}),
+            captured,
+          ),
+        );
+
+        await service.createStaffAuthUser(_input);
+
+        final body = captured.single as Map;
+        expect(body.containsKey('shop_id'), isFalse);
+      },
+    );
   });
 }

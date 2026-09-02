@@ -191,6 +191,23 @@ final class CategoryPerformanceRow {
   final int revenuePaise;
 }
 
+/// Per-business sales totals for the reporting window, used by the Combined
+/// (owner phone) view to show each shop's contribution without ever merging
+/// them.
+final class ReportsBusinessBreakdown {
+  const ReportsBusinessBreakdown({
+    required this.label,
+    required this.salesPaise,
+    required this.orderCount,
+    required this.itemCount,
+  });
+
+  final String label;
+  final int salesPaise;
+  final int orderCount;
+  final int itemCount;
+}
+
 /// Everything the Reports page renders for one window.
 final class ReportsSnapshot {
   const ReportsSnapshot({
@@ -201,6 +218,7 @@ final class ReportsSnapshot {
     required this.profitLoss,
     required this.topProducts,
     required this.categoryPerformance,
+    this.businessBreakdown = const [],
   });
 
   final ReportRange range;
@@ -210,6 +228,11 @@ final class ReportsSnapshot {
   final ProfitLossSummary profitLoss;
   final List<ProductPerformanceRow> topProducts;
   final List<CategoryPerformanceRow> categoryPerformance;
+
+  /// Per-business sales for the window. Empty unless the owner is in the
+  /// Combined view. Shops are never aggregated together; each keeps its own
+  /// identity so the UI can label it. Read-only.
+  final List<ReportsBusinessBreakdown> businessBreakdown;
 }
 
 /// Base for all reports failures. Every subtype carries a user-safe message.

@@ -16,6 +16,8 @@ import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.
 import 'package:brewflow_pos/features/expenses/presentation/expenses_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_controller.dart';
@@ -25,6 +27,7 @@ import 'package:brewflow_pos/features/purchases/presentation/suppliers_page.dart
 import 'package:brewflow_pos/features/reports/presentation/reports_page.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_page.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,9 +39,11 @@ import '../helpers/fake_customer_ledger_repository.dart';
 import '../helpers/fake_customers_repository.dart';
 import '../helpers/fake_expenses_repository.dart';
 import '../helpers/fake_inventory_repository.dart';
+import '../helpers/fake_offers_repository.dart';
 import '../helpers/fake_orders_repository.dart';
 import '../helpers/fake_purchases_repository.dart';
 import '../helpers/fake_settings_repository.dart';
+import '../helpers/fake_staff_repository.dart';
 import '../helpers/fake_suppliers_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
@@ -63,6 +68,8 @@ void main() {
       suppliersRepositoryProvider.overrideWithValue(FakeSuppliersRepository()),
       purchasesRepositoryProvider.overrideWithValue(FakePurchasesRepository()),
       expensesRepositoryProvider.overrideWithValue(FakeExpensesRepository()),
+      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
     ],
     child: const BrewFlowApp(),
   );
@@ -137,7 +144,7 @@ void main() {
     expect(inPage('Business at a Glance'), findsOneWidget);
   });
 
-  testWidgets('all ten navigation destinations resolve', (tester) async {
+  testWidgets('all eleven navigation destinations resolve', (tester) async {
     await pumpAuthenticated(tester);
 
     const destinations = [
@@ -150,6 +157,7 @@ void main() {
       ('Purchases', AppRoutes.purchases),
       ('Expenses', AppRoutes.expenses),
       ('Reports', AppRoutes.reports),
+      ('Offers', AppRoutes.offers),
       ('Settings', AppRoutes.settings),
     ];
 
@@ -238,6 +246,17 @@ void main() {
           reason: 'Reports page renders its header',
         );
       } else if (index == 9) {
+        expect(
+          find.byType(OffersPage),
+          findsOneWidget,
+          reason: 'Offers lands on the real offers page',
+        );
+        expect(
+          find.text('No offers yet'),
+          findsOneWidget,
+          reason: 'Offers page renders its empty state',
+        );
+      } else if (index == 10) {
         expect(
           find.byType(SettingsPage),
           findsOneWidget,
@@ -391,7 +410,7 @@ void main() {
     expect(currentPath(tester), AppRoutes.settings);
     expect(find.byType(SettingsPage), findsOneWidget);
     expect(find.text('Business Name'), findsOneWidget);
-    expect(sidebarIndex(tester), 9);
+    expect(sidebarIndex(tester), 10);
   });
 
   testWidgets('responsive shell adapts without overflow on mobile, tablet and '

@@ -13,6 +13,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
@@ -40,6 +41,34 @@ import '../../../app/providers.dart';
 /// stock for dashboard alerts.
 const int dashboardLowStockThreshold = 5;
 
+/// Per-business sales totals for the selected day, used by the Combined
+/// (owner phone) view to show each shop's contribution without ever merging
+/// them. Named so the UI can label each slice; null sale/order values are 0.
+final class BusinessSalesSummary {
+  const BusinessSalesSummary({
+    required this.label,
+    required this.salesPaise,
+    required this.orderCount,
+    required this.itemCount,
+  });
+
+  final String label;
+  final int salesPaise;
+  final int orderCount;
+  final int itemCount;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BusinessSalesSummary &&
+      other.label == label &&
+      other.salesPaise == salesPaise &&
+      other.orderCount == orderCount &&
+      other.itemCount == itemCount;
+
+  @override
+  int get hashCode => Object.hash(label, salesPaise, orderCount, itemCount);
+}
+
 /// One immutable dashboard state, computed entirely from real data.
 final class DashboardSnapshot {
   const DashboardSnapshot({
@@ -57,6 +86,7 @@ final class DashboardSnapshot {
     required this.outOfStockCount,
     required this.categoryCount,
     required this.dueCustomers,
+    this.businessBreakdown = const [],
   });
 
   /// Total counter receipts on the selected day.
@@ -112,6 +142,11 @@ final class DashboardSnapshot {
   /// Customers with outstanding dues and their total, derived from the
   /// customer ledger (never stored).
   final DueCustomersSummary dueCustomers;
+
+  /// Per-business sales for the selected day. Empty unless the owner is in
+  /// the Combined view. Shops are never aggregated together; each entry
+  /// keeps its own identity so the UI can label it.
+  final List<BusinessSalesSummary> businessBreakdown;
 }
 
 /// Holds the dashboard's selected local date; defaults to today.
@@ -187,6 +222,15 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
     final inventory = ref.watch(inventoryRepositoryProvider);
     final ledger = ref.watch(customerLedgerRepositoryProvider);
     final settingsRepository = ref.watch(settingsRepositoryProvider);
+    final businessContext = ref.watch(businessSwitcherProvider);
+    // Read scope from the business context (owner phone). All (Combined)
+    // resolves to every shop; a single business resolves to that shop. This
+    // is a read-only scope — never used for writes.
+    final shopIds = await ref
+        .read(businessSwitcherProvider.notifier)
+        .shopIdsForRead(businessContext);
+    final showBreakdown = businessContext == BusinessContext.all;
+    final labelsById = await _businessLabels();
     try {
       // The low-stock threshold comes from the saved shop settings. Settings
       // are best-effort here: when they are unavailable, the dashboard keeps
@@ -200,7 +244,12 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
       final windowStart = _localDay(
         selected.subtract(Duration(days: _windowDays - 1)),
       );
-      final windowOrders = await _fetchWindow(orders, windowStart, selected);
+      final windowOrders = await _fetchWindow(
+        orders,
+        windowStart,
+        selected,
+        shopIds: shopIds,
+      );
       final selectedDayOrders = [
         for (final order in windowOrders)
           if (_localDay(order.createdAt) == selected) order,
@@ -236,7 +285,10 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         selectedDayOrders: selectedDayOrders,
       );
 
-      final recentBills = await orders.orders(limit: _recentBillsLimit);
+      final recentBills = await orders.orders(
+        limit: _recentBillsLimit,
+        shopIds: shopIds,
+      );
 
       final active = [
         for (final p in products)
@@ -293,7 +345,7 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
           (sum, order) => sum + order.totalPaise,
         ),
         dayProfitPaise: dayProfit,
-        totalBills: await _fetchTotalBills(orders),
+        totalBills: await _fetchTotalBills(orders, shopIds: shopIds),
         dayOrderCount: selectedDayOrders.length,
         dayItemCount: selectedDayOrders.fold(
           0,
@@ -308,6 +360,9 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         outOfStockCount: outOfStockCount,
         categoryCount: categories.length,
         dueCustomers: await ledger.dueCustomersSummary(),
+        businessBreakdown: showBreakdown
+            ? _businessBreakdown(selectedDayOrders, labelsById)
+            : const [],
       );
     } on OrdersFailure {
       rethrow;
@@ -331,8 +386,9 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
   Future<List<OrderSummary>> _fetchWindow(
     OrdersRepository orders,
     DateTime windowStart,
-    DateTime selected,
-  ) async {
+    DateTime selected, {
+    List<String>? shopIds,
+  }) async {
     final filter = OrdersFilter(
       fromUtc: windowStart.toUtc(),
       toUtc: _endOfDayUtc(selected),
@@ -345,6 +401,7 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         filter: filter,
         limit: _pageSize,
         offset: offset,
+        shopIds: shopIds,
       );
       results.addAll(page.items);
       fetched += page.items.length;
@@ -355,11 +412,18 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
   }
 
   /// All-time completed-sale count, paged up to [_totalBillsCap].
-  Future<int> _fetchTotalBills(OrdersRepository orders) async {
+  Future<int> _fetchTotalBills(
+    OrdersRepository orders, {
+    List<String>? shopIds,
+  }) async {
     var total = 0;
     var offset = 0;
     while (true) {
-      final page = await orders.orders(limit: _pageSize, offset: offset);
+      final page = await orders.orders(
+        limit: _pageSize,
+        offset: offset,
+        shopIds: shopIds,
+      );
       total += page.items.length;
       if (!page.hasMore || total >= _totalBillsCap) break;
       offset += _pageSize;
@@ -402,6 +466,47 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
       }
     }
     return resolved ? profit : null;
+  }
+
+  /// Maps shop ids to user-facing business labels for the Combined breakdown.
+  /// CAFE is the primary (legacy) shop; FOOD TRUCK the second business.
+  Future<Map<String, String>> _businessLabels() async {
+    final switcher = ref.read(businessSwitcherProvider.notifier);
+    final labels = <String, String>{};
+    try {
+      final cafeId = await switcher.shopIdFor(BusinessContext.cafe);
+      labels[cafeId] = BusinessContext.cafe.label;
+      final ftId = await switcher.shopIdFor(BusinessContext.foodTruck);
+      if (ftId != cafeId) labels[ftId] = BusinessContext.foodTruck.label;
+    } catch (_) {
+      // Non-fatal: the breakdown just falls back to whatever ids resolve.
+    }
+    return labels;
+  }
+
+  /// Groups the selected day's orders by shop into per-business slices. Shops
+  /// are never merged; each keeps its own label and totals.
+  List<BusinessSalesSummary> _businessBreakdown(
+    List<OrderSummary> orders,
+    Map<String, String> labelsById,
+  ) {
+    final byShop = <String, List<OrderSummary>>{};
+    for (final order in orders) {
+      byShop.putIfAbsent(order.shopId ?? '', () => []).add(order);
+    }
+    final result = <BusinessSalesSummary>[
+      for (final entry in byShop.entries)
+        BusinessSalesSummary(
+          label: labelsById[entry.key] ?? 'Business',
+          salesPaise: entry.value.fold(
+            0,
+            (sum, order) => sum + order.totalPaise,
+          ),
+          orderCount: entry.value.length,
+          itemCount: entry.value.fold(0, (sum, order) => sum + order.itemCount),
+        ),
+    ]..sort((a, b) => a.label.compareTo(b.label));
+    return result;
   }
 
   static DateTime _localDay(DateTime value) =>

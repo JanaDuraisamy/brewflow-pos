@@ -330,7 +330,9 @@ final class AppMigrations {
           "INSERT INTO purchase_sequences (id, shop_id, next_value) "
           "SELECT id, '$cafeId', next_value FROM purchase_sequences_backup",
         );
-        await m.database.customStatement('DROP TABLE purchase_sequences_backup');
+        await m.database.customStatement(
+          'DROP TABLE purchase_sequences_backup',
+        );
 
         // Migrate the 10 tables that had shopId with default '000...' to nullable
         // and backfill the default to Cafe. This fixes FK failures for legacy

@@ -525,7 +525,10 @@ final class DriftInventoryRepository implements InventoryRepository {
             );
           } else {
             // TODO: wire real shopId from auth/session; fallback keeps tests compiling
-            final resolvedShopId = await resolveWritableShopId(_database, shopId);
+            final resolvedShopId = await resolveWritableShopId(
+              _database,
+              shopId,
+            );
             final variantRow = await _variants.insert(
               _variantCompanion(
                 productId: id,

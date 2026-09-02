@@ -9,6 +9,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -17,6 +18,7 @@ import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 void main() {
   DateTime localDay(DateTime value) =>
@@ -64,6 +66,7 @@ void main() {
         settingsRepositoryProvider.overrideWithValue(
           settings ?? FakeSettingsRepository(),
         ),
+        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         connectivityServiceProvider.overrideWithValue(
           fakeConnectivityService(),
         ),

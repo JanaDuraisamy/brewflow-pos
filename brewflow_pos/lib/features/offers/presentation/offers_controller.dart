@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/features/offers/data/drift_offers_repository.dart';
 import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
+import 'package:brewflow_pos/features/offers/domain/offers_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 
-final offersRepositoryProvider = Provider<DriftOffersRepository>((ref) {
+final offersRepositoryProvider = Provider<OffersRepository>((ref) {
   return DriftOffersRepository(
     ref.watch(appDatabaseProvider),
     outbox: ref.watch(syncOutboxCoordinatorProvider),

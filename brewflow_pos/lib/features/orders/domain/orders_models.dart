@@ -29,10 +29,15 @@ final class OrderSummary {
     this.customerName,
     this.isVoided = false,
     this.voidedAt,
+    this.shopId,
   });
 
   final String id;
   final String receiptNumber;
+
+  /// The business (shop) this sale belongs to. Absent only for rows persisted
+  /// before multi-business support, which are treated as the primary shop.
+  final String? shopId;
 
   /// Total pieces sold across all lines.
   final int itemCount;

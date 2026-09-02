@@ -43,6 +43,7 @@ abstract interface class OrdersRepository {
     OrdersFilter filter = const OrdersFilter(),
     int limit = 50,
     int offset = 0,
+    List<String>? shopIds,
   });
 
   /// Full details (header + snapshot items) of one completed sale; throws

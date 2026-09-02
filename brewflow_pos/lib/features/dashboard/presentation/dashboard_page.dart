@@ -106,6 +106,10 @@ final class _DashboardContent extends ConsumerWidget {
               ),
               const SizedBox(height: AppSpacing.sectionSpacing),
               _PaymentSummary(snapshot: snapshot),
+              if (snapshot.businessBreakdown.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.sectionSpacing),
+                _BusinessBreakdownCard(breakdown: snapshot.businessBreakdown),
+              ],
               const SizedBox(height: AppSpacing.sectionSpacing),
               _AlertsSection(
                 snapshot: snapshot,
@@ -1026,6 +1030,79 @@ final class _QuickActionCard extends StatelessWidget {
             Icons.chevron_right,
             size: 20,
             color: context.appColors.textDisabled,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _BusinessBreakdownCard extends StatelessWidget {
+  const _BusinessBreakdownCard({required this.breakdown});
+
+  final List<BusinessSalesSummary> breakdown;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: 'Business Breakdown',
+      subtitle: 'Per-business sales for the selected day · read-only',
+      child: Column(
+        children: [
+          for (var i = 0; i < breakdown.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 12,
+                thickness: 1,
+                color: context.appColors.divider,
+              ),
+            _BusinessRow(entry: breakdown[i]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _BusinessRow extends StatelessWidget {
+  const _BusinessRow({required this.entry});
+
+  final BusinessSalesSummary entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.label,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${entry.orderCount} ${entry.orderCount == 1 ? 'order' : 'orders'} · ${entry.itemCount} ${entry.itemCount == 1 ? 'item' : 'items'}',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            Money.formatPaise(entry.salesPaise),
+            style: textTheme.bodyMedium?.copyWith(
+              color: context.appColors.charcoal,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),

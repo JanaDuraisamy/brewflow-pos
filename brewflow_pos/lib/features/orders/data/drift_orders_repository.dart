@@ -29,6 +29,7 @@ final class DriftOrdersRepository implements OrdersRepository {
     OrdersFilter filter = const OrdersFilter(),
     int limit = 50,
     int offset = 0,
+    List<String>? shopIds,
   }) async {
     try {
       final rows = await _dao.salesPage(
@@ -38,6 +39,7 @@ final class DriftOrdersRepository implements OrdersRepository {
         toUtc: filter.toUtc,
         limit: limit + _probeRow,
         offset: offset,
+        shopIds: shopIds,
       );
       final hasMore = rows.length > limit;
       final page = hasMore ? rows.sublist(0, limit) : rows;
@@ -64,6 +66,7 @@ final class DriftOrdersRepository implements OrdersRepository {
                   : names[row.customerId],
               isVoided: row.voided,
               voidedAt: row.voidedAt,
+              shopId: row.shopId,
             ),
         ],
         hasMore: hasMore,

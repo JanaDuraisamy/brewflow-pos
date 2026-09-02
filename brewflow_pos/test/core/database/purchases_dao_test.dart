@@ -313,11 +313,7 @@ void main() {
       );
       // Same purchase number within the same shop must conflict.
       await expectLater(
-        seedPurchase(
-          id: 'pu-2',
-          shopId: shopId,
-          purchaseNumber: 'PUR-000001',
-        ),
+        seedPurchase(id: 'pu-2', shopId: shopId, purchaseNumber: 'PUR-000001'),
         throwsA(isA<SqliteException>()),
       );
     });

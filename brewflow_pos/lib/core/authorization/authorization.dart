@@ -71,6 +71,9 @@ enum Permission {
   /// Settings mutations (business identity, preferences).
   settings('SETTINGS'),
 
+  /// Offers/promotions management.
+  offers('OFFERS'),
+
   /// Staff management (owner-only capability; granting it does not lift the
   /// owner-protection rules below).
   manageStaff('MANAGE_STAFF');

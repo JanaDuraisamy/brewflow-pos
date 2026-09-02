@@ -143,6 +143,12 @@ final class _PhoneReportContent extends ConsumerWidget {
         ),
         children: [
           _PhoneSummaryKpis(snapshot: snapshot),
+          if (snapshot.businessBreakdown.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xl),
+            _ReportsBusinessBreakdownCard(
+              breakdown: snapshot.businessBreakdown,
+            ),
+          ],
           const SizedBox(height: AppSpacing.xl),
           _PhoneSalesOverviewCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.xl),
@@ -342,6 +348,12 @@ final class _ReportContent extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: AppSpacing.massive),
         children: [
           _SummaryKpis(snapshot: snapshot),
+          if (snapshot.businessBreakdown.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sectionSpacing),
+            _ReportsBusinessBreakdownCard(
+              breakdown: snapshot.businessBreakdown,
+            ),
+          ],
           const SizedBox(height: AppSpacing.sectionSpacing),
           _SalesOverviewCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.sectionSpacing),
@@ -354,6 +366,79 @@ final class _ReportContent extends ConsumerWidget {
           _TopProductsCard(snapshot: snapshot),
           SizedBox(height: AppSpacing.sectionSpacing),
           _CategoryPerformanceCard(snapshot: snapshot),
+        ],
+      ),
+    );
+  }
+}
+
+final class _ReportsBusinessBreakdownCard extends StatelessWidget {
+  const _ReportsBusinessBreakdownCard({required this.breakdown});
+
+  final List<ReportsBusinessBreakdown> breakdown;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: 'Business Breakdown',
+      subtitle: 'Per-business sales in the selected range · read-only',
+      child: Column(
+        children: [
+          for (var i = 0; i < breakdown.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 12,
+                thickness: 1,
+                color: context.appColors.divider,
+              ),
+            _ReportsBusinessRow(entry: breakdown[i]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _ReportsBusinessRow extends StatelessWidget {
+  const _ReportsBusinessRow({required this.entry});
+
+  final ReportsBusinessBreakdown entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.label,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${entry.orderCount} ${entry.orderCount == 1 ? 'order' : 'orders'} · ${entry.itemCount} ${entry.itemCount == 1 ? 'item' : 'items'}',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            Money.formatPaise(entry.salesPaise),
+            style: textTheme.bodyMedium?.copyWith(
+              color: context.appColors.charcoal,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );

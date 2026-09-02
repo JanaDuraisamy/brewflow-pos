@@ -33,6 +33,7 @@ import 'package:brewflow_pos/features/purchases/presentation/purchase_form_page.
 import 'package:brewflow_pos/features/purchases/presentation/purchases_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/supplier_form_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/suppliers_page.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_page.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_page.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_page.dart';
 import 'package:flutter/material.dart';
@@ -271,6 +272,13 @@ GoRouter buildAppRouter({
           ),
           _branch(
             GoRoute(
+              path: AppRoutes.offers,
+              name: 'offers',
+              builder: (context, state) => const OffersPage(),
+            ),
+          ),
+          _branch(
+            GoRoute(
               path: AppRoutes.settings,
               name: 'settings',
               builder: (context, state) => const SettingsPage(),
@@ -400,6 +408,7 @@ Permission? _requiredPermissionFor(String location) {
   if (location.startsWith(AppRoutes.purchases)) return Permission.purchases;
   if (location.startsWith(AppRoutes.expenses)) return Permission.expenses;
   if (location == AppRoutes.reports) return Permission.reports;
+  if (location == AppRoutes.offers) return Permission.offers;
   if (location == AppRoutes.settings) return Permission.settings;
   if (location == AppRoutes.staff) return Permission.manageStaff;
   return null;

@@ -7,12 +7,14 @@ import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 /// One sale line bounded by the repository's snapshot semantics.
 OrderItem _item(
@@ -48,6 +50,7 @@ ProviderContainer _container({
       inventoryRepositoryProvider.overrideWithValue(
         inventory ?? FakeInventoryRepository(),
       ),
+      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
     ],
   );
   addTearDown(container.dispose);

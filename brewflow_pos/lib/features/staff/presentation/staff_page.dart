@@ -86,6 +86,7 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
         email: input.email,
         password: input.password,
         displayName: input.displayName,
+        shopId: shopId,
         permissions: input.permissions,
       );
       // Pass shopId to Edge Function via provisioning service if supported;

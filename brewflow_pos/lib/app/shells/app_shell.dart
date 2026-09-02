@@ -6,6 +6,8 @@ import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher_widget.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_status_provider.dart';
 import 'package:flutter/material.dart';
@@ -87,6 +89,11 @@ final class AppShell extends ConsumerWidget {
       selectedIcon: Icons.insert_chart,
     ),
     AppNavItem(
+      label: 'Offers',
+      icon: Icons.local_offer_outlined,
+      selectedIcon: Icons.local_offer,
+    ),
+    AppNavItem(
       label: 'Settings',
       icon: Icons.settings_outlined,
       selectedIcon: Icons.settings,
@@ -104,6 +111,7 @@ final class AppShell extends ConsumerWidget {
     Permission.purchases,
     Permission.expenses,
     Permission.reports,
+    Permission.offers,
     Permission.settings,
   ];
 
@@ -111,6 +119,15 @@ final class AppShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final profile = ref.watch(userProfileProvider).value;
     final filterActive = profile != null && profile.role == UserRole.staff;
+    // Staff tablets are single-business: never keep Combined selection.
+    if (filterActive &&
+        ref.watch(businessSwitcherProvider) == BusinessContext.all) {
+      Future.microtask(
+        () => ref
+            .read(businessSwitcherProvider.notifier)
+            .select(BusinessContext.cafe),
+      );
+    }
 
     var items = _navItems;
     var selected = navigationShell.currentIndex;
@@ -147,6 +164,9 @@ final class AppShell extends ConsumerWidget {
                   .value
                   ?.appDisplayName,
               shopName: ref.watch(shopSettingsProvider).value?.shopName,
+              // The business switcher is Owner-only. Staff tablets stay fixed
+              // to one assigned shop with no switcher and no Combined view.
+              showSwitcher: !filterActive,
             ),
             body: SafeArea(
               top: false,
@@ -183,6 +203,17 @@ final class AppShell extends ConsumerWidget {
                   footer: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Owner-only business switcher in the extended sidebar.
+                      if (!filterActive && extended) ...[
+                        const Padding(
+                          padding: EdgeInsets.only(
+                            bottom: AppSpacing.sm,
+                            left: AppSpacing.xs,
+                            right: AppSpacing.xs,
+                          ),
+                          child: BusinessSwitcher(compact: true),
+                        ),
+                      ],
                       if (extended)
                         Padding(
                           padding: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -237,13 +268,20 @@ final class _SidebarLogout extends ConsumerWidget {
 /// full sync card lives on the Dashboard where there is room to explain state.
 final class _MobileAppBar extends ConsumerWidget
     implements PreferredSizeWidget {
-  const _MobileAppBar({this.appDisplayName, this.shopName});
+  const _MobileAppBar({
+    this.appDisplayName,
+    this.shopName,
+    this.showSwitcher = false,
+  });
 
   final String? appDisplayName;
   final String? shopName;
 
+  /// Owner-only: renders the business switcher below the shop name.
+  final bool showSwitcher;
+
   @override
-  Size get preferredSize => const Size.fromHeight(64);
+  Size get preferredSize => Size.fromHeight(showSwitcher ? 112 : 64);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -288,6 +326,13 @@ final class _MobileAppBar extends ConsumerWidget
                       color: AppColors.primary,
                       fontWeight: FontWeight.w600,
                     ),
+                  ),
+                ],
+                if (showSwitcher) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: BusinessSwitcher(compact: true),
                   ),
                 ],
               ],

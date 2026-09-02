@@ -26,6 +26,7 @@ final class OrdersDao {
     DateTime? toUtc,
     int limit = 50,
     int offset = 0,
+    List<String>? shopIds,
   }) {
     final query = _db.select(_db.sales);
     query
@@ -40,6 +41,9 @@ final class OrdersDao {
       )
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
       ..limit(limit, offset: offset);
+    if (shopIds != null) {
+      query.where((t) => t.shopId.isIn(shopIds));
+    }
     return query.get();
   }
 

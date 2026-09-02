@@ -1,11 +1,12 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
+import 'package:brewflow_pos/features/offers/domain/offers_repository.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
-final class DriftOffersRepository {
+final class DriftOffersRepository implements OffersRepository {
   DriftOffersRepository(db.AppDatabase database, {this._outbox})
     : _db = database;
 
@@ -13,6 +14,7 @@ final class DriftOffersRepository {
   final db.AppDatabase _db;
   final SyncOutboxCoordinator? _outbox;
 
+  @override
   Future<List<Offer>> offersForShop(String shopId) async {
     final rows =
         await (_db.select(_db.offers)
@@ -22,6 +24,7 @@ final class DriftOffersRepository {
     return rows.map(_fromRow).toList();
   }
 
+  @override
   Future<List<Offer>> allOffers() async {
     final rows = await (_db.select(
       _db.offers,
@@ -29,6 +32,7 @@ final class DriftOffersRepository {
     return rows.map(_fromRow).toList();
   }
 
+  @override
   Future<Offer> createOffer({
     required String shopId,
     required String name,
@@ -89,6 +93,7 @@ final class DriftOffersRepository {
     return _fromRow(created);
   }
 
+  @override
   Future<Offer> updateOffer(Offer offer) async {
     final now = DateTime.now().toUtc();
     Future<void> write() async {
@@ -137,6 +142,7 @@ final class DriftOffersRepository {
     return _fromRow(updated);
   }
 
+  @override
   Future<void> deleteOffer(String id) async {
     // Resolve the offer's actual business shopId for the tombstone so the
     // deletion is scoped correctly and does not leak across businesses.

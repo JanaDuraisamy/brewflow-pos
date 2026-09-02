@@ -31,6 +31,7 @@ abstract final class AppRoutes {
   static const String purchases = '/purchases';
   static const String expenses = '/expenses';
   static const String reports = '/reports';
+  static const String offers = '/offers';
   static const String settings = '/settings';
 
   // Inventory module sub-routes (pushed on top of the inventory branch)
@@ -71,6 +72,7 @@ abstract final class AppRoutes {
     purchases,
     expenses,
     reports,
+    offers,
     settings,
   ];
 

@@ -13,6 +13,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 final class FakeOrdersRepository implements OrdersRepository {
   final List<OrderSummary> storedSummaries = [];
   final Map<String, Order> _storedOrders = {};
+  final Map<String, String> _orderShopIds = {};
 
   /// Thrown by [orders] when set (list-load failures).
   Object? ordersError;
@@ -37,6 +38,7 @@ final class FakeOrdersRepository implements OrdersRepository {
     String? customerName,
     bool isVoided = false,
     DateTime? voidedAt,
+    String? shopId,
   }) {
     final summary = OrderSummary(
       id: 'order-${storedSummaries.length + 1}',
@@ -51,7 +53,9 @@ final class FakeOrdersRepository implements OrdersRepository {
       customerName: customerName,
       isVoided: isVoided,
       voidedAt: voidedAt,
+      shopId: shopId,
     );
+    if (shopId != null) _orderShopIds[summary.id] = shopId;
     storedSummaries.add(summary);
     _storedOrders[summary.id] = Order(
       id: summary.id,
@@ -98,11 +102,21 @@ final class FakeOrdersRepository implements OrdersRepository {
     return true;
   }
 
+  bool _inShops(OrderSummary order, List<String>? shopIds) {
+    if (shopIds == null) return true;
+    final orderShopId = _orderShopIds[order.id];
+    // Legacy rows seeded without a shop belong to the primary shop, so they
+    // match any read scope (backward compatible).
+    if (orderShopId == null) return true;
+    return shopIds.contains(orderShopId);
+  }
+
   @override
   Future<OrdersPageResult> orders({
     OrdersFilter filter = const OrdersFilter(),
     int limit = 50,
     int offset = 0,
+    List<String>? shopIds,
   }) async {
     pageRequests.add((limit, offset));
     final error = ordersError;
@@ -115,7 +129,7 @@ final class FakeOrdersRepository implements OrdersRepository {
     }
     final matching = [
       for (final order in storedSummaries)
-        if (_matches(order, filter)) order,
+        if (_matches(order, filter) && _inShops(order, shopIds)) order,
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final end = (offset + limit).clamp(0, matching.length);
     final page = offset >= matching.length

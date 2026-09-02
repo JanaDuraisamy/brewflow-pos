@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -117,11 +118,19 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     final orders = ref.watch(ordersRepositoryProvider);
     final expenses = ref.watch(expensesRepositoryProvider);
     final inventory = ref.watch(inventoryRepositoryProvider);
+    final businessContext = ref.watch(businessSwitcherProvider);
+    // Read scope from the business context (owner phone). This is read-only;
+    // reports never write.
+    final shopIds = await ref
+        .read(businessSwitcherProvider.notifier)
+        .shopIdsForRead(businessContext);
+    final showBreakdown = businessContext == BusinessContext.all;
+    final labelsById = await _businessLabels();
     try {
       final fromUtc = range.fromUtc;
       final toUtc = range.toUtc;
       final window = fromUtc != null && toUtc != null
-          ? await _fetchWindow(orders, fromUtc, toUtc)
+          ? await _fetchWindow(orders, fromUtc, toUtc, shopIds: shopIds)
           : <OrderSummary>[];
 
       final products = await inventory.products();
@@ -287,6 +296,9 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         ),
         topProducts: topProducts,
         categoryPerformance: categoryPerformance,
+        businessBreakdown: showBreakdown
+            ? _businessBreakdown(window, labelsById)
+            : const [],
       );
     } on OrdersFailure {
       rethrow;
@@ -312,8 +324,9 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
   Future<List<OrderSummary>> _fetchWindow(
     OrdersRepository orders,
     DateTime fromUtc,
-    DateTime toUtc,
-  ) async {
+    DateTime toUtc, {
+    List<String>? shopIds,
+  }) async {
     final filter = OrdersFilter(fromUtc: fromUtc, toUtc: toUtc);
     final results = <OrderSummary>[];
     var offset = 0;
@@ -323,6 +336,7 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         filter: filter,
         limit: _pageSize,
         offset: offset,
+        shopIds: shopIds,
       );
       results.addAll(page.items);
       fetched += page.items.length;
@@ -330,6 +344,41 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
       offset += _pageSize;
     }
     return results;
+  }
+
+  /// Maps shop ids to user-facing business labels for the Combined breakdown.
+  Future<Map<String, String>> _businessLabels() async {
+    final switcher = ref.read(businessSwitcherProvider.notifier);
+    final labels = <String, String>{};
+    try {
+      final cafeId = await switcher.shopIdFor(BusinessContext.cafe);
+      labels[cafeId] = BusinessContext.cafe.label;
+      final ftId = await switcher.shopIdFor(BusinessContext.foodTruck);
+      if (ftId != cafeId) labels[ftId] = BusinessContext.foodTruck.label;
+    } catch (_) {}
+    return labels;
+  }
+
+  /// Groups the window's orders by shop into per-business slices. Shops are
+  /// never merged; each keeps its own label and totals.
+  List<ReportsBusinessBreakdown> _businessBreakdown(
+    List<OrderSummary> orders,
+    Map<String, String> labelsById,
+  ) {
+    final byShop = <String, List<OrderSummary>>{};
+    for (final order in orders) {
+      byShop.putIfAbsent(order.shopId ?? '', () => []).add(order);
+    }
+    final result = <ReportsBusinessBreakdown>[
+      for (final entry in byShop.entries)
+        ReportsBusinessBreakdown(
+          label: labelsById[entry.key] ?? 'Business',
+          salesPaise: entry.value.fold(0, (sum, o) => sum + o.totalPaise),
+          orderCount: entry.value.length,
+          itemCount: entry.value.fold(0, (sum, o) => sum + o.itemCount),
+        ),
+    ]..sort((a, b) => a.label.compareTo(b.label));
+    return result;
   }
 
   /// Buckets the window's receipts into one total per local day, oldest day

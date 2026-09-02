@@ -7000,6 +7000,1755 @@ i1.GeneratedColumn<String> _column_88(String aliasedName) =>
       type: i1.DriftSqlType.string,
       $customConstraints: 'NULL',
     );
+
+final class Schema16 extends i0.VersionedSchema {
+  Schema16({required super.database}) : super(version: 16);
+  @override
+  late final List<i1.DatabaseSchemaEntity> entities = [
+    shops,
+    users,
+    devices,
+    syncOutbox,
+    syncState,
+    staffPermissions,
+    categories,
+    products,
+    productVariants,
+    customers,
+    sales,
+    customerPayments,
+    expenses,
+    saleItems,
+    saleSequences,
+    stockMovements,
+    suppliers,
+    purchases,
+    purchaseItems,
+    purchaseSequences,
+    offers,
+    idxUsersUpdatedAt,
+    idxShopsUpdatedAt,
+    idxDevicesShop,
+    idxDevicesUpdatedAt,
+    idxSyncOutboxIdentity,
+    idxSyncOutboxStatus,
+    idxStaffPermissionsUser,
+    idxCategoriesUpdatedAt,
+    idxProductsCategoryId,
+    idxProductsName,
+    idxProductsUpdatedAt,
+    idxProductVariantsProductId,
+    idxProductVariantsSku,
+    idxProductVariantsUpdatedAt,
+    idxCustomersName,
+    idxCustomersUpdatedAt,
+    idxCustomerPaymentsCustomerId,
+    idxCustomerPaymentsSaleId,
+    idxCustomerPaymentsPaidAt,
+    idxExpensesExpenseDate,
+    idxExpensesCategory,
+    idxExpensesUpdatedAt,
+    idxSalesCreatedAt,
+    idxSalesCustomerId,
+    idxSaleItemsSaleId,
+    idxStockMovementsProductCreatedAt,
+    idxStockMovementsVariantCreatedAt,
+    idxSuppliersName,
+    idxSuppliersUpdatedAt,
+    idxPurchasesCreatedAt,
+    idxPurchasesSupplierId,
+    idxPurchaseItemsPurchaseId,
+    idxOffersShop,
+    idxOffersShopActive,
+  ];
+  late final Shape22 shops = Shape22(
+    source: i0.VersionedTable(
+      entityName: 'shops',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [_column_0, _column_9, _column_5, _column_6],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape23 users = Shape23(
+    source: i0.VersionedTable(
+      entityName: 'users',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_1,
+        _column_64,
+        _column_65,
+        _column_2,
+        _column_3,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape25 devices = Shape25(
+    source: i0.VersionedTable(
+      entityName: 'devices',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_69,
+        _column_70,
+        _column_71,
+        _column_72,
+        _column_5,
+        _column_73,
+        _column_4,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape26 syncOutbox = Shape26(
+    source: i0.VersionedTable(
+      entityName: 'sync_outbox',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_74,
+        _column_75,
+        _column_76,
+        _column_77,
+        _column_78,
+        _column_79,
+        _column_80,
+        _column_81,
+        _column_82,
+        _column_83,
+        _column_5,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape27 syncState = Shape27(
+    source: i0.VersionedTable(
+      entityName: 'sync_state',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(device_id)'],
+      columns: [
+        _column_74,
+        _column_75,
+        _column_84,
+        _column_85,
+        _column_83,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape24 staffPermissions = Shape24(
+    source: i0.VersionedTable(
+      entityName: 'staff_permissions',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(user_id, permission)'],
+      columns: [_column_66, _column_67, _column_68],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape1 categories = Shape1(
+    source: i0.VersionedTable(
+      entityName: 'categories',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [_column_0, _column_7, _column_4, _column_5, _column_6],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape14 products = Shape14(
+    source: i0.VersionedTable(
+      entityName: 'products',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_8,
+        _column_9,
+        _column_10,
+        _column_11,
+        _column_12,
+        _column_13,
+        _column_52,
+        _column_53,
+        _column_54,
+        _column_55,
+        _column_56,
+        _column_57,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape15 productVariants = Shape15(
+    source: i0.VersionedTable(
+      entityName: 'product_variants',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_19,
+        _column_9,
+        _column_10,
+        _column_11,
+        _column_12,
+        _column_13,
+        _column_53,
+        _column_54,
+        _column_55,
+        _column_56,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape28 customers = Shape28(
+    source: i0.VersionedTable(
+      entityName: 'customers',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_9,
+        _column_26,
+        _column_27,
+        _column_28,
+        _column_4,
+        _column_62,
+        _column_63,
+        _column_86,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape29 sales = Shape29(
+    source: i0.VersionedTable(
+      entityName: 'sales',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_33,
+        _column_14,
+        _column_15,
+        _column_16,
+        _column_61,
+        _column_60,
+        _column_5,
+        _column_6,
+        _column_87,
+        _column_88,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape9 customerPayments = Shape9(
+    source: i0.VersionedTable(
+      entityName: 'customer_payments',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_34,
+        _column_35,
+        _column_29,
+        _column_17,
+        _column_32,
+        _column_36,
+        _column_37,
+        _column_38,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape19 expenses = Shape19(
+    source: i0.VersionedTable(
+      entityName: 'expenses',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_9,
+        _column_29,
+        _column_30,
+        _column_17,
+        _column_60,
+        _column_31,
+        _column_32,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape16 saleItems = Shape16(
+    source: i0.VersionedTable(
+      entityName: 'sale_items',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_18,
+        _column_19,
+        _column_58,
+        _column_20,
+        _column_59,
+        _column_21,
+        _column_22,
+        _column_23,
+        _column_24,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape5 saleSequences = Shape5(
+    source: i0.VersionedTable(
+      entityName: 'sale_sequences',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [_column_0, _column_25],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape17 stockMovements = Shape17(
+    source: i0.VersionedTable(
+      entityName: 'stock_movements',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_19,
+        _column_58,
+        _column_46,
+        _column_40,
+        _column_41,
+        _column_42,
+        _column_43,
+        _column_32,
+        _column_44,
+        _column_45,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape11 suppliers = Shape11(
+    source: i0.VersionedTable(
+      entityName: 'suppliers',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_9,
+        _column_26,
+        _column_27,
+        _column_28,
+        _column_47,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape12 purchases = Shape12(
+    source: i0.VersionedTable(
+      entityName: 'purchases',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_48,
+        _column_49,
+        _column_15,
+        _column_16,
+        _column_47,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape18 purchaseItems = Shape18(
+    source: i0.VersionedTable(
+      entityName: 'purchase_items',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_50,
+        _column_19,
+        _column_58,
+        _column_20,
+        _column_59,
+        _column_21,
+        _column_51,
+        _column_23,
+        _column_24,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape5 purchaseSequences = Shape5(
+    source: i0.VersionedTable(
+      entityName: 'purchase_sequences',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [_column_0, _column_25],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape30 offers = Shape30(
+    source: i0.VersionedTable(
+      entityName: 'offers',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [
+        'CHECK(start_at IS NULL OR end_at IS NULL OR start_at <= end_at)',
+      ],
+      columns: [
+        _column_0,
+        _column_69,
+        _column_9,
+        _column_89,
+        _column_90,
+        _column_4,
+        _column_91,
+        _column_92,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index idxUsersUpdatedAt = i1.Index(
+    'idx_users_updated_at',
+    'CREATE INDEX idx_users_updated_at ON users (updated_at)',
+  );
+  final i1.Index idxShopsUpdatedAt = i1.Index(
+    'idx_shops_updated_at',
+    'CREATE INDEX idx_shops_updated_at ON shops (updated_at)',
+  );
+  final i1.Index idxDevicesShop = i1.Index(
+    'idx_devices_shop',
+    'CREATE INDEX idx_devices_shop ON devices (shop_id)',
+  );
+  final i1.Index idxDevicesUpdatedAt = i1.Index(
+    'idx_devices_updated_at',
+    'CREATE INDEX idx_devices_updated_at ON devices (updated_at)',
+  );
+  final i1.Index idxSyncOutboxIdentity = i1.Index(
+    'idx_sync_outbox_identity',
+    'CREATE INDEX idx_sync_outbox_identity ON sync_outbox (entity, entity_id, operation)',
+  );
+  final i1.Index idxSyncOutboxStatus = i1.Index(
+    'idx_sync_outbox_status',
+    'CREATE INDEX idx_sync_outbox_status ON sync_outbox (status, created_at)',
+  );
+  final i1.Index idxStaffPermissionsUser = i1.Index(
+    'idx_staff_permissions_user',
+    'CREATE INDEX idx_staff_permissions_user ON staff_permissions (user_id)',
+  );
+  final i1.Index idxCategoriesUpdatedAt = i1.Index(
+    'idx_categories_updated_at',
+    'CREATE INDEX idx_categories_updated_at ON categories (updated_at)',
+  );
+  final i1.Index idxProductsCategoryId = i1.Index(
+    'idx_products_category_id',
+    'CREATE INDEX idx_products_category_id ON products (category_id)',
+  );
+  final i1.Index idxProductsName = i1.Index(
+    'idx_products_name',
+    'CREATE INDEX idx_products_name ON products (name)',
+  );
+  final i1.Index idxProductsUpdatedAt = i1.Index(
+    'idx_products_updated_at',
+    'CREATE INDEX idx_products_updated_at ON products (updated_at)',
+  );
+  final i1.Index idxProductVariantsProductId = i1.Index(
+    'idx_product_variants_product_id',
+    'CREATE INDEX idx_product_variants_product_id ON product_variants (product_id)',
+  );
+  final i1.Index idxProductVariantsSku = i1.Index(
+    'idx_product_variants_sku',
+    'CREATE INDEX idx_product_variants_sku ON product_variants (sku)',
+  );
+  final i1.Index idxProductVariantsUpdatedAt = i1.Index(
+    'idx_product_variants_updated_at',
+    'CREATE INDEX idx_product_variants_updated_at ON product_variants (updated_at)',
+  );
+  final i1.Index idxCustomersName = i1.Index(
+    'idx_customers_name',
+    'CREATE INDEX idx_customers_name ON customers (name)',
+  );
+  final i1.Index idxCustomersUpdatedAt = i1.Index(
+    'idx_customers_updated_at',
+    'CREATE INDEX idx_customers_updated_at ON customers (updated_at)',
+  );
+  final i1.Index idxCustomerPaymentsCustomerId = i1.Index(
+    'idx_customer_payments_customer_id',
+    'CREATE INDEX idx_customer_payments_customer_id ON customer_payments (customer_id)',
+  );
+  final i1.Index idxCustomerPaymentsSaleId = i1.Index(
+    'idx_customer_payments_sale_id',
+    'CREATE INDEX idx_customer_payments_sale_id ON customer_payments (sale_id)',
+  );
+  final i1.Index idxCustomerPaymentsPaidAt = i1.Index(
+    'idx_customer_payments_paid_at',
+    'CREATE INDEX idx_customer_payments_paid_at ON customer_payments (paid_at)',
+  );
+  final i1.Index idxExpensesExpenseDate = i1.Index(
+    'idx_expenses_expense_date',
+    'CREATE INDEX idx_expenses_expense_date ON expenses (expense_date)',
+  );
+  final i1.Index idxExpensesCategory = i1.Index(
+    'idx_expenses_category',
+    'CREATE INDEX idx_expenses_category ON expenses (category)',
+  );
+  final i1.Index idxExpensesUpdatedAt = i1.Index(
+    'idx_expenses_updated_at',
+    'CREATE INDEX idx_expenses_updated_at ON expenses (updated_at)',
+  );
+  final i1.Index idxSalesCreatedAt = i1.Index(
+    'idx_sales_created_at',
+    'CREATE INDEX idx_sales_created_at ON sales (created_at)',
+  );
+  final i1.Index idxSalesCustomerId = i1.Index(
+    'idx_sales_customer_id',
+    'CREATE INDEX idx_sales_customer_id ON sales (customer_id)',
+  );
+  final i1.Index idxSaleItemsSaleId = i1.Index(
+    'idx_sale_items_sale_id',
+    'CREATE INDEX idx_sale_items_sale_id ON sale_items (sale_id)',
+  );
+  final i1.Index idxStockMovementsProductCreatedAt = i1.Index(
+    'idx_stock_movements_product_created_at',
+    'CREATE INDEX idx_stock_movements_product_created_at ON stock_movements (product_id, created_at)',
+  );
+  final i1.Index idxStockMovementsVariantCreatedAt = i1.Index(
+    'idx_stock_movements_variant_created_at',
+    'CREATE INDEX idx_stock_movements_variant_created_at ON stock_movements (variant_id, created_at)',
+  );
+  final i1.Index idxSuppliersName = i1.Index(
+    'idx_suppliers_name',
+    'CREATE INDEX idx_suppliers_name ON suppliers (name)',
+  );
+  final i1.Index idxSuppliersUpdatedAt = i1.Index(
+    'idx_suppliers_updated_at',
+    'CREATE INDEX idx_suppliers_updated_at ON suppliers (updated_at)',
+  );
+  final i1.Index idxPurchasesCreatedAt = i1.Index(
+    'idx_purchases_created_at',
+    'CREATE INDEX idx_purchases_created_at ON purchases (created_at)',
+  );
+  final i1.Index idxPurchasesSupplierId = i1.Index(
+    'idx_purchases_supplier_id',
+    'CREATE INDEX idx_purchases_supplier_id ON purchases (supplier_id)',
+  );
+  final i1.Index idxPurchaseItemsPurchaseId = i1.Index(
+    'idx_purchase_items_purchase_id',
+    'CREATE INDEX idx_purchase_items_purchase_id ON purchase_items (purchase_id)',
+  );
+  final i1.Index idxOffersShop = i1.Index(
+    'idx_offers_shop',
+    'CREATE INDEX idx_offers_shop ON offers (shop_id)',
+  );
+  final i1.Index idxOffersShopActive = i1.Index(
+    'idx_offers_shop_active',
+    'CREATE INDEX idx_offers_shop_active ON offers (shop_id, is_active)',
+  );
+}
+
+class Shape30 extends i0.VersionedTable {
+  Shape30({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get type =>
+      columnsByName['type']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get configJson =>
+      columnsByName['config_json']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get startAt =>
+      columnsByName['start_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get endAt =>
+      columnsByName['end_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+i1.GeneratedColumn<String> _column_89(
+  String aliasedName,
+) => i1.GeneratedColumn<String>(
+  'type',
+  aliasedName,
+  false,
+  type: i1.DriftSqlType.string,
+  $customConstraints:
+      'CHECK (type IN (\'PERCENTAGE\', \'COMBO\', \'BUY_X_GET_Y\')) NOT NULL',
+);
+i1.GeneratedColumn<String> _column_90(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'config_json',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NOT NULL',
+    );
+i1.GeneratedColumn<String> _column_91(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'start_at',
+      aliasedName,
+      true,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NULL',
+    );
+i1.GeneratedColumn<String> _column_92(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'end_at',
+      aliasedName,
+      true,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NULL',
+    );
+
+final class Schema17 extends i0.VersionedSchema {
+  Schema17({required super.database}) : super(version: 17);
+  @override
+  late final List<i1.DatabaseSchemaEntity> entities = [
+    shops,
+    users,
+    devices,
+    syncOutbox,
+    syncState,
+    staffPermissions,
+    categories,
+    products,
+    productVariants,
+    customers,
+    sales,
+    customerPayments,
+    expenses,
+    saleItems,
+    saleSequences,
+    stockMovements,
+    suppliers,
+    purchases,
+    purchaseItems,
+    purchaseSequences,
+    offers,
+    idxUsersUpdatedAt,
+    idxShopsUpdatedAt,
+    idxDevicesShop,
+    idxDevicesUpdatedAt,
+    idxSyncOutboxIdentity,
+    idxSyncOutboxStatus,
+    idxStaffPermissionsUser,
+    idxCategoriesShop,
+    idxCategoriesUpdatedAt,
+    idxProductsShop,
+    idxProductsCategoryId,
+    idxProductsName,
+    idxProductsUpdatedAt,
+    idxProductVariantsShop,
+    idxProductVariantsProductId,
+    idxProductVariantsSku,
+    idxProductVariantsUpdatedAt,
+    idxCustomersShop,
+    idxCustomersName,
+    idxCustomersUpdatedAt,
+    idxCustomerPaymentsShop,
+    idxCustomerPaymentsCustomerId,
+    idxCustomerPaymentsSaleId,
+    idxCustomerPaymentsPaidAt,
+    idxExpensesShop,
+    idxExpensesExpenseDate,
+    idxExpensesCategory,
+    idxExpensesUpdatedAt,
+    idxSalesShop,
+    idxSalesCreatedAt,
+    idxSalesCustomerId,
+    idxSaleItemsShop,
+    idxSaleItemsSaleId,
+    idxStockMovementsShop,
+    idxStockMovementsProductCreatedAt,
+    idxStockMovementsVariantCreatedAt,
+    idxSuppliersShop,
+    idxSuppliersName,
+    idxSuppliersUpdatedAt,
+    idxPurchasesShop,
+    idxPurchasesCreatedAt,
+    idxPurchasesSupplierId,
+    idxPurchaseItemsShop,
+    idxPurchaseItemsPurchaseId,
+    idxOffersShop,
+    idxOffersShopActive,
+  ];
+  late final Shape22 shops = Shape22(
+    source: i0.VersionedTable(
+      entityName: 'shops',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [_column_0, _column_9, _column_5, _column_6],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape23 users = Shape23(
+    source: i0.VersionedTable(
+      entityName: 'users',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_1,
+        _column_64,
+        _column_65,
+        _column_2,
+        _column_3,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape25 devices = Shape25(
+    source: i0.VersionedTable(
+      entityName: 'devices',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_69,
+        _column_70,
+        _column_71,
+        _column_72,
+        _column_5,
+        _column_73,
+        _column_4,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape26 syncOutbox = Shape26(
+    source: i0.VersionedTable(
+      entityName: 'sync_outbox',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_74,
+        _column_75,
+        _column_76,
+        _column_77,
+        _column_78,
+        _column_79,
+        _column_80,
+        _column_81,
+        _column_82,
+        _column_83,
+        _column_5,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape27 syncState = Shape27(
+    source: i0.VersionedTable(
+      entityName: 'sync_state',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(device_id)'],
+      columns: [
+        _column_74,
+        _column_75,
+        _column_84,
+        _column_85,
+        _column_83,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape24 staffPermissions = Shape24(
+    source: i0.VersionedTable(
+      entityName: 'staff_permissions',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(user_id, permission)'],
+      columns: [_column_66, _column_67, _column_68],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape31 categories = Shape31(
+    source: i0.VersionedTable(
+      entityName: 'categories',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)', 'UNIQUE(shop_id, name)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_9,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape32 products = Shape32(
+    source: i0.VersionedTable(
+      entityName: 'products',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)', 'UNIQUE(shop_id, sku)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_8,
+        _column_9,
+        _column_21,
+        _column_11,
+        _column_12,
+        _column_13,
+        _column_52,
+        _column_53,
+        _column_54,
+        _column_55,
+        _column_56,
+        _column_57,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape33 productVariants = Shape33(
+    source: i0.VersionedTable(
+      entityName: 'product_variants',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)', 'UNIQUE(shop_id, sku)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_19,
+        _column_9,
+        _column_21,
+        _column_11,
+        _column_12,
+        _column_13,
+        _column_53,
+        _column_54,
+        _column_55,
+        _column_56,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape34 customers = Shape34(
+    source: i0.VersionedTable(
+      entityName: 'customers',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_9,
+        _column_26,
+        _column_27,
+        _column_28,
+        _column_4,
+        _column_62,
+        _column_63,
+        _column_86,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape35 sales = Shape35(
+    source: i0.VersionedTable(
+      entityName: 'sales',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)', 'UNIQUE(shop_id, receipt_number)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_33,
+        _column_94,
+        _column_15,
+        _column_16,
+        _column_61,
+        _column_60,
+        _column_5,
+        _column_6,
+        _column_87,
+        _column_88,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape36 customerPayments = Shape36(
+    source: i0.VersionedTable(
+      entityName: 'customer_payments',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_34,
+        _column_35,
+        _column_29,
+        _column_17,
+        _column_32,
+        _column_36,
+        _column_37,
+        _column_38,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape37 expenses = Shape37(
+    source: i0.VersionedTable(
+      entityName: 'expenses',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_9,
+        _column_29,
+        _column_30,
+        _column_17,
+        _column_60,
+        _column_31,
+        _column_32,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape38 saleItems = Shape38(
+    source: i0.VersionedTable(
+      entityName: 'sale_items',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_18,
+        _column_19,
+        _column_58,
+        _column_20,
+        _column_59,
+        _column_21,
+        _column_22,
+        _column_23,
+        _column_24,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape39 saleSequences = Shape39(
+    source: i0.VersionedTable(
+      entityName: 'sale_sequences',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id, shop_id)'],
+      columns: [_column_0, _column_95, _column_25],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape40 stockMovements = Shape40(
+    source: i0.VersionedTable(
+      entityName: 'stock_movements',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_19,
+        _column_58,
+        _column_46,
+        _column_40,
+        _column_41,
+        _column_42,
+        _column_43,
+        _column_32,
+        _column_44,
+        _column_45,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape41 suppliers = Shape41(
+    source: i0.VersionedTable(
+      entityName: 'suppliers',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_9,
+        _column_26,
+        _column_27,
+        _column_28,
+        _column_47,
+        _column_4,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape42 purchases = Shape42(
+    source: i0.VersionedTable(
+      entityName: 'purchases',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)', 'UNIQUE(shop_id, purchase_number)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_48,
+        _column_96,
+        _column_15,
+        _column_16,
+        _column_47,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape43 purchaseItems = Shape43(
+    source: i0.VersionedTable(
+      entityName: 'purchase_items',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id)'],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_50,
+        _column_19,
+        _column_58,
+        _column_20,
+        _column_59,
+        _column_21,
+        _column_51,
+        _column_23,
+        _column_24,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape39 purchaseSequences = Shape39(
+    source: i0.VersionedTable(
+      entityName: 'purchase_sequences',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(id, shop_id)'],
+      columns: [_column_0, _column_95, _column_25],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape30 offers = Shape30(
+    source: i0.VersionedTable(
+      entityName: 'offers',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [
+        'PRIMARY KEY(id)',
+        'CHECK(start_at IS NULL OR end_at IS NULL OR start_at <= end_at)',
+      ],
+      columns: [
+        _column_0,
+        _column_93,
+        _column_9,
+        _column_89,
+        _column_90,
+        _column_4,
+        _column_91,
+        _column_92,
+        _column_5,
+        _column_6,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index idxUsersUpdatedAt = i1.Index(
+    'idx_users_updated_at',
+    'CREATE INDEX idx_users_updated_at ON users (updated_at)',
+  );
+  final i1.Index idxShopsUpdatedAt = i1.Index(
+    'idx_shops_updated_at',
+    'CREATE INDEX idx_shops_updated_at ON shops (updated_at)',
+  );
+  final i1.Index idxDevicesShop = i1.Index(
+    'idx_devices_shop',
+    'CREATE INDEX idx_devices_shop ON devices (shop_id)',
+  );
+  final i1.Index idxDevicesUpdatedAt = i1.Index(
+    'idx_devices_updated_at',
+    'CREATE INDEX idx_devices_updated_at ON devices (updated_at)',
+  );
+  final i1.Index idxSyncOutboxIdentity = i1.Index(
+    'idx_sync_outbox_identity',
+    'CREATE INDEX idx_sync_outbox_identity ON sync_outbox (entity, entity_id, operation)',
+  );
+  final i1.Index idxSyncOutboxStatus = i1.Index(
+    'idx_sync_outbox_status',
+    'CREATE INDEX idx_sync_outbox_status ON sync_outbox (status, created_at)',
+  );
+  final i1.Index idxStaffPermissionsUser = i1.Index(
+    'idx_staff_permissions_user',
+    'CREATE INDEX idx_staff_permissions_user ON staff_permissions (user_id)',
+  );
+  final i1.Index idxCategoriesShop = i1.Index(
+    'idx_categories_shop',
+    'CREATE INDEX idx_categories_shop ON categories (shop_id)',
+  );
+  final i1.Index idxCategoriesUpdatedAt = i1.Index(
+    'idx_categories_updated_at',
+    'CREATE INDEX idx_categories_updated_at ON categories (shop_id, updated_at)',
+  );
+  final i1.Index idxProductsShop = i1.Index(
+    'idx_products_shop',
+    'CREATE INDEX idx_products_shop ON products (shop_id)',
+  );
+  final i1.Index idxProductsCategoryId = i1.Index(
+    'idx_products_category_id',
+    'CREATE INDEX idx_products_category_id ON products (category_id)',
+  );
+  final i1.Index idxProductsName = i1.Index(
+    'idx_products_name',
+    'CREATE INDEX idx_products_name ON products (name)',
+  );
+  final i1.Index idxProductsUpdatedAt = i1.Index(
+    'idx_products_updated_at',
+    'CREATE INDEX idx_products_updated_at ON products (shop_id, updated_at)',
+  );
+  final i1.Index idxProductVariantsShop = i1.Index(
+    'idx_product_variants_shop',
+    'CREATE INDEX idx_product_variants_shop ON product_variants (shop_id)',
+  );
+  final i1.Index idxProductVariantsProductId = i1.Index(
+    'idx_product_variants_product_id',
+    'CREATE INDEX idx_product_variants_product_id ON product_variants (product_id)',
+  );
+  final i1.Index idxProductVariantsSku = i1.Index(
+    'idx_product_variants_sku',
+    'CREATE INDEX idx_product_variants_sku ON product_variants (sku)',
+  );
+  final i1.Index idxProductVariantsUpdatedAt = i1.Index(
+    'idx_product_variants_updated_at',
+    'CREATE INDEX idx_product_variants_updated_at ON product_variants (shop_id, updated_at)',
+  );
+  final i1.Index idxCustomersShop = i1.Index(
+    'idx_customers_shop',
+    'CREATE INDEX idx_customers_shop ON customers (shop_id)',
+  );
+  final i1.Index idxCustomersName = i1.Index(
+    'idx_customers_name',
+    'CREATE INDEX idx_customers_name ON customers (name)',
+  );
+  final i1.Index idxCustomersUpdatedAt = i1.Index(
+    'idx_customers_updated_at',
+    'CREATE INDEX idx_customers_updated_at ON customers (shop_id, updated_at)',
+  );
+  final i1.Index idxCustomerPaymentsShop = i1.Index(
+    'idx_customer_payments_shop',
+    'CREATE INDEX idx_customer_payments_shop ON customer_payments (shop_id)',
+  );
+  final i1.Index idxCustomerPaymentsCustomerId = i1.Index(
+    'idx_customer_payments_customer_id',
+    'CREATE INDEX idx_customer_payments_customer_id ON customer_payments (shop_id, customer_id)',
+  );
+  final i1.Index idxCustomerPaymentsSaleId = i1.Index(
+    'idx_customer_payments_sale_id',
+    'CREATE INDEX idx_customer_payments_sale_id ON customer_payments (sale_id)',
+  );
+  final i1.Index idxCustomerPaymentsPaidAt = i1.Index(
+    'idx_customer_payments_paid_at',
+    'CREATE INDEX idx_customer_payments_paid_at ON customer_payments (shop_id, paid_at)',
+  );
+  final i1.Index idxExpensesShop = i1.Index(
+    'idx_expenses_shop',
+    'CREATE INDEX idx_expenses_shop ON expenses (shop_id)',
+  );
+  final i1.Index idxExpensesExpenseDate = i1.Index(
+    'idx_expenses_expense_date',
+    'CREATE INDEX idx_expenses_expense_date ON expenses (shop_id, expense_date)',
+  );
+  final i1.Index idxExpensesCategory = i1.Index(
+    'idx_expenses_category',
+    'CREATE INDEX idx_expenses_category ON expenses (shop_id, category)',
+  );
+  final i1.Index idxExpensesUpdatedAt = i1.Index(
+    'idx_expenses_updated_at',
+    'CREATE INDEX idx_expenses_updated_at ON expenses (shop_id, updated_at)',
+  );
+  final i1.Index idxSalesShop = i1.Index(
+    'idx_sales_shop',
+    'CREATE INDEX idx_sales_shop ON sales (shop_id)',
+  );
+  final i1.Index idxSalesCreatedAt = i1.Index(
+    'idx_sales_created_at',
+    'CREATE INDEX idx_sales_created_at ON sales (shop_id, created_at)',
+  );
+  final i1.Index idxSalesCustomerId = i1.Index(
+    'idx_sales_customer_id',
+    'CREATE INDEX idx_sales_customer_id ON sales (shop_id, customer_id)',
+  );
+  final i1.Index idxSaleItemsShop = i1.Index(
+    'idx_sale_items_shop',
+    'CREATE INDEX idx_sale_items_shop ON sale_items (shop_id)',
+  );
+  final i1.Index idxSaleItemsSaleId = i1.Index(
+    'idx_sale_items_sale_id',
+    'CREATE INDEX idx_sale_items_sale_id ON sale_items (shop_id, sale_id)',
+  );
+  final i1.Index idxStockMovementsShop = i1.Index(
+    'idx_stock_movements_shop',
+    'CREATE INDEX idx_stock_movements_shop ON stock_movements (shop_id)',
+  );
+  final i1.Index idxStockMovementsProductCreatedAt = i1.Index(
+    'idx_stock_movements_product_created_at',
+    'CREATE INDEX idx_stock_movements_product_created_at ON stock_movements (shop_id, product_id, created_at)',
+  );
+  final i1.Index idxStockMovementsVariantCreatedAt = i1.Index(
+    'idx_stock_movements_variant_created_at',
+    'CREATE INDEX idx_stock_movements_variant_created_at ON stock_movements (shop_id, variant_id, created_at)',
+  );
+  final i1.Index idxSuppliersShop = i1.Index(
+    'idx_suppliers_shop',
+    'CREATE INDEX idx_suppliers_shop ON suppliers (shop_id)',
+  );
+  final i1.Index idxSuppliersName = i1.Index(
+    'idx_suppliers_name',
+    'CREATE INDEX idx_suppliers_name ON suppliers (name)',
+  );
+  final i1.Index idxSuppliersUpdatedAt = i1.Index(
+    'idx_suppliers_updated_at',
+    'CREATE INDEX idx_suppliers_updated_at ON suppliers (shop_id, updated_at)',
+  );
+  final i1.Index idxPurchasesShop = i1.Index(
+    'idx_purchases_shop',
+    'CREATE INDEX idx_purchases_shop ON purchases (shop_id)',
+  );
+  final i1.Index idxPurchasesCreatedAt = i1.Index(
+    'idx_purchases_created_at',
+    'CREATE INDEX idx_purchases_created_at ON purchases (shop_id, created_at)',
+  );
+  final i1.Index idxPurchasesSupplierId = i1.Index(
+    'idx_purchases_supplier_id',
+    'CREATE INDEX idx_purchases_supplier_id ON purchases (shop_id, supplier_id)',
+  );
+  final i1.Index idxPurchaseItemsShop = i1.Index(
+    'idx_purchase_items_shop',
+    'CREATE INDEX idx_purchase_items_shop ON purchase_items (shop_id)',
+  );
+  final i1.Index idxPurchaseItemsPurchaseId = i1.Index(
+    'idx_purchase_items_purchase_id',
+    'CREATE INDEX idx_purchase_items_purchase_id ON purchase_items (shop_id, purchase_id)',
+  );
+  final i1.Index idxOffersShop = i1.Index(
+    'idx_offers_shop',
+    'CREATE INDEX idx_offers_shop ON offers (shop_id)',
+  );
+  final i1.Index idxOffersShopActive = i1.Index(
+    'idx_offers_shop_active',
+    'CREATE INDEX idx_offers_shop_active ON offers (shop_id, is_active)',
+  );
+}
+
+class Shape31 extends i0.VersionedTable {
+  Shape31({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+i1.GeneratedColumn<String> _column_93(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'shop_id',
+      aliasedName,
+      true,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NULL REFERENCES shops(id)ON DELETE CASCADE',
+    );
+
+class Shape32 extends i0.VersionedTable {
+  Shape32({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get categoryId =>
+      columnsByName['category_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get sku =>
+      columnsByName['sku']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get sellingPricePaise =>
+      columnsByName['selling_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get costPricePaise =>
+      columnsByName['cost_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get stockQuantity =>
+      columnsByName['stock_quantity']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get stockUnit =>
+      columnsByName['stock_unit']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get lowStockMode =>
+      columnsByName['low_stock_mode']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get lowStockThreshold =>
+      columnsByName['low_stock_threshold']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get membershipEnabled =>
+      columnsByName['membership_enabled']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get memberPricePaise =>
+      columnsByName['member_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get imagePath =>
+      columnsByName['image_path']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape33 extends i0.VersionedTable {
+  Shape33({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get productId =>
+      columnsByName['product_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get sku =>
+      columnsByName['sku']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get sellingPricePaise =>
+      columnsByName['selling_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get costPricePaise =>
+      columnsByName['cost_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get stockQuantity =>
+      columnsByName['stock_quantity']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get lowStockMode =>
+      columnsByName['low_stock_mode']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get lowStockThreshold =>
+      columnsByName['low_stock_threshold']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get membershipEnabled =>
+      columnsByName['membership_enabled']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get memberPricePaise =>
+      columnsByName['member_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape34 extends i0.VersionedTable {
+  Shape34({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get phone =>
+      columnsByName['phone']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get email =>
+      columnsByName['email']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get address =>
+      columnsByName['address']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get membershipActive =>
+      columnsByName['membership_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get membershipFeePaise =>
+      columnsByName['membership_fee_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get whatsappStatus =>
+      columnsByName['whatsapp_status']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape35 extends i0.VersionedTable {
+  Shape35({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get customerId =>
+      columnsByName['customer_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get receiptNumber =>
+      columnsByName['receipt_number']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get subtotalPaise =>
+      columnsByName['subtotal_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get totalPaise =>
+      columnsByName['total_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get paymentMethod =>
+      columnsByName['payment_method']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get paymentStatus =>
+      columnsByName['payment_status']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get voided =>
+      columnsByName['voided']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get voidedAt =>
+      columnsByName['voided_at']! as i1.GeneratedColumn<String>;
+}
+
+i1.GeneratedColumn<String> _column_94(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'receipt_number',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NOT NULL',
+    );
+
+class Shape36 extends i0.VersionedTable {
+  Shape36({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get customerId =>
+      columnsByName['customer_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get saleId =>
+      columnsByName['sale_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get amountPaise =>
+      columnsByName['amount_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get paymentMethod =>
+      columnsByName['payment_method']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get note =>
+      columnsByName['note']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get paidAt =>
+      columnsByName['paid_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get reversed =>
+      columnsByName['reversed']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get reversedAt =>
+      columnsByName['reversed_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape37 extends i0.VersionedTable {
+  Shape37({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get amountPaise =>
+      columnsByName['amount_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get category =>
+      columnsByName['category']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get paymentMethod =>
+      columnsByName['payment_method']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get paymentStatus =>
+      columnsByName['payment_status']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get expenseDate =>
+      columnsByName['expense_date']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get note =>
+      columnsByName['note']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape38 extends i0.VersionedTable {
+  Shape38({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get saleId =>
+      columnsByName['sale_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get productId =>
+      columnsByName['product_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get variantId =>
+      columnsByName['variant_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get productName =>
+      columnsByName['product_name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get variantName =>
+      columnsByName['variant_name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get sku =>
+      columnsByName['sku']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get unitPricePaise =>
+      columnsByName['unit_price_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get quantity =>
+      columnsByName['quantity']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get lineTotalPaise =>
+      columnsByName['line_total_paise']! as i1.GeneratedColumn<int>;
+}
+
+class Shape39 extends i0.VersionedTable {
+  Shape39({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get nextValue =>
+      columnsByName['next_value']! as i1.GeneratedColumn<int>;
+}
+
+i1.GeneratedColumn<String> _column_95(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'shop_id',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NOT NULL REFERENCES shops(id)ON DELETE CASCADE',
+    );
+
+class Shape40 extends i0.VersionedTable {
+  Shape40({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get productId =>
+      columnsByName['product_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get variantId =>
+      columnsByName['variant_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get movementType =>
+      columnsByName['movement_type']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get quantity =>
+      columnsByName['quantity']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get stockBefore =>
+      columnsByName['stock_before']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get stockAfter =>
+      columnsByName['stock_after']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get reason =>
+      columnsByName['reason']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get note =>
+      columnsByName['note']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get referenceType =>
+      columnsByName['reference_type']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get referenceId =>
+      columnsByName['reference_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape41 extends i0.VersionedTable {
+  Shape41({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get name =>
+      columnsByName['name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get phone =>
+      columnsByName['phone']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get email =>
+      columnsByName['email']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get address =>
+      columnsByName['address']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get notes =>
+      columnsByName['notes']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get isActive =>
+      columnsByName['is_active']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+class Shape42 extends i0.VersionedTable {
+  Shape42({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get supplierId =>
+      columnsByName['supplier_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get purchaseNumber =>
+      columnsByName['purchase_number']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get subtotalPaise =>
+      columnsByName['subtotal_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get totalPaise =>
+      columnsByName['total_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get notes =>
+      columnsByName['notes']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get createdAt =>
+      columnsByName['created_at']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get updatedAt =>
+      columnsByName['updated_at']! as i1.GeneratedColumn<String>;
+}
+
+i1.GeneratedColumn<String> _column_96(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'purchase_number',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.string,
+      $customConstraints: 'NOT NULL',
+    );
+
+class Shape43 extends i0.VersionedTable {
+  Shape43({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<String> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get shopId =>
+      columnsByName['shop_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get purchaseId =>
+      columnsByName['purchase_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get productId =>
+      columnsByName['product_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get variantId =>
+      columnsByName['variant_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get productName =>
+      columnsByName['product_name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get variantName =>
+      columnsByName['variant_name']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get sku =>
+      columnsByName['sku']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get unitCostPaise =>
+      columnsByName['unit_cost_paise']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get quantity =>
+      columnsByName['quantity']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get lineTotalPaise =>
+      columnsByName['line_total_paise']! as i1.GeneratedColumn<int>;
+}
+
 i0.MigrationStepWithVersion migrationSteps({
   required Future<void> Function(i1.Migrator m, Schema2 schema) from1To2,
   required Future<void> Function(i1.Migrator m, Schema3 schema) from2To3,
@@ -7015,6 +8764,8 @@ i0.MigrationStepWithVersion migrationSteps({
   required Future<void> Function(i1.Migrator m, Schema13 schema) from12To13,
   required Future<void> Function(i1.Migrator m, Schema14 schema) from13To14,
   required Future<void> Function(i1.Migrator m, Schema15 schema) from14To15,
+  required Future<void> Function(i1.Migrator m, Schema16 schema) from15To16,
+  required Future<void> Function(i1.Migrator m, Schema17 schema) from16To17,
 }) {
   return (currentVersion, database) async {
     switch (currentVersion) {
@@ -7088,6 +8839,16 @@ i0.MigrationStepWithVersion migrationSteps({
         final migrator = i1.Migrator(database, schema);
         await from14To15(migrator, schema);
         return 15;
+      case 15:
+        final schema = Schema16(database: database);
+        final migrator = i1.Migrator(database, schema);
+        await from15To16(migrator, schema);
+        return 16;
+      case 16:
+        final schema = Schema17(database: database);
+        final migrator = i1.Migrator(database, schema);
+        await from16To17(migrator, schema);
+        return 17;
       default:
         throw ArgumentError.value('Unknown migration from $currentVersion');
     }
@@ -7109,6 +8870,8 @@ i1.OnUpgrade stepByStep({
   required Future<void> Function(i1.Migrator m, Schema13 schema) from12To13,
   required Future<void> Function(i1.Migrator m, Schema14 schema) from13To14,
   required Future<void> Function(i1.Migrator m, Schema15 schema) from14To15,
+  required Future<void> Function(i1.Migrator m, Schema16 schema) from15To16,
+  required Future<void> Function(i1.Migrator m, Schema17 schema) from16To17,
 }) => i0.VersionedSchema.stepByStepHelper(
   step: migrationSteps(
     from1To2: from1To2,
@@ -7125,5 +8888,7 @@ i1.OnUpgrade stepByStep({
     from12To13: from12To13,
     from13To14: from13To14,
     from14To15: from14To15,
+    from15To16: from15To16,
+    from16To17: from16To17,
   ),
 );

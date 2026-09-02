@@ -135,6 +135,13 @@ final class SyncEngine {
   Future<void> _pushEntry(SyncOutboxEntry entry) async {
     final entity = MasterEntity.fromWire(entry.entity);
     switch (entity) {
+      case MasterEntity.shop:
+        if (entry.operation == 'DELETE') {
+          throw StateError('SHOP supports UPSERT sync only');
+        }
+        await _gateway.upsertShops([
+          SyncShop.fromJson(decodePayload(entry.payload)),
+        ]);
       case MasterEntity.category:
         if (entry.operation == 'DELETE') {
           await _gateway.recordDeletion(_deletionOf(entry));
@@ -238,6 +245,14 @@ final class SyncEngine {
         await _gateway.upsertCustomerPayments([
           SyncCustomerPayment.fromJson(decodePayload(entry.payload)),
         ]);
+      case MasterEntity.offer:
+        if (entry.operation == 'DELETE') {
+          await _gateway.recordDeletion(_deletionOf(entry));
+        } else {
+          await _gateway.upsertOffers([
+            SyncOffer.fromJson(decodePayload(entry.payload)),
+          ]);
+        }
     }
     await _sync.markDone(entry.id);
   }
@@ -309,6 +324,7 @@ final class SyncEngine {
     final since = state?.lastPulledAt?.toUtc() ?? initialCursor;
 
     final frontiers = <DateTime>[
+      await _drainShops(since),
       await _drainCategories(since),
       await _drainProducts(since),
       await _drainVariants(since),
@@ -319,6 +335,7 @@ final class SyncEngine {
       await _drainSaleItems(since),
       await _drainExpenses(since),
       await _drainCustomerPayments(since),
+      await _drainOffers(since),
       await _drainDeletions(since),
     ];
 
@@ -342,6 +359,12 @@ final class SyncEngine {
 
   /// Returns the timestamp of the last applied row, or [since] when the
   /// table had nothing new.
+  Future<DateTime> _drainShops(DateTime since) => _drainPage(
+    since,
+    pull: (since, limit) => _gateway.pullShops(since: since, limit: limit),
+    apply: (rows, at) => _applier.applyShopPage(rows, at),
+  );
+
   Future<DateTime> _drainCategories(DateTime since) => _drainPage(
     since,
     pull: (since, limit) => _gateway.pullCategories(since: since, limit: limit),
@@ -396,6 +419,12 @@ final class SyncEngine {
     pull: (since, limit) =>
         _gateway.pullCustomerPayments(since: since, limit: limit),
     apply: (rows, at) => _applier.applyCustomerPaymentPage(rows, at),
+  );
+
+  Future<DateTime> _drainOffers(DateTime since) => _drainPage(
+    since,
+    pull: (since, limit) => _gateway.pullOffers(since: since, limit: limit),
+    apply: (rows, at) => _applier.applyOfferPage(rows, at),
   );
 
   Future<DateTime> _drainDeletions(DateTime since) async {

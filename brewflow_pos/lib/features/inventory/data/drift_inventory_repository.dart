@@ -3,6 +3,7 @@ import 'package:brewflow_pos/core/database/daos/categories_dao.dart';
 import 'package:brewflow_pos/core/database/daos/product_variants_dao.dart';
 import 'package:brewflow_pos/core/database/daos/products_dao.dart';
 import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
@@ -106,7 +107,7 @@ final class DriftInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<Category> createCategory(String name) async {
+  Future<Category> createCategory(String name, {String? shopId}) async {
     final normalized = name.trim();
     if (normalized.isEmpty) {
       throw const UnexpectedInventoryFailure('Category name is required.');
@@ -117,10 +118,21 @@ final class DriftInventoryRepository implements InventoryRepository {
     try {
       final id = _uuid.v4();
       final now = DateTime.now().toUtc();
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
       final row = await (_outbox == null
-          ? _insertCategory(id: id, name: normalized, now: now)
+          ? _insertCategory(
+              id: id,
+              name: normalized,
+              now: now,
+              shopId: resolvedShopId,
+            )
           : _outbox.run(
-              write: () => _insertCategory(id: id, name: normalized, now: now),
+              write: () => _insertCategory(
+                id: id,
+                name: normalized,
+                now: now,
+                shopId: resolvedShopId,
+              ),
               snapshots: (row, context) async => [
                 OutboxAppend(
                   entity: MasterEntity.category,
@@ -147,9 +159,11 @@ final class DriftInventoryRepository implements InventoryRepository {
     required String id,
     required String name,
     required DateTime now,
+    required String shopId,
   }) => _categories.insert(
     db.CategoriesCompanion.insert(
       id: Value(id),
+      shopId: Value(shopId),
       name: name,
       createdAt: Value(now),
       updatedAt: Value(now),
@@ -277,6 +291,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     int? memberPricePaise,
     required bool isActive,
     List<ProductVariantInput> variants = const [],
+    String? shopId,
   }) async {
     _validateProductInput(
       name: name,
@@ -315,11 +330,13 @@ final class DriftInventoryRepository implements InventoryRepository {
     final effectiveStock = variants.isEmpty
         ? stockQuantity
         : variants.fold(0, (sum, v) => sum + v.stockQuantity);
+    final resolvedShopId = await resolveWritableShopId(_database, shopId);
     Future<Product> doCreate() {
       return _database.transaction(() async {
         final now = DateTime.now().toUtc();
         final row = await _products.insert(
           db.ProductsCompanion.insert(
+            shopId: Value(resolvedShopId),
             categoryId: categoryId,
             name: normalizedName,
             sku: Value(normalizedSku),
@@ -342,17 +359,24 @@ final class DriftInventoryRepository implements InventoryRepository {
             productId: row.id,
             quantity: stockQuantity,
             now: now,
+            shopId: resolvedShopId,
           );
         } else {
           for (final variant in variants) {
             final variantRow = await _variants.insert(
-              _variantCompanion(productId: row.id, input: variant, now: now),
+              _variantCompanion(
+                productId: row.id,
+                input: variant,
+                now: now,
+                shopId: resolvedShopId,
+              ),
             );
             await _recordOpeningIfAny(
               productId: row.id,
               variantId: variantRow.id,
               quantity: variant.stockQuantity,
               now: now,
+              shopId: resolvedShopId,
             );
           }
         }
@@ -397,6 +421,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     int? memberPricePaise,
     required bool isActive,
     List<ProductVariantInput> variants = const [],
+    String? shopId,
   }) async {
     _validateProductInput(
       name: name,
@@ -499,14 +524,22 @@ final class DriftInventoryRepository implements InventoryRepository {
               ),
             );
           } else {
+            // TODO: wire real shopId from auth/session; fallback keeps tests compiling
+            final resolvedShopId = await resolveWritableShopId(_database, shopId);
             final variantRow = await _variants.insert(
-              _variantCompanion(productId: id, input: variant, now: now),
+              _variantCompanion(
+                productId: id,
+                input: variant,
+                now: now,
+                shopId: resolvedShopId,
+              ),
             );
             await _recordOpeningIfAny(
               productId: id,
               variantId: variantRow.id,
               quantity: variant.stockQuantity,
               now: now,
+              shopId: resolvedShopId,
             );
           }
         }
@@ -707,12 +740,14 @@ final class DriftInventoryRepository implements InventoryRepository {
     String? variantId,
     required int quantity,
     required DateTime now,
+    required String shopId,
   }) async {
     if (quantity <= 0) {
       return;
     }
     await _movements.insert(
       db.StockMovementsCompanion.insert(
+        shopId: Value(shopId),
         productId: productId,
         variantId: Value(variantId),
         movementType: StockMovementType.opening.dbValue,
@@ -733,7 +768,9 @@ final class DriftInventoryRepository implements InventoryRepository {
     required String productId,
     required ProductVariantInput input,
     required DateTime now,
+    required String shopId,
   }) => db.ProductVariantsCompanion.insert(
+    shopId: Value(shopId),
     productId: productId,
     name: input.name.trim(),
     sku: Value(_normalizedSku(input.sku)),

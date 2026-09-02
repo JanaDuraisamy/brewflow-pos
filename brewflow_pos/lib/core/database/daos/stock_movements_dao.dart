@@ -25,6 +25,7 @@ final class StockMovementsDao {
   Future<List<StockMovement>> movementsFor(
     String productId, {
     String? variantId,
+    String? shopId,
   }) {
     final query = _db.select(_db.stockMovements)
       ..where(
@@ -35,12 +36,19 @@ final class StockMovementsDao {
                 : t.variantId.equals(variantId)),
       )
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
   /// Whether an OPENING movement already exists for the stock entity (there
   /// may be at most one, mirroring creation).
-  Future<bool> hasOpening(String productId, {String? variantId}) {
+  Future<bool> hasOpening(
+    String productId, {
+    String? variantId,
+    String? shopId,
+  }) {
     final query = _db.select(_db.stockMovements)
       ..where(
         (t) =>
@@ -51,6 +59,9 @@ final class StockMovementsDao {
                 : t.variantId.equals(variantId)),
       )
       ..limit(1);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get().then((rows) => rows.isNotEmpty);
   }
 

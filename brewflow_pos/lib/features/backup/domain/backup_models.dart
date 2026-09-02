@@ -14,8 +14,10 @@ library;
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
+import 'package:uuid/uuid.dart';
 
 import 'backup_failures.dart';
 
@@ -188,11 +190,22 @@ final class BackupEnvelope {
     this.schemaVersion = AppConstants.databaseSchemaVersion,
     this.format = kBackupFormat,
     this.backupVersion = kBackupVersion,
-  }) : createdAt = createdAt ?? DateTime.now().toUtc();
+    String? backupId,
+    this.checksum,
+  }) : createdAt = createdAt ?? DateTime.now().toUtc(),
+       backupId = backupId ?? _nextBackupId();
 
   final String format;
   final int backupVersion;
   final DateTime createdAt;
+
+  /// Unique identifier of this backup document (informational + traceability).
+  final String backupId;
+
+  /// Hex SHA-256 over the canonical serialized `data` block. Present on backups
+  /// written by this app ([encodeJson]); its presence is verified on parse so
+  /// a truncated or tampered file is rejected as corruption before restore.
+  final String? checksum;
 
   /// Installation that produced the backup; informational only.
   final String? sourceDeviceId;
@@ -215,21 +228,25 @@ final class BackupEnvelope {
     'format': format,
     'backupVersion': backupVersion,
     'createdAt': createdAt.toIso8601String(),
+    'backupId': backupId,
     if (sourceDeviceId != null) 'sourceDeviceId': sourceDeviceId,
     'shopId': shopId,
     'schemaVersion': schemaVersion,
     'settings': settingsJson,
+    'checksum': checksum ?? computeBackupChecksum(tables),
     'data': tables.toJson(),
   };
 
-  /// Encodes the envelope as a single JSON string ready for file/share.
+  /// Encodes the envelope as a single JSON string ready for file/share. The
+  /// integrity [checksum] is computed over the canonical `data` block and
+  /// embedded, so restore can detect any corruption or tampering.
   String encodeJson() => const JsonEncoder().convert(toJson());
 
   /// Parses and structurally validates a raw backup JSON string.
   ///
   /// Throws [InvalidBackupFormatFailure] when the document is not a BrewFlow
   /// backup, [IncompatibleBackupSchemaFailure] for a newer envelope layout,
-  /// and [CorruptBackupFailure] for damaged content.
+  /// and [CorruptBackupFailure] for damaged content or a checksum mismatch.
   factory BackupEnvelope.fromJsonString(String raw) {
     final Object? decoded;
     try {
@@ -269,7 +286,12 @@ final class BackupEnvelope {
       if (settingsJson != null) throw const CorruptBackupFailure();
     }
     final createdRaw = json['createdAt'];
-    return BackupEnvelope(
+    final checksum = json['checksum'];
+    if (checksum != null && checksum is! String) {
+      throw const CorruptBackupFailure();
+    }
+    final tables = BackupTables.fromJson(data);
+    final envelope = BackupEnvelope(
       shopId: shopId,
       schemaVersion: schemaVersion,
       sourceDeviceId: _optionalText(json['sourceDeviceId']),
@@ -277,15 +299,43 @@ final class BackupEnvelope {
       createdAt: createdRaw is String
           ? (DateTime.tryParse(createdRaw) ?? DateTime.now().toUtc())
           : DateTime.now().toUtc(),
-      tables: BackupTables.fromJson(data),
+      tables: tables,
+      backupId: _optionalText(json['backupId']) ?? _nextBackupId(),
+      checksum: checksum as String?,
     );
+    envelope.verifyChecksum();
+    return envelope;
   }
+
+  /// Recomputes the checksum from the parsed [tables] and rejects the document
+  /// when an embedded [checksum] does not match (corruption or tampering).
+  /// Legacy backups without a checksum are still accepted.
+  void verifyChecksum() {
+    final embedded = checksum;
+    if (embedded == null) return;
+    if (computeBackupChecksum(tables) != embedded) {
+      throw const CorruptBackupFailure();
+    }
+  }
+
+  static String _nextBackupId() => uuid.v4();
 
   static String? _optionalText(dynamic value) {
     if (value is! String) return null;
     final trimmed = value.trim();
     return trimmed.isEmpty ? null : trimmed;
   }
+}
+
+/// The shared UUID generator instance for backup identifiers.
+final Uuid uuid = Uuid();
+
+/// Canonical SHA-256 hex checksum of a backup's table payload. Independent of
+/// header fields (createdAt/shopId/settings) so a checksum survives unrelated
+/// metadata; any data mutation or truncation changes it.
+String computeBackupChecksum(BackupTables tables) {
+  final canonical = const JsonEncoder().convert(tables.toJson());
+  return sha256.convert(utf8.encode(canonical)).toString();
 }
 
 /// Serializes the non-sensitive [ShopSettings] into the backup envelope.

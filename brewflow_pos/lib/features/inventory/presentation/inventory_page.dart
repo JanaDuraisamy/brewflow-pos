@@ -675,9 +675,19 @@ final class _ProductList extends ConsumerWidget {
       return _MobileProductList(products: products);
     }
     if (width >= 800) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: _ProductTable(products: products, categories: categories),
+      // The table can be taller and wider than the available viewport. The
+      // outer (vertical) scroll view lets rows that fall below the fold be
+      // reached, while the inner (horizontal) scroll view keeps the wide
+      // columns scrollable.
+      return Scrollbar(
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.vertical,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: _ProductTable(products: products, categories: categories),
+          ),
+        ),
       );
     }
     return ListView.builder(

@@ -14,9 +14,12 @@ final class SaleItemsDao {
 
   /// Lines of one sale in the order they were inserted (insertion order is
   /// preserved by SQLite rowid ordering).
-  Future<List<SaleItem>> bySale(String saleId) {
+  Future<List<SaleItem>> bySale(String saleId, {String? shopId}) {
     final query = _db.select(_db.saleItems)
       ..where((t) => t.saleId.equals(saleId));
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 }

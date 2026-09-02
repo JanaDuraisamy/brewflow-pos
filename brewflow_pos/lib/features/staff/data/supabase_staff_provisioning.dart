@@ -27,16 +27,16 @@ abstract interface class StaffProvisioningService {
 }
 
 final class SupabaseStaffProvisioning implements StaffProvisioningService {
-  SupabaseStaffProvisioning(this._client);
+  SupabaseStaffProvisioning(this._functions);
 
   static const String tag = 'Staff';
 
-  final SupabaseClient _client;
+  final FunctionsClient _functions;
 
   @override
   Future<AuthUser> createStaffAuthUser(StaffCreateInput input) async {
     try {
-      final response = await _client.functions.invoke(
+      final response = await _functions.invoke(
         'create-staff',
         body: {
           'email': input.email,
@@ -49,19 +49,72 @@ final class SupabaseStaffProvisioning implements StaffProvisioningService {
         throw const ProvisioningFailure();
       }
       return AuthUser(id: data['id'] as String, email: data['email'] as String);
+    } on FunctionsHttpException catch (error) {
+      // The function answered with a typed error — report the exact cause.
+      throw _mapFunctionError(error.status, error.details);
+    } on FunctionsRelayException catch (error) {
+      // The relay itself rejected the call (e.g. function not deployed yet).
+      AppLog.error('create-staff relay error', tag: tag, error: error);
+      throw const ProvisioningFailure(
+        'The staff service is not deployed yet on this project.',
+      );
+    } on FunctionsFetchException catch (error) {
+      // No response reached the client (network down / function unknown).
+      AppLog.error('create-staff unreachable', tag: tag, error: error);
+      throw const ProvisioningFailure(
+        'The staff service could not be reached. Check your connection.',
+      );
     } on FunctionException catch (error) {
       AppLog.error('create-staff function failed', tag: tag, error: error);
-      throw const ProvisioningFailure();
+      throw _mapFunctionError(error.status, error.details);
     } on Object {
       throw const ProvisioningFailure();
     }
   }
+
+  /// Maps a typed Edge-Function error onto the sealed [StaffFailure] family,
+  /// keeping the cause user-safe without leaking server internals.
+  StaffFailure _mapFunctionError(int status, dynamic details) {
+    switch (status) {
+      case 400:
+        return const ProvisioningFailure(
+          'That staff account is not valid. Please check the details.',
+        );
+      case 401:
+        return const ProvisioningFailure(
+          'Your session has expired. Please sign in again and retry.',
+        );
+      case 403:
+        return const ProvisioningFailure(
+          'Only an active shop owner can add staff members.',
+        );
+      case 409:
+        if (_errorCode(details) == 'DUPLICATE_EMAIL') {
+          return const DuplicateStaffEmailFailure();
+        }
+        return const ProvisioningFailure();
+      case 500:
+        return const ProvisioningFailure(
+          'The staff service hit an error. Please try again.',
+        );
+      default:
+        return const ProvisioningFailure();
+    }
+  }
+
+  static String? _errorCode(dynamic details) {
+    if (details is Map) {
+      final code = details['error'];
+      if (code is String) return code;
+    }
+    return null;
+  }
 }
 
 /// Composition root for the provisioning boundary. Tests override this with
-/// an in-memory fake; production wires the real Supabase client.
+/// an in-memory fake; production wires the real Supabase functions client.
 final staffProvisioningServiceProvider = Provider<StaffProvisioningService>((
   ref,
 ) {
-  return SupabaseStaffProvisioning(Supabase.instance.client);
+  return SupabaseStaffProvisioning(Supabase.instance.client.functions);
 });

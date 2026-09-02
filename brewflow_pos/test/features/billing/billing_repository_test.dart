@@ -89,6 +89,15 @@ void main() {
         );
   }
 
+  /// Creates a single Cafe shop row and returns its id, so tests can scope
+  /// pre-seeded rows and repo writes to the same concrete shop.
+  Future<String> seedShop() async {
+    await database
+        .into(database.shops)
+        .insert(ShopsCompanion.insert(id: Value('shop-1'), name: 'Cafe'));
+    return 'shop-1';
+  }
+
   Future<String?> customerIdOf(String saleId) async {
     final row = await (database.select(
       database.sales,
@@ -194,6 +203,125 @@ void main() {
         'BF-000003',
       });
       expect(await stockOf('p1'), 17);
+    });
+
+    test('empty sales start the sequence at BF-000001', () async {
+      await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 20);
+      final completed = await repository.completeSale(
+        lines: lines([('p1', 1)]),
+        paymentMethod: PaymentMethod.cash,
+      );
+      expect(completed.sale.receiptNumber, 'BF-000001');
+      await repository.completeSale(
+        lines: lines([('p1', 1)]),
+        paymentMethod: PaymentMethod.cash,
+      );
+      final all = await repository.sales();
+      expect(all.map((s) => s.receiptNumber).toSet(), {
+        'BF-000001',
+        'BF-000002',
+      });
+      expect(await stockOf('p1'), 18);
+    });
+
+    test('advances past an existing BF-000001 receipt number', () async {
+      await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 20);
+      final shopId = await seedShop();
+      // Simulate a device whose local sales already hold the lowest receipt
+      // number while the counter has never advanced past it (the reported
+      // failure mode that blocked billing).
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              shopId: Value(shopId),
+              receiptNumber: 'BF-000001',
+              subtotalPaise: 5000,
+              totalPaise: 5000,
+            ),
+          );
+
+      final completed = await repository.completeSale(
+        lines: lines([('p1', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: shopId,
+      );
+      // Must not collide with the pre-existing BF-000001.
+      expect(completed.sale.receiptNumber, 'BF-000002');
+      final all = await repository.sales();
+      expect(all.map((s) => s.receiptNumber), contains('BF-000001'));
+      expect(all.map((s) => s.receiptNumber), contains('BF-000002'));
+    });
+
+    test('advances past an existing high receipt number', () async {
+      await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 20);
+      final shopId = await seedShop();
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              shopId: Value(shopId),
+              receiptNumber: 'BF-004200',
+              subtotalPaise: 5000,
+              totalPaise: 5000,
+            ),
+          );
+
+      final completed = await repository.completeSale(
+        lines: lines([('p1', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: shopId,
+      );
+      expect(completed.sale.receiptNumber, 'BF-004201');
+    });
+
+    test('repeated allocations never duplicate a receipt number', () async {
+      await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 50);
+      final shopId = await seedShop();
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              shopId: Value(shopId),
+              receiptNumber: 'BF-000001',
+              subtotalPaise: 5000,
+              totalPaise: 5000,
+            ),
+          );
+      final issued = <String>{};
+      for (var i = 0; i < 10; i++) {
+        final completed = await repository.completeSale(
+          lines: lines([('p1', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shopId,
+        );
+        issued.add(completed.sale.receiptNumber);
+      }
+      // Ten sales produce ten distinct receipts, none reusing the existing one.
+      expect(issued, hasLength(10));
+      expect(issued, isNot(contains('BF-000001')));
+    });
+
+    test('concurrent checkouts never issue the same receipt number', () async {
+      await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 20);
+      final shopId = await seedShop();
+      final outcomes = await Future.wait<Object?>([
+        for (var i = 0; i < 4; i++)
+          repository
+              .completeSale(
+                lines: lines([('p1', 1)]),
+                paymentMethod: PaymentMethod.cash,
+                shopId: shopId,
+              )
+              .then<Object?>((completed) => completed)
+              .catchError((Object error) => error),
+      ]);
+      final successes = outcomes.whereType<CompletedSale>().toList();
+      expect(successes, hasLength(4));
+      final receipts = successes.map((s) => s.sale.receiptNumber).toSet();
+      expect(receipts, hasLength(4));
+      final all = await repository.sales();
+      expect(all.map((s) => s.receiptNumber).toSet(), receipts);
     });
 
     test('succeeds when quantity equals available stock exactly', () async {
@@ -521,7 +649,7 @@ void main() {
       },
     );
 
-    test('a paid linked sale keeps the pre-existing ledger behavior', () async {
+    test('a paid linked sale adds no customer debt', () async {
       await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 5);
       await seedCustomer(id: 'c1');
 
@@ -532,22 +660,30 @@ void main() {
         customerId: 'c1',
       );
 
-      // The sale itself is PAID with its method — exactly as before 15A.
+      // The sale itself is PAID with its method.
       final loaded = await repository.saleById(completed.sale.id);
       expect(loaded!.paymentStatus, PaymentStatus.paid);
       expect(loaded.paymentMethod, PaymentMethod.cash);
       expect(loaded.customerId, 'c1');
 
-      // The customer ledger sees the same purchase it always has (linked
-      // sales are settled by recording ledger payments — unchanged).
+      // BUG 4: a PAID customer-linked sale is settled at the counter, so the
+      // ledger must NOT create any outstanding due.
       final ledger = DriftCustomerLedgerRepository(database);
       final summary = await ledger.summary('c1');
-      expect(summary.totalPurchasesPaise, 24000);
+      expect(summary.totalPurchasesPaise, 0, reason: 'no open credit bill');
       expect(summary.totalPaidPaise, 0);
-      expect(summary.purchaseCount, 1);
+      expect(summary.outstandingPaise, 0, reason: 'no due for a paid sale');
+      expect(summary.purchaseCount, 0);
       expect(summary.paymentCount, 0);
+      expect(await ledger.outstandingForCustomer('c1'), 0);
+
+      // Purchase history still lists the sale, but as fully settled.
       final purchases = await ledger.purchases('c1');
-      expect(purchases.single.status, SalePaymentStatus.unpaid);
+      expect(purchases, hasLength(1));
+      expect(purchases.single.paidPaise, 24000);
+      expect(purchases.single.duePaise, 0);
+      expect(purchases.single.status, SalePaymentStatus.paid);
+      expect(await ledger.customerIdsWithDue(), isEmpty);
     });
 
     test(
@@ -655,6 +791,7 @@ void main() {
       await seedProduct(id: 'p1', name: 'Filter Coffee', stock: 10);
       await seedCustomer(id: 'c1');
       await seedCustomer(id: 'c2');
+      final shopId = await seedShop();
 
       final outcomes = await Future.wait<Object?>([
         repository
@@ -662,6 +799,7 @@ void main() {
               lines: lines([('p1', 3)]),
               paymentStatus: PaymentStatus.notPaid,
               customerId: 'c1',
+              shopId: shopId,
             )
             .then<Object?>((completed) => completed)
             .catchError((Object error) => error),
@@ -670,6 +808,7 @@ void main() {
               lines: lines([('p1', 4)]),
               paymentStatus: PaymentStatus.notPaid,
               customerId: 'c2',
+              shopId: shopId,
             )
             .then<Object?>((completed) => completed)
             .catchError((Object error) => error),

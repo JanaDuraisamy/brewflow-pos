@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'shops.dart';
+
 /// ---------------------------------------------------------------------------
 /// PurchaseSequences — transaction-safe purchase number counter
 ///
@@ -17,8 +19,12 @@ class PurchaseSequences extends Table {
   /// Fixed row id: 'purchase'.
   TextColumn get id => text()();
 
+  /// Business/shop that owns this sequence.
+  TextColumn get shopId =>
+      text().references(Shops, #id, onDelete: KeyAction.cascade)();
+
   @override
-  Set<Column> get primaryKey => {id};
+  Set<Column> get primaryKey => {id, shopId};
 
   /// The next sequence value to hand out, seeded at 0 so the first purchase
   /// is 1. Must be >= 0.

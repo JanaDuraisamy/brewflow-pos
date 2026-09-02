@@ -96,7 +96,7 @@ final class FakeInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<Category> createCategory(String name) async {
+  Future<Category> createCategory(String name, {String? shopId}) async {
     _throwIfLoadError();
     final normalized = name.trim();
     if (normalized.isEmpty) {
@@ -175,6 +175,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     int? memberPricePaise,
     required bool isActive,
     List<ProductVariantInput> variants = const [],
+    String? shopId,
   }) async {
     _throwIfLoadError();
     _validatePrices(sellingPricePaise, costPricePaise);
@@ -266,6 +267,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     int? memberPricePaise,
     required bool isActive,
     List<ProductVariantInput> variants = const [],
+    String? shopId,
   }) async {
     _throwIfLoadError();
     _validatePrices(sellingPricePaise, costPricePaise);

@@ -76,10 +76,20 @@ Future<void> _initLocalStorage() async {
 }
 
 /// Initializes the Supabase client from environment values.
+///
+/// Explicit auth options ensure session persistence and background refresh
+/// behave identically on Phone and Tablet (some OEMs delay timers when the
+/// app is backgrounded). This directly addresses the tablet sign-out report
+/// where a stored refresh token was not being refreshed after the app was
+/// closed for a long period.
 Future<void> _initSupabase() async {
   await Supabase.initialize(
     url: AppEnv.supabaseUrl,
     publishableKey: AppEnv.supabaseAnonKey,
+    authOptions: const FlutterAuthClientOptions(
+      authFlowType: AuthFlowType.pkce,
+      autoRefreshToken: true,
+    ),
     // Silence the SDK's own debug output in production builds.
     debug: AppFlavor.current.isDevelopment,
   );

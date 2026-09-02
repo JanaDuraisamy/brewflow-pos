@@ -12,8 +12,8 @@
 /// - Overpayment is rejected transactionally: a payment is written only when
 ///   amountPaise <= the sale's remaining due at write time.
 /// - Payments are append-only; no edit, delete or reversal API exists.
-/// - All due/outstanding values are derived (sales totals minus non-reversed
-///   payments), never persisted.
+/// - All due/outstanding values are derived (NOT_PAID sales totals minus
+///   non-reversed payments), never persisted. A PAID sale never creates due.
 /// ---------------------------------------------------------------------------
 library;
 
@@ -96,6 +96,7 @@ abstract interface class CustomerLedgerRepository {
     required int amountPaise,
     required PaymentMethod paymentMethod,
     String? note,
+    String? shopId,
   });
 
   /// Remaining due of one customer across all customer-linked sales.

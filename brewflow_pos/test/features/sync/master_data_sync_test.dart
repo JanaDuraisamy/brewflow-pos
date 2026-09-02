@@ -9,6 +9,7 @@ import 'package:brewflow_pos/features/sync/data/local_master_data_applier.dart';
 import 'package:brewflow_pos/features/sync/data/sync_engine.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -58,8 +59,21 @@ void main() {
 
   late FakeRemoteStore cloud;
 
-  Device makeDevice(String id, String shopId) {
+  Future<Device> makeDevice(String id, String shopId) async {
     final database = AppDatabase(NativeDatabase.memory());
+    // Seed the canonical single-shop row exactly as owner bootstrap does, so
+    // the local write path resolves the session shopId (not a random UUID),
+    // outbox payloads and local FK agree, and pulled shop-scoped rows always
+    // have a target `shops` row to reference.
+    await database
+        .into(database.shops)
+        .insert(
+          ShopsCompanion.insert(
+            id: Value(shopId),
+            name: 'BrewFlow POS',
+            createdAt: Value(DateTime.utc(2026, 1, 1)),
+          ),
+        );
     final sync = DriftSyncRepository(database);
     final gateway = FakeRemoteMasterDataGateway(cloud, viewerShopId: shopId);
     Future<SyncSessionContext> contextResolver() async =>
@@ -95,8 +109,8 @@ void main() {
 
   group('category sync', () {
     test('A creates → cloud → B receives', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -115,8 +129,8 @@ void main() {
     });
 
     test('B updates → cloud → A receives (round-trip)', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -135,7 +149,7 @@ void main() {
     test(
       'duplicate replay of one logical change collapses while pending',
       () async {
-        final a = makeDevice('A', 'shop-1');
+        final a = await makeDevice('A', 'shop-1');
         addTearDown(a.database.close);
 
         // Two rapid renames of the SAME unsynced category collapse onto one
@@ -151,8 +165,8 @@ void main() {
     test(
       'offline keeps data pending; retry succeeds when back online',
       () async {
-        final a = makeDevice('A', 'shop-1');
-        final b = makeDevice('B', 'shop-1');
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
         addTearDown(a.database.close);
         addTearDown(b.database.close);
 
@@ -173,7 +187,7 @@ void main() {
     test(
       'exhausted retries park as FAILED without blocking later changes',
       () async {
-        final a = makeDevice('A', 'shop-1');
+        final a = await makeDevice('A', 'shop-1');
         addTearDown(a.database.close);
 
         a.gateway.pushesFail = true;
@@ -200,8 +214,8 @@ void main() {
     test(
       'hard delete propagates as tombstone; other device deactivates',
       () async {
-        final a = makeDevice('A', 'shop-1');
-        final b = makeDevice('B', 'shop-1');
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
         addTearDown(a.database.close);
         addTearDown(b.database.close);
 
@@ -225,8 +239,8 @@ void main() {
 
   group('product + variant sync', () {
     test('A creates product with variant → B receives parent first', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -267,8 +281,8 @@ void main() {
     });
 
     test('product edit round-trips including variant changes', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -308,8 +322,8 @@ void main() {
 
   group('supplier sync', () {
     test('create + update round-trip preserves every field', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -353,8 +367,8 @@ void main() {
     test(
       'membership + WhatsApp status travel verbatim; phone canonical',
       () async {
-        final a = makeDevice('A', 'shop-1');
-        final b = makeDevice('B', 'shop-1');
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
         addTearDown(a.database.close);
         addTearDown(b.database.close);
 
@@ -398,8 +412,8 @@ void main() {
 
   group('pull mechanics', () {
     test('applier never overwrites rows with pending local changes', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -427,8 +441,8 @@ void main() {
     });
 
     test('cursor advances; subsequent pulls are incremental', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 
@@ -455,8 +469,8 @@ void main() {
     test(
       'replayed pulls are idempotent (duplicate application safe)',
       () async {
-        final a = makeDevice('A', 'shop-1');
-        final b = makeDevice('B', 'shop-1');
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
         addTearDown(a.database.close);
         addTearDown(b.database.close);
 
@@ -471,7 +485,7 @@ void main() {
     );
 
     test('bootstrap: a brand-new device pulls the whole catalog', () async {
-      final a = makeDevice('A', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
       addTearDown(a.database.close);
 
       final category = await a.inventory.createCategory('Bakery');
@@ -490,7 +504,7 @@ void main() {
       );
       await a.runCycle();
 
-      final fresh = makeDevice('NEW-TABLET', 'shop-1');
+      final fresh = await makeDevice('NEW-TABLET', 'shop-1');
       addTearDown(fresh.database.close);
       await fresh.runCycle();
 
@@ -506,8 +520,8 @@ void main() {
 
   group('conflict policy + security', () {
     test('a foreign shop never sees another shop’s master data', () async {
-      final a = makeDevice('A', 'shop-1');
-      final intruder = makeDevice('EVIL', 'shop-2');
+      final a = await makeDevice('A', 'shop-1');
+      final intruder = await makeDevice('EVIL', 'shop-2');
       addTearDown(a.database.close);
       addTearDown(intruder.database.close);
 
@@ -535,8 +549,8 @@ void main() {
     });
 
     test('pending local edits win over concurrent remote overwrites', () async {
-      final a = makeDevice('A', 'shop-1');
-      final b = makeDevice('B', 'shop-1');
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
       addTearDown(a.database.close);
       addTearDown(b.database.close);
 

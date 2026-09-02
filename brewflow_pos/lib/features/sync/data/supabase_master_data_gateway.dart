@@ -42,6 +42,48 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     }, onConflict: 'id');
   }
 
+  // ---- Shops -----------------------------------------------------------
+
+  @override
+  Future<void> upsertShops(List<SyncShop> rows) async {
+    if (rows.isEmpty) return;
+    // The `shops` table has no shop_id column (the shop is its own scope) and
+    // carries the touch_row_updated_at trigger, so renames bump updated_at and
+    // become visible to incremental pulls.
+    await _client.from('shops').upsert([
+      for (final row in rows) _shopToServer(row),
+    ], onConflict: 'id');
+  }
+
+  @override
+  Future<PullPage<SyncShop>> pullShops({
+    required DateTime since,
+    required int limit,
+  }) async {
+    final data = await _client
+        .from('shops')
+        .select()
+        .gt('updated_at', since.toIso8601String())
+        .order('updated_at', ascending: true)
+        .limit(limit);
+    final rows = [for (final json in data) _shopFromServer(json)];
+    final newCursor = rows.isEmpty ? since : _utc(data.last['updated_at']);
+    return PullPage(rows: rows, newCursor: newCursor);
+  }
+
+  Map<String, dynamic> _shopToServer(SyncShop row) => {
+    'id': row.id,
+    'name': row.name,
+    'created_at': row.createdAt.toIso8601String(),
+  };
+
+  SyncShop _shopFromServer(Map<String, dynamic> json) => SyncShop(
+    id: json['id'] as String,
+    shopId: json['id'] as String,
+    name: json['name'] as String,
+    createdAt: _utc(json['created_at']),
+  );
+
   // ---- Categories -----------------------------------------------------------
 
   @override
@@ -298,6 +340,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'total_paise': row.totalPaise,
     'payment_method': row.paymentMethod,
     'payment_status': row.paymentStatus,
+    'voided': row.voided,
+    'voided_at': row.voidedAt?.toIso8601String(),
     'client_created_at': row.createdAt.toIso8601String(),
   };
 
@@ -311,6 +355,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     paymentMethod: json['payment_method'] as String?,
     paymentStatus: json['payment_status'] as String,
     createdAt: _utc(json['client_created_at']),
+    voided: json['voided'] as bool? ?? false,
+    voidedAt: json['voided_at'] != null ? _utc(json['voided_at']) : null,
   );
 
   // ---- Sale Items ------------------------------------------------------------
@@ -453,6 +499,48 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
             : null,
         createdAt: _utc(json['client_created_at']),
       );
+
+  // ---- Offers -------------------------------------------------------------------
+
+  @override
+  Future<void> upsertOffers(List<SyncOffer> rows) =>
+      _upsert('offers', [for (final r in rows) _offerToServer(r)]);
+
+  @override
+  Future<PullPage<SyncOffer>> pullOffers({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'offers',
+    since: since,
+    limit: limit,
+    fromRow: _offerFromServer,
+  );
+
+  Map<String, dynamic> _offerToServer(SyncOffer r) => {
+    'id': r.id,
+    'shop_id': r.shopId,
+    'name': r.name,
+    'type': r.type,
+    'config_json': r.configJson,
+    'is_active': r.isActive,
+    'start_at': r.startAt?.toIso8601String(),
+    'end_at': r.endAt?.toIso8601String(),
+    'client_created_at': r.createdAt.toIso8601String(),
+  };
+
+  SyncOffer _offerFromServer(Map<String, dynamic> j) => SyncOffer(
+    id: j['id'] as String,
+    shopId: j['shop_id'] as String,
+    name: j['name'] as String,
+    type: j['type'] as String,
+    configJson: j['config_json'] as String,
+    isActive: j['is_active'] as bool,
+    startAt: j['start_at'] != null ? _utc(j['start_at']) : null,
+    endAt: j['end_at'] != null ? _utc(j['end_at']) : null,
+    createdAt: _utc(j['client_created_at']),
+    updatedAt: _utc(j['updated_at']),
+  );
 
   // ---- Deletions -------------------------------------------------------------------
 

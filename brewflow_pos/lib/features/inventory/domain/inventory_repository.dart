@@ -81,7 +81,7 @@ abstract interface class InventoryRepository {
   /// Whether a product with this SKU exists (case-insensitive).
   Future<bool> skuExists(String sku, {String? exceptId});
 
-  Future<Category> createCategory(String name);
+  Future<Category> createCategory(String name, {String? shopId});
 
   Future<void> updateCategoryName(String id, String name);
 
@@ -120,6 +120,7 @@ abstract interface class InventoryRepository {
     int? memberPricePaise,
     required bool isActive,
     List<ProductVariantInput> variants = const [],
+    String? shopId,
   });
 
   /// Updates a product's editable fields. [stockQuantity] (and variant stock)
@@ -146,6 +147,7 @@ abstract interface class InventoryRepository {
     int? memberPricePaise,
     required bool isActive,
     List<ProductVariantInput> variants = const [],
+    String? shopId,
   });
 
   Future<void> setProductActive(String id, bool isActive);

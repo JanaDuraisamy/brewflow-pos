@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import 'customers.dart';
 import 'sale_sequences.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// Sales — one row per completed POS transaction
@@ -24,14 +25,19 @@ import 'sale_sequences.dart';
 ///   REQUIRE a customer: the unpaid total is the customer's ledger debt.
 /// ---------------------------------------------------------------------------
 
-@TableIndex(name: 'idx_sales_created_at', columns: {#createdAt})
-@TableIndex(name: 'idx_sales_customer_id', columns: {#customerId})
+@TableIndex(name: 'idx_sales_shop', columns: {#shopId})
+@TableIndex(name: 'idx_sales_created_at', columns: {#shopId, #createdAt})
+@TableIndex(name: 'idx_sales_customer_id', columns: {#shopId, #customerId})
 class Sales extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this sale.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning customer for customer-linked sales; NULL for walk-ins. Deleting a
   /// customer with sales history is rejected (RESTRICT).
@@ -41,8 +47,13 @@ class Sales extends Table {
     onDelete: KeyAction.restrict,
   )();
 
-  /// Human-readable receipt reference; unique across all sales.
-  TextColumn get receiptNumber => text().unique()();
+  /// Human-readable receipt reference; unique per shop.
+  TextColumn get receiptNumber => text()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+    {shopId, receiptNumber},
+  ];
 
   /// Sum of line totals in paise, before any adjustments. Must be >= 0.
   IntColumn get subtotalPaise =>

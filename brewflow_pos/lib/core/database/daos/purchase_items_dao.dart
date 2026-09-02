@@ -16,9 +16,12 @@ final class PurchaseItemsDao {
 
   /// Lines of one purchase in the order they were inserted (insertion order
   /// is preserved by SQLite rowid ordering).
-  Future<List<PurchaseItem>> byPurchase(String purchaseId) {
+  Future<List<PurchaseItem>> byPurchase(String purchaseId, {String? shopId}) {
     final query = _db.select(_db.purchaseItems)
       ..where((t) => t.purchaseId.equals(purchaseId));
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 

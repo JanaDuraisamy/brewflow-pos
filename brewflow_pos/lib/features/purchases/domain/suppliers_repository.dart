@@ -62,6 +62,7 @@ abstract interface class SuppliersRepository {
     String? address,
     String? notes,
     bool isActive,
+    String? shopId,
   });
 
   Future<void> updateSupplier({

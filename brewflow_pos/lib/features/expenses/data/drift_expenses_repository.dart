@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/expenses_dao.dart';
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
@@ -28,11 +29,13 @@ final class DriftExpensesRepository implements ExpensesRepository {
   DriftExpensesRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
-  }) : _expenses = ExpensesDao(database),
+  }) : _database = database,
+       _expenses = ExpensesDao(database),
        _outbox = outboxCoordinator;
 
   static const String tag = 'Expenses';
 
+  final db.AppDatabase _database;
   final ExpensesDao _expenses;
   final SyncOutboxCoordinator? _outbox;
 
@@ -84,13 +87,16 @@ final class DriftExpensesRepository implements ExpensesRepository {
     String? note,
     bool isActive = true,
     ExpensePaymentStatus paymentStatus = ExpensePaymentStatus.paid,
+    String? shopId,
   }) async {
     final normalizedName = _requiredText(name, 'Expense name is required.');
     final normalizedPaise = _nonNegativePaise(amountPaise);
     final normalizedNote = _optionalText(note);
     try {
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
       final result = await (_outbox == null
           ? _insertExpense(
+              shopId: resolvedShopId,
               name: normalizedName,
               amountPaise: normalizedPaise,
               category: category,
@@ -102,6 +108,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
             )
           : _outbox.run(
               write: () => _insertExpense(
+                shopId: resolvedShopId,
                 name: normalizedName,
                 amountPaise: normalizedPaise,
                 category: category,
@@ -138,6 +145,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
   }
 
   Future<db.Expense> _insertExpense({
+    required String shopId,
     required String name,
     required int amountPaise,
     required ExpenseCategory category,
@@ -148,6 +156,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
     required ExpensePaymentStatus paymentStatus,
   }) => _expenses.insert(
     db.ExpensesCompanion.insert(
+      shopId: Value(shopId),
       name: name,
       amountPaise: amountPaise,
       category: category.dbValue,

@@ -1,10 +1,14 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/storage/app_storage.dart';
+import 'package:brewflow_pos/features/settings/data/drift_shop_name_repository.dart';
 import 'package:brewflow_pos/features/settings/data/preferences_settings_repository.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
+import 'package:brewflow_pos/features/settings/domain/shop_name_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_repository.dart';
+import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
+import 'package:brewflow_pos/app/providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -27,6 +31,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Owns the single settings repository for the application scope.
 final settingsRepositoryProvider = Provider<SettingsRepository>((ref) {
   return PreferencesSettingsRepository(AppStorage.preferences);
+});
+
+/// Authoritative shop-name store (Drift `shops` + SHOP sync outbox). Reads
+/// and writes the local shop display name that syncs cross-device.
+final shopNameRepositoryProvider = Provider<ShopNameRepository>((ref) {
+  return DriftShopNameRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(syncOutboxCoordinatorProvider),
+  );
 });
 
 /// The persisted shop settings; falls back to [ShopSettings.defaults] when
@@ -66,6 +79,19 @@ final class SettingsController extends AsyncNotifier<ShopSettings> {
     requirePermission(ref, Permission.settings);
     try {
       await ref.read(settingsRepositoryProvider).save(next);
+      // Keep the authoritative `shops.name` + SHOP outbox in sync with the
+      // user's rename (cross-device propagation). Best-effort and
+      // offline-first — a failure here must never fail the settings save.
+      try {
+        await ref.read(shopNameRepositoryProvider).persist(next.shopName);
+      } catch (error, stackTrace) {
+        AppLog.warning(
+          'Shop name sync skipped (local settings already saved)',
+          tag: tag,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       state = AsyncData(next);
     } on SettingsFailure {
       rethrow;

@@ -16,18 +16,26 @@ final class ProductVariantsDao {
   final AppDatabase _db;
 
   /// All variants of one product, oldest first (stable creation order).
-  Future<List<ProductVariant>> forProduct(String productId) {
+  Future<List<ProductVariant>> forProduct(String productId, {String? shopId}) {
     final query = _db.select(_db.productVariants)
       ..where((t) => t.productId.equals(productId))
       ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
   /// All variants grouped by product id, oldest first within each product.
-  Future<Map<String, List<ProductVariant>>> allByProduct() async {
-    final rows = await (_db.select(
-      _db.productVariants,
-    )..orderBy([(t) => OrderingTerm.asc(t.createdAt)])).get();
+  Future<Map<String, List<ProductVariant>>> allByProduct({
+    String? shopId,
+  }) async {
+    final base = _db.select(_db.productVariants)
+      ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
+    if (shopId != null) {
+      base.where((t) => t.shopId.equals(shopId));
+    }
+    final rows = await base.get();
     final byProduct = <String, List<ProductVariant>>{};
     for (final row in rows) {
       byProduct.putIfAbsent(row.productId, () => []).add(row);
@@ -38,7 +46,8 @@ final class ProductVariantsDao {
   /// Whether a variant with this SKU already exists (case-insensitive).
   ///
   /// [exceptId] excludes one variant so an edit can keep its own SKU.
-  Future<bool> skuExists(String sku, {String? exceptId}) async {
+  /// When [shopId] is provided the check is scoped to that business.
+  Future<bool> skuExists(String sku, {String? exceptId, String? shopId}) async {
     final table = _db.productVariants;
     final query = _db.selectOnly(table)..addColumns([table.id]);
     final conditions = <Expression<bool>>[
@@ -46,6 +55,9 @@ final class ProductVariantsDao {
     ];
     if (exceptId != null) {
       conditions.add(table.id.isNotValue(exceptId));
+    }
+    if (shopId != null) {
+      conditions.add(table.shopId.equals(shopId));
     }
     query.where(conditions.reduce((a, b) => a & b));
     query.limit(1);

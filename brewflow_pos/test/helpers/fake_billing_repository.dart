@@ -48,6 +48,7 @@ final class FakeBillingRepository implements BillingRepository {
     PaymentStatus paymentStatus = PaymentStatus.paid,
     PaymentMethod? paymentMethod,
     String? customerId,
+    String? shopId,
   }) async {
     checkouts += 1;
     lastPaymentMethod = paymentMethod;

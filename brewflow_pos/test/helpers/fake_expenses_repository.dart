@@ -121,6 +121,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     String? note,
     bool isActive = true,
     ExpensePaymentStatus paymentStatus = ExpensePaymentStatus.paid,
+    String? shopId,
   }) async {
     _throwIfLoadError();
     return _store(

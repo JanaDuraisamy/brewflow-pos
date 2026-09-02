@@ -102,6 +102,7 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
     required int amountPaise,
     required PaymentMethod paymentMethod,
     String? note,
+    String? shopId,
   }) {
     calls += 1;
     return inner.recordPayment(
@@ -110,6 +111,7 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
       amountPaise: amountPaise,
       paymentMethod: paymentMethod,
       note: note,
+      shopId: shopId,
     );
   }
 

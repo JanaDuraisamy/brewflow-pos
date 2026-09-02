@@ -27,6 +27,7 @@ final class ExpensesDao {
     DateTime? fromUtc,
     DateTime? toUtc,
     bool? active,
+    String? shopId,
   }) {
     final query = _db.select(_db.expenses)
       ..where(
@@ -44,24 +45,34 @@ final class ExpensesDao {
         (t) => OrderingTerm.desc(t.expenseDate),
         (t) => OrderingTerm.desc(t.createdAt),
       ]);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
-  Future<Expense?> byId(String id) => (_db.select(
-    _db.expenses,
-  )..where((t) => t.id.equals(id))).getSingleOrNull();
+  Future<Expense?> byId(String id, {String? shopId}) {
+    final query = _db.select(_db.expenses)..where((t) => t.id.equals(id));
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    return query.getSingleOrNull();
+  }
 
   /// Sum of the active NOT_PAID expenses — the shop payable total in paise.
   /// Zero when there is nothing outstanding.
-  Future<int> payablePaise() async {
+  Future<int> payablePaise({String? shopId}) async {
     final expression = _db.expenses.amountPaise.sum();
+    var condition =
+        _db.expenses.paymentStatus.equals('NOT_PAID') &
+        _db.expenses.isActive.equals(true);
+    if (shopId != null) {
+      condition = condition & _db.expenses.shopId.equals(shopId);
+    }
     final rows =
         await (_db.selectOnly(_db.expenses)
               ..addColumns([expression])
-              ..where(
-                _db.expenses.paymentStatus.equals('NOT_PAID') &
-                    _db.expenses.isActive.equals(true),
-              ))
+              ..where(condition))
             .get();
     return rows.first.read(expression) ?? 0;
   }

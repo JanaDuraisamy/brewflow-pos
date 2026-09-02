@@ -14,6 +14,7 @@ import 'package:go_router/go_router.dart';
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_shop_name_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
 
 Set<Permission> _permissionsFromDbValues(Set<String> dbValues) {
@@ -51,6 +52,7 @@ Future<(ProviderContainer, GoRouter)> _pumpSettings(
       authRepositoryProvider.overrideWithValue(FakeAuthRepository(user: user)),
       staffRepositoryProvider.overrideWithValue(staffRepo),
       settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+      shopNameRepositoryProvider.overrideWithValue(FakeShopNameRepository()),
       connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
     ],
   );

@@ -15,16 +15,22 @@ final class SalesDao {
   final AppDatabase _db;
 
   /// All sales, newest first.
-  Future<List<Sale>> all() {
+  Future<List<Sale>> all({String? shopId}) {
     final query = _db.select(_db.sales)
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
-  Future<Sale?> byId(String id) {
+  Future<Sale?> byId(String id, {String? shopId}) {
     final query = _db.select(_db.sales)
       ..where((t) => t.id.equals(id))
       ..limit(1);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.getSingleOrNull();
   }
 }

@@ -35,6 +35,15 @@ final class PullPage<T> {
 
 abstract interface class RemoteMasterDataGateway
     implements RemoteDeviceGateway {
+  // ---- Shops -----------------------------------------------------------
+
+  Future<void> upsertShops(List<SyncShop> rows);
+
+  Future<PullPage<SyncShop>> pullShops({
+    required DateTime since,
+    required int limit,
+  });
+
   // ---- Categories ---------------------------------------------------------
 
   Future<void> upsertCategories(List<SyncCategory> rows);
@@ -110,6 +119,15 @@ abstract interface class RemoteMasterDataGateway
   Future<void> upsertCustomerPayments(List<SyncCustomerPayment> rows);
 
   Future<PullPage<SyncCustomerPayment>> pullCustomerPayments({
+    required DateTime since,
+    required int limit,
+  });
+
+  // ---- Offers ---------------------------------------------------------------
+
+  Future<void> upsertOffers(List<SyncOffer> rows);
+
+  Future<PullPage<SyncOffer>> pullOffers({
     required DateTime since,
     required int limit,
   });

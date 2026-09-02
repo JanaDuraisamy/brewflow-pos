@@ -22,7 +22,6 @@ final class PreferencesSettingsRepository implements SettingsRepository {
 
   final PreferencesStorage _preferences;
 
-  static const String _shopNameKey = 'settings_shop_name';
   static const String _appDisplayNameKey = 'settings_app_display_name';
   static const String _ownerNameKey = 'settings_owner_name';
   static const String _phoneKey = 'settings_phone';
@@ -32,6 +31,11 @@ final class PreferencesSettingsRepository implements SettingsRepository {
   static const String _themeKey = 'settings_theme';
   static const String _membershipEnabledKey = 'settings_membership_enabled';
 
+  /// Preferences key backing the shop display-name render cache. Exposed so
+  /// the sync layer can refresh the cache when a pulled rename lands in the
+  /// authoritative Drift `shops` row (see `LocalMasterDataApplier`).
+  static const String shopNameKey = 'settings_shop_name';
+
   static String? _blankToNull(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
@@ -39,7 +43,7 @@ final class PreferencesSettingsRepository implements SettingsRepository {
 
   @override
   Future<ShopSettings> load() async {
-    final shopName = _blankToNull(await _preferences.readString(_shopNameKey));
+    final shopName = _blankToNull(await _preferences.readString(shopNameKey));
     final lowStock = await _preferences.readInt(
       _lowStockThresholdKey,
       defaultValue: 0,
@@ -70,7 +74,7 @@ final class PreferencesSettingsRepository implements SettingsRepository {
 
   @override
   Future<void> save(ShopSettings settings) async {
-    await _preferences.writeString(_shopNameKey, settings.shopName);
+    await _preferences.writeString(shopNameKey, settings.shopName);
     await _preferences.writeString(_appDisplayNameKey, settings.appDisplayName);
     await _preferences.writeString(_ownerNameKey, settings.ownerName ?? '');
     await _preferences.writeString(_phoneKey, settings.phone ?? '');

@@ -124,6 +124,7 @@ abstract interface class BillingRepository {
     PaymentStatus paymentStatus = PaymentStatus.paid,
     PaymentMethod? paymentMethod,
     String? customerId,
+    String? shopId,
   });
 
   /// The sale header with this id, or null when missing.

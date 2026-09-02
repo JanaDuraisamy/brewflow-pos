@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'shops.dart';
+
 /// ---------------------------------------------------------------------------
 /// Customers — retained customer profiles
 ///
@@ -14,14 +16,19 @@ import 'package:uuid/uuid.dart';
 /// hides the customer from active lists without touching history.
 /// ---------------------------------------------------------------------------
 
+@TableIndex(name: 'idx_customers_shop', columns: {#shopId})
 @TableIndex(name: 'idx_customers_name', columns: {#name})
-@TableIndex(name: 'idx_customers_updated_at', columns: {#updatedAt})
+@TableIndex(name: 'idx_customers_updated_at', columns: {#shopId, #updatedAt})
 class Customers extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this customer.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Customer display name.
   TextColumn get name => text()();

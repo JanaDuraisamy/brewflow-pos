@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import 'product_variants.dart';
 import 'products.dart';
 import 'sales.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// SaleItems — line items of a completed sale
@@ -16,13 +17,18 @@ import 'sales.dart';
 /// so their RESTRICT FK is safe.
 /// ---------------------------------------------------------------------------
 
-@TableIndex(name: 'idx_sale_items_sale_id', columns: {#saleId})
+@TableIndex(name: 'idx_sale_items_shop', columns: {#shopId})
+@TableIndex(name: 'idx_sale_items_sale_id', columns: {#shopId, #saleId})
 class SaleItems extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this sale item.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning sale. Deleting a sale with items is rejected (RESTRICT).
   TextColumn get saleId =>

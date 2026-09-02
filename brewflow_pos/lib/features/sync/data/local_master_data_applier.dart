@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
+import 'package:brewflow_pos/features/settings/data/preferences_settings_repository.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
 
@@ -30,6 +32,65 @@ final class LocalMasterDataApplier {
   LocalMasterDataApplier(this._database);
 
   final db.AppDatabase _database;
+
+  /// Applies one pull page of shop rows atomically. The shop id is the
+  /// identity scope shared by every synced entity, so it is NEVER changed or
+  /// duplicated: this only updates the display `name` on the matching local
+  /// row (inserting on a fresh device keeps exactly one shop).
+  Future<void> applyShopPage(List<SyncShop> rows, DateTime appliedAt) async {
+    String? appliedName;
+    await _database.transaction(() async {
+      for (final row in rows) {
+        final existing = await (_database.select(
+          _database.shops,
+        )..where((t) => t.id.equals(row.id))).getSingleOrNull();
+        if (existing == null) {
+          // Fresh device: materialize the canonical shop row (single-shop
+          // contract — a full-history bootstrap pulls exactly one SHOP row).
+          await _database
+              .into(_database.shops)
+              .insert(
+                db.ShopsCompanion.insert(
+                  id: Value(row.id),
+                  name: row.name,
+                  createdAt: Value(row.createdAt),
+                  updatedAt: Value(appliedAt),
+                ),
+              );
+          appliedName = row.name;
+        } else if (existing.name != row.name) {
+          await (_database.update(
+            _database.shops,
+          )..where((t) => t.id.equals(row.id))).write(
+            db.ShopsCompanion(
+              name: Value(row.name),
+              updatedAt: Value(appliedAt),
+            ),
+          );
+          appliedName = row.name;
+        }
+      }
+    });
+    // Refresh the prefs render-cache when the authoritative shop name landed,
+    // so prefs-backed surfaces (settings, shell header) show the synced value
+    // on the next rebuild. Best-effort: never let a cache write fail a pull.
+    if (appliedName != null) {
+      await _refreshShopNameRenderCache(appliedName!);
+    }
+  }
+
+  /// Mirrors the authoritative `shops.name` into the prefs render-cache.
+  /// Swallows failures so an unavailable store never breaks sync.
+  Future<void> _refreshShopNameRenderCache(String name) async {
+    try {
+      await AppStorage.preferences.writeString(
+        PreferencesSettingsRepository.shopNameKey,
+        name,
+      );
+    } catch (_) {
+      // Storage not initialised (e.g. bare tests) — cache refresh is optional.
+    }
+  }
 
   /// Applies one pull page atomically. Returns ids actually applied
   /// (excluded pending ones are not listed).
@@ -71,6 +132,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.CategoriesCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 name: row.name,
                 isActive: Value(row.isActive),
                 createdAt: Value(row.createdAt),
@@ -151,6 +213,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.ProductsCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 categoryId: row.categoryId,
                 name: row.name,
                 sku: Value(row.sku),
@@ -188,6 +251,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.ProductVariantsCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 productId: row.productId,
                 name: row.name,
                 sku: Value(row.sku),
@@ -223,6 +287,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.SuppliersCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 name: row.name,
                 phone: Value(row.phone),
                 email: Value(row.email),
@@ -253,6 +318,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.CustomersCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 name: row.name,
                 phone: Value(row.phone),
                 email: Value(row.email),
@@ -282,6 +348,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.SalesCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 receiptNumber: row.receiptNumber,
                 customerId: Value(row.customerId),
                 subtotalPaise: row.subtotalPaise,
@@ -314,6 +381,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.SaleItemsCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 saleId: row.saleId,
                 productId: row.productId,
                 variantId: Value(row.variantId),
@@ -345,6 +413,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.ExpensesCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 name: row.name,
                 amountPaise: row.amountPaise,
                 category: row.category,
@@ -377,6 +446,7 @@ final class LocalMasterDataApplier {
             .insertOnConflictUpdate(
               db.CustomerPaymentsCompanion.insert(
                 id: Value(row.id),
+                shopId: Value(row.shopId),
                 customerId: row.customerId,
                 saleId: Value(row.saleId),
                 amountPaise: row.amountPaise,
@@ -385,6 +455,34 @@ final class LocalMasterDataApplier {
                 paidAt: row.paidAt,
                 reversed: Value(row.reversed),
                 reversedAt: Value(row.reversedAt),
+                createdAt: Value(row.createdAt),
+                updatedAt: Value(appliedAt),
+              ),
+            );
+      }
+    });
+  }
+
+  Future<void> applyOfferPage(List<SyncOffer> rows, DateTime appliedAt) async {
+    await _database.transaction(() async {
+      final skipped = await _pendingIds(
+        MasterEntity.offer,
+        rows.map((r) => r.id),
+      );
+      for (final row in rows) {
+        if (skipped.contains(row.id)) continue;
+        await _database
+            .into(_database.offers)
+            .insertOnConflictUpdate(
+              db.OffersCompanion.insert(
+                id: Value(row.id),
+                shopId: Value(row.shopId),
+                name: row.name,
+                type: row.type,
+                configJson: row.configJson,
+                isActive: Value(row.isActive),
+                startAt: Value(row.startAt),
+                endAt: Value(row.endAt),
                 createdAt: Value(row.createdAt),
                 updatedAt: Value(appliedAt),
               ),
@@ -421,8 +519,15 @@ final class LocalMasterDataApplier {
       case MasterEntity.customerPayment:
         // Immutable append-only: sync never deletes these.
         break;
+      case MasterEntity.shop:
+        // Single identity row, never deleted by sync (only renamed).
+        break;
       case MasterEntity.expense:
         await _deactivate(_database.expenses, deletion.id);
+      case MasterEntity.offer:
+        await (_database.delete(
+          _database.offers,
+        )..where((t) => t.id.equals(deletion.id))).go();
     }
   }
 

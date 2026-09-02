@@ -65,6 +65,7 @@ abstract interface class CustomersRepository {
     bool membershipActive,
     int? membershipFeePaise,
     WhatsAppStatus whatsappStatus,
+    String? shopId,
   });
 
   Future<void> updateCustomer({

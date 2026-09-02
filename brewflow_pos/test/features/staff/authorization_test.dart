@@ -26,6 +26,7 @@ import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_shop_name_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
 
@@ -53,6 +54,7 @@ AuthUser _authUser(String id, String email) => AuthUser(id: id, email: email);
         FakeCustomerLedgerRepository(),
       ),
       settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+      shopNameRepositoryProvider.overrideWithValue(FakeShopNameRepository()),
       expensesRepositoryProvider.overrideWithValue(FakeExpensesRepository()),
     ],
   );

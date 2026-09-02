@@ -16,16 +16,22 @@ final class PurchasesDao {
   final AppDatabase _db;
 
   /// All purchases, newest first.
-  Future<List<Purchase>> all() {
+  Future<List<Purchase>> all({String? shopId}) {
     final query = _db.select(_db.purchases)
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
-  Future<Purchase?> byId(String id) {
+  Future<Purchase?> byId(String id, {String? shopId}) {
     final query = _db.select(_db.purchases)
       ..where((t) => t.id.equals(id))
       ..limit(1);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.getSingleOrNull();
   }
 

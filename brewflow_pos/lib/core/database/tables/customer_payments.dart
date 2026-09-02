@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import 'customers.dart';
 import 'sales.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// CustomerPayments — one row per recorded payment on a customer's bill
@@ -23,15 +24,23 @@ import 'sales.dart';
 ///   balance column — sale payment status stays derived.
 /// ---------------------------------------------------------------------------
 
-@TableIndex(name: 'idx_customer_payments_customer_id', columns: {#customerId})
+@TableIndex(name: 'idx_customer_payments_shop', columns: {#shopId})
+@TableIndex(
+  name: 'idx_customer_payments_customer_id',
+  columns: {#shopId, #customerId},
+)
 @TableIndex(name: 'idx_customer_payments_sale_id', columns: {#saleId})
-@TableIndex(name: 'idx_customer_payments_paid_at', columns: {#paidAt})
+@TableIndex(name: 'idx_customer_payments_paid_at', columns: {#shopId, #paidAt})
 class CustomerPayments extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this customer payment.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning customer. Deleting a customer with payments is rejected.
   TextColumn get customerId =>

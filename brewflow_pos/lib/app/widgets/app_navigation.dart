@@ -46,10 +46,11 @@ final class AppBottomNavigation extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
 
-  // Phone primaries (in display order): Dashboard, Billing, Inventory,
-  // Customers — everything else (Orders, Expenses, Purchases, Suppliers,
-  // Reports, Settings) lives behind "More", so the bar never wraps on a phone.
-  static const List<int> _phonePrimary = [0, 2, 1, 4];
+  // Phone primaries (in display order): Dashboard, Inventory, Customers.
+  // Billing/POS, Orders, Expenses, Purchases, Suppliers, Reports and Settings
+  // live behind "More", so the bar stays short on a phone and the cashier
+  // still reaches every module through the sheet.
+  static const List<int> _phonePrimary = [0, 1, 4];
 
   @override
   Widget build(BuildContext context) {
@@ -110,7 +111,7 @@ final class AppBottomNavigation extends StatelessWidget {
 
   String _phoneLabel(String label) {
     // Keep labels short so they never wrap at 410dp
-    const map = {'Dashboard': 'Home', 'Billing': 'Sales', 'Inventory': 'Stock'};
+    const map = {'Dashboard': 'Home', 'Inventory': 'Stock'};
     return map[label] ?? label;
   }
 

@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/customers/data/customer_ledger_dao.dart';
@@ -16,8 +17,10 @@ import 'package:uuid/uuid.dart';
 ///
 /// All reads are SQL aggregations over the sales and customer_payments
 /// tables (never whole-table loads); every due/outstanding value is derived,
-/// never stored. All failures are translated into safe
-/// [CustomerLedgerFailure] values (details logged via [AppLog], never shown).
+/// never stored. Only NOT_PAID (credit) sales count toward debt — a PAID sale
+/// is settled at the counter and never increases a customer's due. All
+/// failures are translated into safe [CustomerLedgerFailure] values (details
+/// logged via [AppLog], never shown).
 ///
 /// Sync: when a [SyncOutboxCoordinator] is provided, recordPayment appends
 /// its outbox row in the SAME database transaction as the business change;
@@ -112,11 +115,13 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
     required int amountPaise,
     required PaymentMethod paymentMethod,
     String? note,
+    String? shopId,
   }) async {
     if (amountPaise <= 0) {
       throw const InvalidPaymentAmountFailure();
     }
     final normalizedNote = _optionalText(note);
+    final resolvedShopId = await resolveWritableShopId(_database, shopId);
     try {
       final payment = await (_outbox == null
           ? _database.transaction(
@@ -126,6 +131,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
                 amountPaise,
                 paymentMethod,
                 normalizedNote,
+                resolvedShopId,
               ),
             )
           : _outbox.run(
@@ -135,6 +141,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
                 amountPaise,
                 paymentMethod,
                 normalizedNote,
+                resolvedShopId,
               ),
               snapshots: (payment, ctx) async => [
                 OutboxAppend(
@@ -170,6 +177,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
     int amountPaise,
     PaymentMethod paymentMethod,
     String? normalizedNote,
+    String shopId,
   ) async {
     if (!await _dao.customerExists(customerId)) {
       throw const CustomerNotFoundFailure();
@@ -207,6 +215,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
         .insert(
           db.CustomerPaymentsCompanion.insert(
             id: Value(id),
+            shopId: Value(shopId),
             customerId: customerId,
             saleId: Value(saleId),
             amountPaise: amountPaise,
@@ -340,8 +349,15 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
   }
 
   static CustomerPurchase _purchaseFrom(db.Sale sale, int paidPaise) {
-    final duePaise = sale.totalPaise - paidPaise;
-    final status = paidPaise <= 0
+    // The authoritative `sales.payment_status` decides whether debt exists: a
+    // PAID sale is settled at the counter and carries no due, regardless of
+    // any ledger payment rows. Only NOT_PAID (credit) sales derive due from
+    // their payments history.
+    final isSettledAtCounter = sale.paymentStatus == 'PAID';
+    final duePaise = isSettledAtCounter ? 0 : sale.totalPaise - paidPaise;
+    final status = isSettledAtCounter
+        ? SalePaymentStatus.paid
+        : paidPaise <= 0
         ? SalePaymentStatus.unpaid
         : paidPaise >= sale.totalPaise
         ? SalePaymentStatus.paid
@@ -352,7 +368,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
       customerId: sale.customerId!,
       createdAt: sale.createdAt,
       totalPaise: sale.totalPaise,
-      paidPaise: paidPaise,
+      paidPaise: isSettledAtCounter ? sale.totalPaise : paidPaise,
       duePaise: duePaise,
       status: status,
     );

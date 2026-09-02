@@ -10,6 +10,7 @@ import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_repository.dart';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Drift Purchase Repository
@@ -55,13 +56,15 @@ final class DriftPurchaseRepository implements PurchaseRepository {
     required List<PurchaseLine> lines,
     String? supplierId,
     String? notes,
+    String? shopId,
   }) async {
     if (lines.isEmpty) {
       throw const EmptyPurchaseFailure();
     }
     try {
       return await _database.transaction(() async {
-        return _receiveInTransaction(lines, supplierId, notes);
+        final resolvedShopId = await resolveWritableShopId(_database, shopId);
+        return _receiveInTransaction(lines, supplierId, notes, resolvedShopId);
       });
     } on PurchasesFailure {
       rethrow;
@@ -80,6 +83,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
     List<PurchaseLine> lines,
     String? supplierId,
     String? notes,
+    String shopId,
   ) async {
     final now = DateTime.now().toUtc();
     final purchaseId = const Uuid().v4();
@@ -151,7 +155,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
       );
     }
 
-    final purchaseNumber = await _nextPurchaseNumber();
+    final purchaseNumber = await _nextPurchaseNumber(shopId);
 
     // Stock-in per line. The increment is applied by SQLite against the
     // committed value (`stock_quantity = stock_quantity + ?`) on the exact
@@ -191,6 +195,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
 
       movements.add(
         db.StockMovementsCompanion.insert(
+          shopId: Value(shopId),
           productId: entry.line.productId,
           variantId: Value(entry.line.variantId),
           movementType: StockMovementType.purchase.dbValue,
@@ -211,6 +216,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
     await _purchases.insert(
       db.PurchasesCompanion.insert(
         id: Value(purchaseId),
+        shopId: Value(shopId),
         supplierId: Value(supplierId),
         purchaseNumber: purchaseNumber,
         subtotalPaise: subtotal,
@@ -226,6 +232,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
         for (final entry in ordered)
           db.PurchaseItemsCompanion.insert(
             id: Value(const Uuid().v4()),
+            shopId: Value(shopId),
             purchaseId: purchaseId,
             productId: entry.line.productId,
             variantId: Value(entry.line.variantId),
@@ -303,21 +310,21 @@ final class DriftPurchaseRepository implements PurchaseRepository {
     }
   }
 
-  /// Consumes one purchase sequence value (seeding the counter when missing)
-  /// and formats it as a human-readable purchase number, e.g. 'PUR-000042'.
-  ///
-  /// The counter is consumed inside the receiving transaction, so a rolled
-  /// back receive reuses its number — mirroring receipt sequence semantics.
-  Future<String> _nextPurchaseNumber() async {
+  /// Allocates a gapless purchase number scoped to [shopId].  The per-shop
+  /// counter lives in `purchase_sequences` with composite key `(id, shop_id)`.
+  Future<String> _nextPurchaseNumber(String shopId) async {
     await _database.customStatement(
-      'INSERT OR IGNORE INTO purchase_sequences (id, next_value) VALUES (?, 0)',
-      [_purchaseSequenceId],
+      'INSERT OR IGNORE INTO purchase_sequences (id, shop_id, next_value) VALUES (?, ?, 0)',
+      [_purchaseSequenceId, shopId],
     );
     final row = await _database
         .customSelect(
           'UPDATE purchase_sequences SET next_value = next_value + 1 '
-          'WHERE id = ? RETURNING next_value',
-          variables: [Variable.withString(_purchaseSequenceId)],
+          'WHERE id = ? AND shop_id = ? RETURNING next_value',
+          variables: [
+            Variable.withString(_purchaseSequenceId),
+            Variable.withString(shopId),
+          ],
         )
         .getSingle();
     final nextValue = row.read<int>('next_value');

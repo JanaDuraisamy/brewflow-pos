@@ -13,6 +13,7 @@ import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Drift Billing Repository
@@ -66,6 +67,7 @@ final class DriftBillingRepository implements BillingRepository {
     PaymentStatus paymentStatus = PaymentStatus.paid,
     PaymentMethod? paymentMethod,
     String? customerId,
+    String? shopId,
   }) async {
     if (lines.isEmpty) {
       throw const EmptyCartFailure();
@@ -77,14 +79,26 @@ final class DriftBillingRepository implements BillingRepository {
       throw const InvalidPaymentFailure();
     }
     try {
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
       if (_outbox == null) {
         return await _database.transaction(
-          () => _checkoutCore(lines, paymentStatus, paymentMethod, customerId),
+          () => _checkoutCore(
+            lines,
+            paymentStatus,
+            paymentMethod,
+            customerId,
+            resolvedShopId,
+          ),
         );
       }
       return await _outbox.run(
-        write: () =>
-            _checkoutCore(lines, paymentStatus, paymentMethod, customerId),
+        write: () => _checkoutCore(
+          lines,
+          paymentStatus,
+          paymentMethod,
+          customerId,
+          resolvedShopId,
+        ),
         snapshots: (result, ctx) async {
           final appends = <OutboxAppend>[
             OutboxAppend(
@@ -124,6 +138,49 @@ final class DriftBillingRepository implements BillingRepository {
               ),
             );
           }
+
+          // The checkout deducted inventory for every tracked line. Those
+          // stock changes live only on this device unless a Product /
+          // ProductVariant row is enqueued with the reduced levels, so append
+          // them here — inside the same transaction — to propagate to the
+          // cloud and, from there, to the other device. Untracked (NONE) lines
+          // were never deducted and contribute nothing.
+          final productIds = result.items.map((i) => i.productId).toSet();
+          final affectedProducts = <String, db.Product>{
+            for (final row in await (_database.select(
+              _database.products,
+            )..where((t) => t.id.isIn(productIds))).get())
+              row.id: row,
+          };
+          final variantIds = result.items
+              .where((i) => i.variantId != null)
+              .map((i) => i.variantId!)
+              .toSet();
+          final variants = variantIds.isEmpty
+              ? const <db.ProductVariant>[]
+              : await (_database.select(
+                  _database.productVariants,
+                )..where((t) => t.id.isIn(variantIds))).get();
+          final variantsById = {for (final v in variants) v.id: v};
+
+          for (final product in affectedProducts.values) {
+            final tracked = product.stockUnit != StockUnit.none.dbValue;
+            final hasVariants = variantsById.values.any(
+              (v) => v.productId == product.id,
+            );
+            if (!tracked) {
+              continue;
+            }
+            if (hasVariants) {
+              for (final variant in variantsById.values.where(
+                (v) => v.productId == product.id,
+              )) {
+                appends.add(_stockVariantAppend(variant, ctx));
+              }
+            } else {
+              appends.add(_stockProductAppend(product, ctx));
+            }
+          }
           return appends;
         },
       );
@@ -145,6 +202,7 @@ final class DriftBillingRepository implements BillingRepository {
     PaymentStatus paymentStatus,
     PaymentMethod? paymentMethod,
     String? customerId,
+    String shopId,
   ) async {
     final now = DateTime.now().toUtc();
     final saleId = const Uuid().v4();
@@ -245,6 +303,7 @@ final class DriftBillingRepository implements BillingRepository {
       if (tracked) {
         movements.add(
           db.StockMovementsCompanion.insert(
+            shopId: Value(shopId),
             productId: line.productId,
             variantId: Value(line.variantId),
             movementType: StockMovementType.sale.dbValue,
@@ -269,12 +328,13 @@ final class DriftBillingRepository implements BillingRepository {
       );
     }
 
-    final receiptNumber = await _nextReceiptNumber();
+    final receiptNumber = await _nextReceiptNumber(shopId);
     await _database
         .into(_database.sales)
         .insert(
           db.SalesCompanion.insert(
             id: Value(saleId),
+            shopId: Value(shopId),
             receiptNumber: receiptNumber,
             customerId: Value(customerId),
             subtotalPaise: subtotal,
@@ -297,6 +357,7 @@ final class DriftBillingRepository implements BillingRepository {
         for (final entry in ordered)
           db.SaleItemsCompanion.insert(
             id: Value(const Uuid().v4()),
+            shopId: Value(shopId),
             saleId: saleId,
             productId: entry.line.productId,
             variantId: Value(entry.line.variantId),
@@ -380,18 +441,107 @@ final class DriftBillingRepository implements BillingRepository {
     }
   }
 
-  /// Consumes one receipt sequence value (seeding the counter when missing)
-  /// and formats it as a human-readable receipt number, e.g. 'BF-000042'.
-  Future<String> _nextReceiptNumber() async {
+  /// Builds the post-checkout Product outbox entry for a tracked, non-variant
+  /// line whose stock was just deducted. Carries the reduced level so the
+  /// cloud and the other device converge on the exact same stock.
+  static OutboxAppend _stockProductAppend(
+    db.Product product,
+    SyncSessionContext context,
+  ) => OutboxAppend(
+    entity: MasterEntity.product,
+    entityId: product.id,
+    payload: SyncProduct(
+      id: product.id,
+      shopId: context.shopId,
+      categoryId: product.categoryId,
+      name: product.name,
+      sku: product.sku,
+      sellingPricePaise: product.sellingPricePaise,
+      costPricePaise: product.costPricePaise,
+      stockQuantity: product.stockQuantity,
+      stockUnit: switch (product.stockUnit) {
+        'NONE' => SyncStockUnit.none,
+        'ML' => SyncStockUnit.ml,
+        'GRAM' => SyncStockUnit.gram,
+        'KG' => SyncStockUnit.kg,
+        _ => SyncStockUnit.count,
+      },
+      lowStockMode: switch (product.lowStockMode) {
+        'CUSTOM' => SyncLowStockMode.custom,
+        'OFF' => SyncLowStockMode.off,
+        _ => SyncLowStockMode.useDefault,
+      },
+      lowStockThreshold: product.lowStockThreshold,
+      membershipEnabled: product.membershipEnabled,
+      memberPricePaise: product.memberPricePaise,
+      isActive: product.isActive,
+      createdAt: product.createdAt,
+    ).toJson(),
+  );
+
+  /// Builds the post-checkout ProductVariant outbox entry for a tracked
+  /// variant line whose stock was just deducted on the variant entity.
+  static OutboxAppend _stockVariantAppend(
+    db.ProductVariant variant,
+    SyncSessionContext context,
+  ) => OutboxAppend(
+    entity: MasterEntity.productVariant,
+    entityId: variant.id,
+    payload: SyncProductVariant(
+      id: variant.id,
+      shopId: context.shopId,
+      productId: variant.productId,
+      name: variant.name,
+      sku: variant.sku,
+      sellingPricePaise: variant.sellingPricePaise,
+      costPricePaise: variant.costPricePaise,
+      stockQuantity: variant.stockQuantity,
+      lowStockMode: switch (variant.lowStockMode) {
+        'CUSTOM' => SyncLowStockMode.custom,
+        'OFF' => SyncLowStockMode.off,
+        _ => SyncLowStockMode.useDefault,
+      },
+      lowStockThreshold: variant.lowStockThreshold,
+      membershipEnabled: variant.membershipEnabled,
+      memberPricePaise: variant.memberPricePaise,
+      isActive: variant.isActive,
+      createdAt: variant.createdAt,
+    ).toJson(),
+  );
+
+  /// Allocates a gapless receipt number scoped to [shopId].  The per-shop
+  /// counter lives in `sale_sequences` with composite key `(id, shop_id)`.
+  /// On first allocation we seed the counter and heal forward to the highest
+  /// receipt number already in use.  Runs inside the checkout transaction,
+  /// so a rolled-back checkout never consumes a value.
+  Future<String> _nextReceiptNumber(String shopId) async {
     await _database.customStatement(
-      'INSERT OR IGNORE INTO sale_sequences (id, next_value) VALUES (?, 0)',
-      [_receiptSequenceId],
+      'INSERT OR IGNORE INTO sale_sequences (id, shop_id, next_value) VALUES (?, ?, 0)',
+      [_receiptSequenceId, shopId],
     );
     final row = await _database
         .customSelect(
-          'UPDATE sale_sequences SET next_value = next_value + 1 '
-          'WHERE id = ? RETURNING next_value',
-          variables: [Variable.withString(_receiptSequenceId)],
+          'UPDATE sale_sequences SET next_value = ('
+          '  SELECT MAX(x) FROM ('
+          '    SELECT next_value + 1 AS x FROM sale_sequences WHERE id = ? AND shop_id = ?'
+          '    UNION ALL'
+          '    SELECT MAX(CAST(SUBSTR(receipt_number, ?) AS INTEGER)) + 1 AS x'
+          '      FROM sales'
+          '     WHERE receipt_number IS NOT NULL AND receipt_number LIKE ?'
+          '       AND shop_id = ?'
+          '    UNION ALL'
+          '    SELECT 0 AS x'
+          '  )'
+          ') WHERE id = ? AND shop_id = ? RETURNING next_value',
+          variables: [
+            Variable.withString(_receiptSequenceId),
+            Variable.withString(shopId),
+            Variable.withInt(AppConstants.receiptPrefix.length + 1),
+            Variable.withString('${AppConstants.receiptPrefix}%'),
+            Variable.withString(shopId),
+            Variable.withString(_receiptSequenceId),
+            Variable.withString(shopId),
+          ],
         )
         .getSingle();
     final nextValue = row.read<int>('next_value');
@@ -435,62 +585,119 @@ final class DriftBillingRepository implements BillingRepository {
 
   @override
   Future<void> voidSale(String saleId) async {
-    try {
-      await _database.transaction(() async {
-        final saleRow = await _sales.byId(saleId);
-        if (saleRow == null) {
-          throw const SaleNotFoundFailure();
-        }
-        if (saleRow.voided) {
-          throw const SaleAlreadyVoidedFailure();
-        }
-        final now = DateTime.now().toUtc();
-        final nowStr = now.toIso8601String();
-        final items = await _saleItems.bySale(saleId);
-        // Restore stock for each tracked line, targeting the exact stock
-        // entity (product or variant) the sale deducted from.
-        for (final item in items) {
-          if (item.variantId != null) {
-            await _database.customStatement(
-              'UPDATE product_variants SET stock_quantity = '
-              'stock_quantity + ?, updated_at = ? WHERE id = ?',
-              [item.quantity, nowStr, item.variantId],
-            );
-          } else {
-            await _database.customStatement(
-              'UPDATE products SET stock_quantity = stock_quantity + ?, '
-              'updated_at = ? WHERE id = ?',
-              [item.quantity, nowStr, item.productId],
-            );
-          }
-        }
-        // Reverse any customer payments linked to this sale.
-        final payments =
-            await (_database.select(_database.customerPayments)..where(
-                  (t) => t.saleId.equals(saleId) & t.reversed.equals(false),
-                ))
-                .get();
-        for (final payment in payments) {
-          await (_database.update(
-            _database.customerPayments,
-          )..where((t) => t.id.equals(payment.id))).write(
-            db.CustomerPaymentsCompanion(
-              reversed: const Value(true),
-              reversedAt: Value(now),
-            ),
+    Future<void> write() async {
+      final saleRow = await _sales.byId(saleId);
+      if (saleRow == null) {
+        throw const SaleNotFoundFailure();
+      }
+      if (saleRow.voided) {
+        throw const SaleAlreadyVoidedFailure();
+      }
+      final now = DateTime.now().toUtc();
+      final nowStr = now.toIso8601String();
+      final items = await _saleItems.bySale(saleId);
+      for (final item in items) {
+        if (item.variantId != null) {
+          await _database.customStatement(
+            'UPDATE product_variants SET stock_quantity = '
+            'stock_quantity + ?, updated_at = ? WHERE id = ?',
+            [item.quantity, nowStr, item.variantId],
+          );
+        } else {
+          await _database.customStatement(
+            'UPDATE products SET stock_quantity = stock_quantity + ?, '
+            'updated_at = ? WHERE id = ?',
+            [item.quantity, nowStr, item.productId],
           );
         }
-        // Mark the sale as voided — never hard-deleted.
+      }
+      final payments =
+          await (_database.select(_database.customerPayments)..where(
+                (t) => t.saleId.equals(saleId) & t.reversed.equals(false),
+              ))
+              .get();
+      for (final payment in payments) {
         await (_database.update(
-          _database.sales,
-        )..where((t) => t.id.equals(saleId))).write(
-          db.SalesCompanion(
-            voided: const Value(true),
-            voidedAt: Value(now),
-            updatedAt: Value(now),
+          _database.customerPayments,
+        )..where((t) => t.id.equals(payment.id))).write(
+          db.CustomerPaymentsCompanion(
+            reversed: const Value(true),
+            reversedAt: Value(now),
           ),
         );
-      });
+      }
+      await (_database.update(
+        _database.sales,
+      )..where((t) => t.id.equals(saleId))).write(
+        db.SalesCompanion(
+          voided: const Value(true),
+          voidedAt: Value(now),
+          updatedAt: Value(now),
+        ),
+      );
+    }
+
+    try {
+      final outbox = _outbox;
+      if (outbox == null) {
+        await _database.transaction(write);
+        return;
+      }
+      await outbox.run(
+        write: () => _database.transaction(write),
+        snapshots: (context, ctx) async {
+          // Read the voided sale row and any reversed payments after the
+          // transaction so the outbox payload reflects the committed state.
+          final saleRow = await (_database.select(
+            _database.sales,
+          )..where((t) => t.id.equals(saleId))).getSingle();
+          final salePayload = SyncSale(
+            id: saleRow.id,
+            shopId: ctx.shopId,
+            customerId: saleRow.customerId,
+            receiptNumber: saleRow.receiptNumber,
+            subtotalPaise: saleRow.subtotalPaise,
+            totalPaise: saleRow.totalPaise,
+            paymentMethod: saleRow.paymentMethod,
+            paymentStatus: saleRow.paymentStatus,
+            createdAt: saleRow.createdAt,
+            voided: saleRow.voided,
+            voidedAt: saleRow.voidedAt,
+          ).toJson();
+          final out = <OutboxAppend>[
+            OutboxAppend(
+              entity: MasterEntity.sale,
+              entityId: saleId,
+              payload: salePayload,
+            ),
+          ];
+          final payments = await (_database.select(
+            _database.customerPayments,
+          )..where((t) => t.saleId.equals(saleId))).get();
+          for (final p in payments.where((e) => e.reversed)) {
+            out.add(
+              OutboxAppend(
+                entity: MasterEntity.customerPayment,
+                entityId: p.id,
+                payload: SyncCustomerPayment(
+                  id: p.id,
+                  shopId: ctx.shopId,
+                  customerId: p.customerId,
+                  saleId: p.saleId,
+                  amountPaise: p.amountPaise,
+                  paymentMethod: p.paymentMethod,
+                  note: p.note,
+                  paidAt: p.paidAt,
+                  reversed: p.reversed,
+                  reversedAt: p.reversedAt,
+                  createdAt: p.createdAt,
+                ).toJson(),
+              ),
+            );
+          }
+          return out;
+        },
+      );
     } on BillingFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {

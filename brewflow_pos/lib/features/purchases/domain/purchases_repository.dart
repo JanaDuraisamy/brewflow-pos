@@ -115,6 +115,7 @@ abstract interface class PurchaseRepository {
     required List<PurchaseLine> lines,
     String? supplierId,
     String? notes,
+    String? shopId,
   });
 
   /// All purchases, newest first.

@@ -84,6 +84,7 @@ final class FakeCustomerLedgerRepository implements CustomerLedgerRepository {
     required int amountPaise,
     required PaymentMethod paymentMethod,
     String? note,
+    String? shopId,
   }) async {
     final error = recordPaymentError;
     if (error != null) {

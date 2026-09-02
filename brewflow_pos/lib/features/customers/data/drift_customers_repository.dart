@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/customers_dao.dart';
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/domain/whatsapp_verification.dart';
@@ -31,11 +32,13 @@ final class DriftCustomersRepository implements CustomersRepository {
   DriftCustomersRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
-  }) : _customers = CustomersDao(database),
+  }) : _database = database,
+       _customers = CustomersDao(database),
        _outbox = outboxCoordinator;
 
   static const String tag = 'Customers';
 
+  final db.AppDatabase _database;
   final CustomersDao _customers;
 
   /// Null when sync is not wired (tests / signed-out legacy flows).
@@ -90,6 +93,7 @@ final class DriftCustomersRepository implements CustomersRepository {
     bool membershipActive = false,
     int? membershipFeePaise,
     WhatsAppStatus whatsappStatus = WhatsAppStatus.unknown,
+    String? shopId,
   }) async {
     final normalizedName = _requiredText(name, 'Customer name is required.');
     final normalizedPhone = _optionalText(phone);
@@ -100,9 +104,11 @@ final class DriftCustomersRepository implements CustomersRepository {
       throw const DuplicatePhoneFailure();
     }
     try {
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
       Future<Customer> doCreate() async {
         final row = await _customers.insert(
           db.CustomersCompanion.insert(
+            shopId: Value(resolvedShopId),
             name: normalizedName,
             phone: Value(normalizedPhone),
             email: Value(normalizedEmail),

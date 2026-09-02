@@ -17,6 +17,7 @@ import 'tables/product_variants.dart';
 import 'tables/purchase_items.dart';
 import 'tables/purchase_sequences.dart';
 import 'tables/purchases.dart';
+import 'tables/offers.dart';
 import 'tables/sale_items.dart';
 import 'tables/sale_sequences.dart';
 import 'tables/sales.dart';
@@ -73,6 +74,7 @@ part 'app_database.g.dart';
     Purchases,
     PurchaseItems,
     PurchaseSequences,
+    Offers,
   ],
 )
 class AppDatabase extends _$AppDatabase {

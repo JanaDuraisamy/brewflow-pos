@@ -442,4 +442,53 @@ void main() {
     );
     expect(currentPath(tester), AppRoutes.settings);
   });
+
+  testWidgets('phone bar shows Dashboard, Stock and Customers; Billing lives '
+      'behind More', (tester) async {
+    await pumpAuthenticated(tester);
+
+    tester.view.physicalSize = const Size(320, 568);
+    await tester.pumpAndSettle();
+
+    final bar = find.byType(AppBottomNavigation);
+    expect(bar, findsOneWidget);
+
+    expect(
+      find.descendant(of: bar, matching: find.text('Home')),
+      findsOneWidget,
+      reason: 'Dashboard is the first phone primary',
+    );
+    expect(
+      find.descendant(of: bar, matching: find.text('Stock')),
+      findsOneWidget,
+      reason: 'Inventory is a phone primary',
+    );
+    expect(
+      find.descendant(of: bar, matching: find.text('Customers')),
+      findsOneWidget,
+      reason: 'Customers is a phone primary',
+    );
+
+    // Billing/POS must NOT be a primary destination on the phone bar — it is
+    // a secondary, reachable only through the More sheet.
+    expect(
+      find.descendant(of: bar, matching: find.text('Sales')),
+      findsNothing,
+      reason: 'Billing is not a direct phone nav destination',
+    );
+    expect(
+      find.descendant(of: bar, matching: find.text('Billing')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: bar,
+        matching: find.byIcon(Icons.more_horiz_outlined),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Billing'), findsOneWidget, reason: 'Billing in More');
+    expect(find.text('Settings'), findsOneWidget, reason: 'Settings in More');
+  });
 }

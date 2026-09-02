@@ -61,6 +61,7 @@ void main() {
         .insert(
           db.Category(
             id: 'cat-1',
+            shopId: 'shop-1',
             name: 'Beverages',
             isActive: true,
             createdAt: at,
@@ -72,6 +73,7 @@ void main() {
         .insert(
           db.Product(
             id: 'prod-1',
+            shopId: 'shop-1',
             categoryId: 'cat-1',
             name: 'Filter Coffee',
             sku: null,
@@ -94,6 +96,7 @@ void main() {
         .insert(
           db.Customer(
             id: 'cust-1',
+            shopId: 'shop-1',
             name: 'Aarthi',
             phone: null,
             email: null,
@@ -111,6 +114,7 @@ void main() {
         .insert(
           db.Sale(
             id: 'sale-1',
+            shopId: 'shop-1',
             customerId: 'cust-1',
             receiptNumber: 'BF-000042',
             subtotalPaise: 12000,
@@ -128,6 +132,7 @@ void main() {
         .insert(
           db.SaleItem(
             id: 'si-1',
+            shopId: 'shop-1',
             saleId: 'sale-1',
             productId: 'prod-1',
             variantId: null,
@@ -144,6 +149,7 @@ void main() {
         .insert(
           db.StockMovement(
             id: 'sm-1',
+            shopId: 'shop-1',
             productId: 'prod-1',
             variantId: null,
             movementType: 'SALE',
@@ -163,6 +169,7 @@ void main() {
         .insert(
           db.Supplier(
             id: 'sup-1',
+            shopId: 'shop-1',
             name: 'Green Beans Co',
             phone: null,
             email: null,
@@ -178,6 +185,7 @@ void main() {
         .insert(
           db.Expense(
             id: 'exp-1',
+            shopId: 'shop-1',
             name: 'Electricity',
             amountPaise: 150000,
             category: 'UTILITIES',
@@ -193,7 +201,11 @@ void main() {
     await database
         .into(database.saleSequences)
         .insert(
-          db.SaleSequence(id: 'receipt', nextValue: 42).toCompanion(false),
+          db.SaleSequence(
+            id: 'receipt',
+            shopId: 'shop-1',
+            nextValue: 42,
+          ).toCompanion(false),
         );
   }
 
@@ -204,6 +216,7 @@ void main() {
         .insert(
           db.Category(
             id: 'cat-9',
+            shopId: 'shop-1',
             name: 'Old Data',
             isActive: true,
             createdAt: at,
@@ -215,6 +228,7 @@ void main() {
         .insert(
           db.Product(
             id: 'old-prod',
+            shopId: 'shop-1',
             categoryId: 'cat-9',
             name: 'Stale Item',
             sellingPricePaise: 500,
@@ -333,7 +347,11 @@ void main() {
       await target
           .into(target.saleSequences)
           .insert(
-            db.SaleSequence(id: 'receipt', nextValue: 999).toCompanion(false),
+            db.SaleSequence(
+              id: 'receipt',
+              shopId: 'shop-1',
+              nextValue: 999,
+            ).toCompanion(false),
           );
 
       final targetRepo = DriftBackupRepository(

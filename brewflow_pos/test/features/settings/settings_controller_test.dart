@@ -8,16 +8,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_shop_name_repository.dart';
 
 void main() {
   late FakeSettingsRepository repository;
+  late FakeShopNameRepository shopNameRepository;
 
   setUp(() {
     repository = FakeSettingsRepository();
+    shopNameRepository = FakeShopNameRepository();
   });
 
   ProviderContainer buildContainer() => ProviderContainer(
-    overrides: [settingsRepositoryProvider.overrideWithValue(repository)],
+    overrides: [
+      settingsRepositoryProvider.overrideWithValue(repository),
+      shopNameRepositoryProvider.overrideWithValue(shopNameRepository),
+    ],
   );
 
   test('loads the persisted settings', () async {

@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'shops.dart';
+
 /// ---------------------------------------------------------------------------
 /// Suppliers — retained vendor profiles
 ///
@@ -16,14 +18,19 @@ import 'package:uuid/uuid.dart';
 /// [Purchases.supplierId] is nullable and RESTRICT keeps history safe.
 /// ---------------------------------------------------------------------------
 
+@TableIndex(name: 'idx_suppliers_shop', columns: {#shopId})
 @TableIndex(name: 'idx_suppliers_name', columns: {#name})
-@TableIndex(name: 'idx_suppliers_updated_at', columns: {#updatedAt})
+@TableIndex(name: 'idx_suppliers_updated_at', columns: {#shopId, #updatedAt})
 class Suppliers extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this supplier.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Supplier display name.
   TextColumn get name => text()();

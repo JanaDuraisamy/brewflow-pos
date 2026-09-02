@@ -117,6 +117,7 @@ final class FakeSuppliersRepository implements SuppliersRepository {
     String? address,
     String? notes,
     bool isActive = true,
+    String? shopId,
   }) async {
     _throwIfLoadError();
     final normalizedName = _requiredText(name, 'Supplier name is required.');

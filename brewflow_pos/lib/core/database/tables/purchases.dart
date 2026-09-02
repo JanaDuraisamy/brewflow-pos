@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import 'purchase_sequences.dart';
+import 'shops.dart';
 import 'suppliers.dart';
 
 /// ---------------------------------------------------------------------------
@@ -21,14 +22,19 @@ import 'suppliers.dart';
 ///   goods value only, and cash/UPI/BANK handling stays in billing.
 /// ---------------------------------------------------------------------------
 
-@TableIndex(name: 'idx_purchases_created_at', columns: {#createdAt})
-@TableIndex(name: 'idx_purchases_supplier_id', columns: {#supplierId})
+@TableIndex(name: 'idx_purchases_shop', columns: {#shopId})
+@TableIndex(name: 'idx_purchases_created_at', columns: {#shopId, #createdAt})
+@TableIndex(name: 'idx_purchases_supplier_id', columns: {#shopId, #supplierId})
 class Purchases extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this purchase.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning supplier for supplier-linked purchases; NULL for walk-ins.
   /// Deleting a supplier with purchase history is rejected (RESTRICT).
@@ -38,8 +44,13 @@ class Purchases extends Table {
     onDelete: KeyAction.restrict,
   )();
 
-  /// Human-readable purchase reference; unique across all purchases.
-  TextColumn get purchaseNumber => text().unique()();
+  /// Human-readable purchase reference; unique per shop.
+  TextColumn get purchaseNumber => text()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+    {shopId, purchaseNumber},
+  ];
 
   /// Sum of line totals in paise, before any adjustments. Must be >= 0.
   IntColumn get subtotalPaise =>

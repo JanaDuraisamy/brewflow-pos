@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/data/cloud_shop_resolver.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/data/device_registration_coordinator.dart';
+import 'package:brewflow_pos/features/sync/presentation/sync_invalidation.dart';
 import 'package:brewflow_pos/features/sync/data/drift_sync_repository.dart';
 import 'package:brewflow_pos/features/sync/data/local_master_data_applier.dart';
 import 'package:brewflow_pos/features/sync/data/supabase_master_data_gateway.dart';
@@ -152,6 +153,7 @@ final syncKickProvider = Provider<void Function()>((ref) {
         await ref
             .read(syncEngineProvider)
             .runCycle(deviceId: deviceId, shopId: profile.shopId!);
+        invalidateDomainProviders(ref);
       } catch (error, stackTrace) {
         AppLog.warning(
           'Fast sync skipped',
@@ -284,6 +286,7 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
           await ref
               .read(syncEngineProvider)
               .runCycle(deviceId: deviceId, shopId: shopId);
+          _refreshAfterSync();
         }),
       );
     });
@@ -301,6 +304,10 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
       await ref
           .read(syncEngineProvider)
           .runCycle(deviceId: deviceId, shopId: shopId);
+      // Pulled rows land directly in Drift; every domain screen caches via
+      // AsyncNotifier until invalidated, so a successful pull must refresh all
+      // domain views in the running app (no restart).
+      _refreshAfterSync();
     }
 
     // First cycle right away (drains anything queued since sign-in), then
@@ -543,5 +550,13 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
   void _setIfChanged(SyncSessionState next) {
     if (state == next) return;
     state = next;
+  }
+
+  /// Refreshes every domain view after a successful sync cycle so that
+  /// pulled rows become visible while the app is running (foreground sync).
+  /// Best-effort: never breaks the cycle when a provider scope is not
+  /// initialized (e.g. bare test scopes).
+  void _refreshAfterSync() {
+    invalidateDomainProviders(ref);
   }
 }

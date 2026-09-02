@@ -22,6 +22,7 @@ final class ProductsDao {
     String? search,
     String? categoryId,
     bool? active,
+    String? shopId,
   }) {
     final query = _db.select(_db.products)
       ..orderBy([(t) => OrderingTerm.asc(t.name)]);
@@ -36,13 +37,17 @@ final class ProductsDao {
     if (active != null) {
       query.where((t) => t.isActive.equals(active));
     }
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
   /// Whether a product with this SKU already exists (case-insensitive).
   ///
   /// [exceptId] excludes one product so an edit can keep its own SKU.
-  Future<bool> skuExists(String sku, {String? exceptId}) async {
+  /// When [shopId] is provided the check is scoped to that business.
+  Future<bool> skuExists(String sku, {String? exceptId, String? shopId}) async {
     final table = _db.products;
     final query = _db.selectOnly(table)..addColumns([table.id]);
     final conditions = <Expression<bool>>[
@@ -50,6 +55,9 @@ final class ProductsDao {
     ];
     if (exceptId != null) {
       conditions.add(table.id.isNotValue(exceptId));
+    }
+    if (shopId != null) {
+      conditions.add(table.shopId.equals(shopId));
     }
     query.where(conditions.reduce((a, b) => a & b));
     query.limit(1);
@@ -59,9 +67,13 @@ final class ProductsDao {
   Future<Product> insert(ProductsCompanion companion) =>
       _db.into(_db.products).insertReturning(companion);
 
-  Future<Product?> byId(String id) => (_db.select(
-    _db.products,
-  )..where((t) => t.id.equals(id))).getSingleOrNull();
+  Future<Product?> byId(String id, {String? shopId}) {
+    final query = _db.select(_db.products)..where((t) => t.id.equals(id));
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    return query.getSingleOrNull();
+  }
 
   Future<void> update(String id, ProductsCompanion companion) async {
     final updated = companion.copyWith(
@@ -81,10 +93,14 @@ final class ProductsDao {
     );
   }
 
-  Future<int> countByCategory(String categoryId) async {
+  Future<int> countByCategory(String categoryId, {String? shopId}) async {
     final table = _db.products;
     final query = _db.selectOnly(table)..addColumns([table.id.count()]);
-    query.where(table.categoryId.equals(categoryId));
+    var condition = table.categoryId.equals(categoryId);
+    if (shopId != null) {
+      condition = condition & table.shopId.equals(shopId);
+    }
+    query.where(condition);
     return query.map((row) => row.read(table.id.count())!).getSingle();
   }
 

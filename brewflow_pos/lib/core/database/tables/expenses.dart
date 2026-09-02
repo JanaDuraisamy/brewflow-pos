@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'shops.dart';
+
 /// ---------------------------------------------------------------------------
 /// Expenses — one row per recorded business expense
 ///
@@ -19,15 +21,20 @@ import 'package:uuid/uuid.dart';
 ///   semantics as products, categories and customers.
 /// ---------------------------------------------------------------------------
 
-@TableIndex(name: 'idx_expenses_expense_date', columns: {#expenseDate})
-@TableIndex(name: 'idx_expenses_category', columns: {#category})
-@TableIndex(name: 'idx_expenses_updated_at', columns: {#updatedAt})
+@TableIndex(name: 'idx_expenses_shop', columns: {#shopId})
+@TableIndex(name: 'idx_expenses_expense_date', columns: {#shopId, #expenseDate})
+@TableIndex(name: 'idx_expenses_category', columns: {#shopId, #category})
+@TableIndex(name: 'idx_expenses_updated_at', columns: {#shopId, #updatedAt})
 class Expenses extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this expense.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Expense display name.
   TextColumn get name => text()();

@@ -91,6 +91,7 @@ final class FakePurchasesRepository implements PurchaseRepository {
     required List<PurchaseLine> lines,
     String? supplierId,
     String? notes,
+    String? shopId,
   }) async {
     receiveCalls += 1;
     final gate = receiveGate;

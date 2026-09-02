@@ -18,6 +18,7 @@ import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_shop_name_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -40,6 +41,9 @@ void main() {
           ProviderScope(
             overrides: [
               settingsRepositoryProvider.overrideWithValue(settings),
+              shopNameRepositoryProvider.overrideWithValue(
+                FakeShopNameRepository(),
+              ),
               authRepositoryProvider.overrideWithValue(auth),
               inventoryRepositoryProvider.overrideWithValue(
                 FakeInventoryRepository(),
@@ -96,6 +100,9 @@ void main() {
         ProviderScope(
           overrides: [
             settingsRepositoryProvider.overrideWithValue(settings),
+            shopNameRepositoryProvider.overrideWithValue(
+              FakeShopNameRepository(),
+            ),
             authRepositoryProvider.overrideWithValue(auth),
             inventoryRepositoryProvider.overrideWithValue(
               FakeInventoryRepository(),

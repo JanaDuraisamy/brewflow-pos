@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import 'product_variants.dart';
 import 'products.dart';
 import 'purchases.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// PurchaseItems — line items of a completed purchase
@@ -17,13 +18,21 @@ import 'purchases.dart';
 /// soft-deactivated, never deleted, so their RESTRICT FK is safe.
 /// ---------------------------------------------------------------------------
 
-@TableIndex(name: 'idx_purchase_items_purchase_id', columns: {#purchaseId})
+@TableIndex(name: 'idx_purchase_items_shop', columns: {#shopId})
+@TableIndex(
+  name: 'idx_purchase_items_purchase_id',
+  columns: {#shopId, #purchaseId},
+)
 class PurchaseItems extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this purchase item.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning purchase. Deleting a purchase with items is rejected (RESTRICT).
   TextColumn get purchaseId =>

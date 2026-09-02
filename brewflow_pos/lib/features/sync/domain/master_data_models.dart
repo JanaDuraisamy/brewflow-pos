@@ -20,6 +20,7 @@ library;
 
 /// Master-data entity keys, identical to the outbox `entity` values.
 enum MasterEntity {
+  shop('SHOP'),
   category('CATEGORY'),
   product('PRODUCT'),
   productVariant('PRODUCT_VARIANT'),
@@ -28,7 +29,8 @@ enum MasterEntity {
   sale('SALE'),
   saleItem('SALE_ITEM'),
   expense('EXPENSE'),
-  customerPayment('CUSTOMER_PAYMENT');
+  customerPayment('CUSTOMER_PAYMENT'),
+  offer('OFFER');
 
   const MasterEntity(this.wire);
   final String wire;
@@ -37,6 +39,45 @@ enum MasterEntity {
     (entity) => entity.wire == value,
     orElse: () => throw ArgumentError('Unknown master entity: $value'),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Shops — business identity (single-shop design, id must never change)
+// ---------------------------------------------------------------------------
+
+/// The shop row itself. Its [id] is the identity scope shared by every other
+/// synced entity and must NEVER change; only the display [name] syncs.
+///
+/// [shopId] equals [id] because the shop is its own scope — this keeps the
+/// outbox/gateway payload shape uniform with every other master entity.
+final class SyncShop {
+  const SyncShop({
+    required this.id,
+    required this.shopId,
+    required this.name,
+    required this.createdAt,
+  });
+
+  factory SyncShop.fromJson(Map<String, dynamic> json) => SyncShop(
+    id: json['id'] as String,
+    shopId: json['shopId'] as String,
+    name: json['name'] as String,
+    createdAt: DateTime.parse(json['createdAt'] as String),
+  );
+
+  final String id;
+  final String shopId;
+  final String name;
+
+  /// Original creation instant (device UTC).
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'name': name,
+    'createdAt': createdAt.toIso8601String(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -650,5 +691,65 @@ final class SyncCustomerPayment {
     'reversed': reversed,
     'reversedAt': reversedAt?.toIso8601String(),
     'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Offers — business-scoped promotions (Cafe / Food Truck isolated)
+// ---------------------------------------------------------------------------
+
+final class SyncOffer {
+  const SyncOffer({
+    required this.id,
+    required this.shopId,
+    required this.name,
+    required this.type,
+    required this.configJson,
+    required this.isActive,
+    this.startAt,
+    this.endAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SyncOffer.fromJson(Map<String, dynamic> json) => SyncOffer(
+    id: json['id'] as String,
+    shopId: json['shopId'] as String,
+    name: json['name'] as String,
+    type: json['type'] as String,
+    configJson: json['configJson'] as String,
+    isActive: json['isActive'] as bool,
+    startAt: json['startAt'] != null
+        ? DateTime.parse(json['startAt'] as String)
+        : null,
+    endAt: json['endAt'] != null
+        ? DateTime.parse(json['endAt'] as String)
+        : null,
+    createdAt: DateTime.parse(json['createdAt'] as String),
+    updatedAt: DateTime.parse(json['updatedAt'] as String),
+  );
+
+  final String id;
+  final String shopId;
+  final String name;
+  final String type;
+  final String configJson;
+  final bool isActive;
+  final DateTime? startAt;
+  final DateTime? endAt;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'name': name,
+    'type': type,
+    'configJson': configJson,
+    'isActive': isActive,
+    'startAt': startAt?.toIso8601String(),
+    'endAt': endAt?.toIso8601String(),
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt.toIso8601String(),
   };
 }

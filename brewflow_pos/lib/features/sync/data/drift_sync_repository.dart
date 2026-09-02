@@ -349,6 +349,7 @@ final class DriftSyncRepository {
             .insertOnConflictUpdate(
               db.CategoriesCompanion.insert(
                 id: Value(canonical.id),
+                shopId: Value(canonical.shopId),
                 name: canonical.name,
                 isActive: Value(canonical.isActive),
                 createdAt: Value(canonical.createdAt),

@@ -120,6 +120,7 @@ final class FakeCustomersRepository implements CustomersRepository {
     bool membershipActive = false,
     int? membershipFeePaise,
     WhatsAppStatus whatsappStatus = WhatsAppStatus.unknown,
+    String? shopId,
   }) async {
     _throwIfLoadError();
     final normalizedName = _requiredText(name, 'Customer name is required.');

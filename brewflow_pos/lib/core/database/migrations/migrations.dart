@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
 import '../drift_schemas/schema_versions.dart' as versions;
 
@@ -242,6 +243,149 @@ final class AppMigrations {
         );
         await m.createTable(schema.staffPermissions);
         await m.createIndex(schema.idxStaffPermissionsUser);
+      },
+      from15To16: (m, schema) async {
+        await m.createTable(schema.offers);
+      },
+      from16To17: (m, schema) async {
+        // Phase 1 multi-business foundation: add shopId to remaining
+        // business-owned tables that lacked it. Existing legacy rows belong
+        // to the existing Cafe shop; Food Truck starts empty.
+        final existing = await m.database
+            .customSelect('SELECT id FROM shops LIMIT 1')
+            .get();
+        String cafeId;
+        if (existing.isEmpty) {
+          cafeId = const Uuid().v4();
+          await m.database.customStatement(
+            "INSERT INTO shops (id, name, created_at, updated_at) VALUES ('$cafeId', 'Cafe', datetime('now'), datetime('now'))",
+          );
+        } else {
+          cafeId = existing.first.data['id'] as String;
+        }
+
+        // Purchases, purchase_items, stock_movements gain shop_id.
+        // Added as nullable for simple ALTER TABLE, then backfilled to Cafe.
+        // Future version will enforce NOT NULL at application level; DB
+        // constraint remains nullable to allow the ALTER without default.
+        await m.addColumn(schema.purchases, schema.purchases.shopId);
+        await m.addColumn(schema.purchaseItems, schema.purchaseItems.shopId);
+        await m.addColumn(schema.stockMovements, schema.stockMovements.shopId);
+
+        await m.database.customStatement(
+          "UPDATE purchases SET shop_id = '$cafeId' WHERE shop_id IS NULL",
+        );
+        await m.database.customStatement(
+          "UPDATE purchase_items SET shop_id = '$cafeId' WHERE shop_id IS NULL",
+        );
+        await m.database.customStatement(
+          "UPDATE stock_movements SET shop_id = '$cafeId' WHERE shop_id IS NULL",
+        );
+
+        // Indexes for shop-scoped queries (created via custom SQL for idempotency).
+        await m.database.customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_purchases_shop ON purchases (shop_id)',
+        );
+        await m.database.customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_purchase_items_shop ON purchase_items (shop_id)',
+        );
+        await m.database.customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_stock_movements_shop ON stock_movements (shop_id)',
+        );
+
+        // Rebuild sale_sequences from global PK(id) to per-shop
+        // PK(id, shop_id) with NOT NULL shop_id FK to shops.
+        // TableMigration cannot handle this (adding NOT NULL to rows
+        // without a default), so we use a raw rename/create/copy/drop.
+        await m.database.customStatement(
+          'ALTER TABLE sale_sequences RENAME TO sale_sequences_backup',
+        );
+        await m.database.customStatement(
+          'CREATE TABLE sale_sequences ('
+          '"id" TEXT NOT NULL, '
+          '"shop_id" TEXT NOT NULL REFERENCES shops (id) ON DELETE CASCADE, '
+          '"next_value" INTEGER NOT NULL DEFAULT 0 CHECK (next_value >= 0), '
+          'PRIMARY KEY ("id", "shop_id")'
+          ')',
+        );
+        await m.database.customStatement(
+          "INSERT INTO sale_sequences (id, shop_id, next_value) "
+          "SELECT id, '$cafeId', next_value FROM sale_sequences_backup",
+        );
+        await m.database.customStatement('DROP TABLE sale_sequences_backup');
+
+        // Rebuild purchase_sequences identically (same global → per-shop).
+        await m.database.customStatement(
+          'ALTER TABLE purchase_sequences RENAME TO purchase_sequences_backup',
+        );
+        await m.database.customStatement(
+          'CREATE TABLE purchase_sequences ('
+          '"id" TEXT NOT NULL, '
+          '"shop_id" TEXT NOT NULL REFERENCES shops (id) ON DELETE CASCADE, '
+          '"next_value" INTEGER NOT NULL DEFAULT 0 CHECK (next_value >= 0), '
+          'PRIMARY KEY ("id", "shop_id")'
+          ')',
+        );
+        await m.database.customStatement(
+          "INSERT INTO purchase_sequences (id, shop_id, next_value) "
+          "SELECT id, '$cafeId', next_value FROM purchase_sequences_backup",
+        );
+        await m.database.customStatement('DROP TABLE purchase_sequences_backup');
+
+        // Migrate the 10 tables that had shopId with default '000...' to nullable
+        // and backfill the default to Cafe. This fixes FK failures for legacy
+        // inserts without shopId (now nullable) and ensures existing business
+        // data is correctly scoped to Cafe.
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.categories));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.customers));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.customerPayments));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.expenses));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.products));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.productVariants));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.sales));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.saleItems));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.suppliers));
+        // ignore: experimental_member_use
+        await m.alterTable(TableMigration(schema.offers));
+        await m.database.customStatement(
+          "UPDATE categories SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE customers SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE customer_payments SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE expenses SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE products SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE product_variants SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE sales SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE sale_items SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE suppliers SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
+        await m.database.customStatement(
+          "UPDATE offers SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
+        );
       },
     )(migrator, from, to);
   }

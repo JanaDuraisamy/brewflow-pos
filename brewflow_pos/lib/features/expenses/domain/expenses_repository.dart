@@ -67,6 +67,7 @@ abstract interface class ExpensesRepository {
     String? note,
     bool isActive,
     ExpensePaymentStatus paymentStatus,
+    String? shopId,
   });
 
   Future<void> updateExpense({

@@ -30,6 +30,7 @@ final class FakeRemoteStore {
   DateTime clock = DateTime.utc(2026, 1, 1);
 
   final Map<String, DeviceRegistration> devices = {};
+  final Map<String, StoredRow<SyncShop>> shops = {};
   final Map<String, StoredRow<SyncCategory>> categories = {};
   final Map<String, StoredRow<SyncProduct>> products = {};
   final Map<String, StoredRow<SyncProductVariant>> productVariants = {};
@@ -39,6 +40,7 @@ final class FakeRemoteStore {
   final Map<String, StoredRow<SyncSaleItem>> saleItems = {};
   final Map<String, StoredRow<SyncExpense>> expenses = {};
   final Map<String, StoredRow<SyncCustomerPayment>> customerPayments = {};
+  final Map<String, StoredRow<SyncOffer>> offers = {};
   final Map<String, StoredRow<SyncDeletion>> deletions = {};
 
   DateTime _tick() {
@@ -83,6 +85,38 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
     }
     _rejectForeign(registration.shopId);
     _store.devices[registration.deviceId] = registration;
+  }
+
+  // ---- Shops -----------------------------------------------------------
+
+  @override
+  Future<void> upsertShops(List<SyncShop> rows) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.shops[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.shops[row.id] = StoredRow(row, row.shopId, _store._tick());
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncShop>> pullShops({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) {
+      _ensureOnline();
+    }
+    return _page(_store.shops, since, limit, (r) => r.row);
   }
 
   // ---- Categories ------------------------------------------------------------
@@ -373,6 +407,32 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
   }) async {
     if (pullsFail) _ensureOnline();
     return _page(_store.customerPayments, since, limit, (r) => r.row);
+  }
+
+  @override
+  Future<void> upsertOffers(List<SyncOffer> rows) async {
+    pushAttempts++;
+    if (pushesFail) _ensureOnline();
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.offers[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.offers[row.id] = StoredRow(row, row.shopId, _store._tick());
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncOffer>> pullOffers({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) _ensureOnline();
+    return _page(_store.offers, since, limit, (r) => r.row);
   }
 
   // ---- Deletions ----------------------------------------------------------------------------

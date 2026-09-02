@@ -562,5 +562,137 @@ void main() {
       expect(find.byType(DataTable), findsOneWidget);
       expect(find.text('Milk 1L'), findsOneWidget);
     });
+
+    testWidgets(
+      'tablet table scrolls vertically to reach rows below the fold',
+      (tester) async {
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.view.physicalSize = const Size(1440, 900);
+        addTearDown(tester.view.resetPhysicalSize);
+        fakeInventory.storedCategories.add(category('c1', 'Beverages'));
+        // Enough rows that the table is far taller than the 900dp viewport.
+        fakeInventory.storedProducts.addAll([
+          for (var i = 0; i < 40; i++)
+            product('p$i', 'Product ${i.toString().padLeft(2, '0')}'),
+        ]);
+        await pumpAuthenticated(tester);
+        await openInventory(tester);
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(DataTable), findsOneWidget);
+
+        // The first row is visible; the last row starts below the fold.
+        expect(find.text('Product 00').hitTestable(), findsOneWidget);
+        expect(find.text('Product 39').hitTestable(), findsNothing);
+
+        final verticalScrollable = find
+            .ancestor(
+              of: find.byType(DataTable),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Scrollable &&
+                    widget.axisDirection == AxisDirection.down,
+              ),
+            )
+            .first;
+        expect(verticalScrollable, findsOneWidget);
+
+        for (
+          var i = 0;
+          i < 30 && find.text('Product 39').hitTestable().evaluate().isEmpty;
+          i++
+        ) {
+          await tester.drag(verticalScrollable, const Offset(0, -400));
+          await tester.pump();
+        }
+
+        expect(find.text('Product 39').hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('tablet table still scrolls horizontally', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      // A moderately narrow tablet where the seven-column table overflows.
+      tester.view.physicalSize = const Size(820, 900);
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeInventory.storedCategories.add(category('c1', 'Beverages'));
+      fakeInventory.storedProducts.add(
+        product(
+          'p1',
+          'Very Long Product Name That Forces Wide Columns',
+          sku: 'EXTREMELY-LONG-SKU-IDENTIFIER-999999999',
+        ),
+      );
+      await pumpAuthenticated(tester);
+      await openInventory(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(DataTable), findsOneWidget);
+
+      final horizontalScrollable = find
+          .ancestor(
+            of: find.byType(DataTable),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.right,
+            ),
+          )
+          .first;
+      expect(horizontalScrollable, findsOneWidget);
+
+      // Dragging a wide table leftward must not throw and must move the
+      // horizontal scroll position.
+      await tester.drag(horizontalScrollable, const Offset(-400, 0));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('phone inventory still shows cards and scrolls the list', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.physicalSize = const Size(360, 900);
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeInventory.storedCategories.add(category('c1', 'Beverages'));
+      fakeInventory.storedProducts.addAll([
+        for (var i = 0; i < 25; i++)
+          product('p$i', 'Phone Product ${i.toString().padLeft(2, '0')}'),
+      ]);
+      await pumpAuthenticated(tester);
+      await openInventory(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(DataTable), findsNothing);
+
+      // The phone layout is a single vertically scrolling card list, so the
+      // last card is reachable by scrolling the list.
+      final listScrollable = find
+          .descendant(
+            of: find.byType(InventoryPage),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            ),
+          )
+          .first;
+      expect(listScrollable, findsOneWidget);
+      for (
+        var i = 0;
+        i < 30 &&
+            find.text('Phone Product 24').hitTestable().evaluate().isEmpty;
+        i++
+      ) {
+        await tester.drag(listScrollable, const Offset(0, -400));
+        await tester.pump();
+      }
+      expect(find.text('Phone Product 24').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

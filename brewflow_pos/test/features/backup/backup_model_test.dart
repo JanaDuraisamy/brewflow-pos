@@ -64,6 +64,74 @@ void main() {
     });
   });
 
+  group('integrity metadata', () {
+    test('encodeJson embeds a deterministic checksum over the data', () {
+      final decoded = BackupEnvelope.fromJsonString(envelope().encodeJson());
+
+      expect(decoded.checksum, isNotNull);
+      expect(decoded.checksum, computeBackupChecksum(tables()));
+      decoded.verifyChecksum();
+    });
+
+    test('a unique backupId is generated and survives the round trip', () {
+      final a = BackupEnvelope(shopId: 'shop-1', tables: tables());
+      final b = BackupEnvelope(shopId: 'shop-1', tables: tables());
+
+      expect(a.backupId, isNotEmpty);
+      expect(a.backupId, isNot(b.backupId));
+
+      final decoded = BackupEnvelope.fromJsonString(a.encodeJson());
+      expect(decoded.backupId, a.backupId);
+    });
+
+    test('rejects a data mutation as corruption (checksum mismatch)', () {
+      final raw = envelope().encodeJson();
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      ((map['data'] as Map<String, dynamic>)['products'] as List).add({
+        'id': 'prod-tampered',
+        'name': 'Sneaky',
+      });
+
+      expect(
+        () => BackupEnvelope.fromJsonString(jsonEncode(map)),
+        throwsA(isA<CorruptBackupFailure>()),
+      );
+    });
+
+    test(
+      'rejects a truncated data block as corruption (checksum mismatch)',
+      () {
+        final raw = envelope().encodeJson();
+        final map = jsonDecode(raw) as Map<String, dynamic>;
+        ((map['data'] as Map<String, dynamic>)['products'] as List)
+            .removeLast();
+
+        expect(
+          () => BackupEnvelope.fromJsonString(jsonEncode(map)),
+          throwsA(isA<CorruptBackupFailure>()),
+        );
+      },
+    );
+
+    test('accepts a legacy backup without a checksum', () {
+      final legacy = <String, dynamic>{...envelope().toJson()}
+        ..remove('checksum');
+
+      final decoded = BackupEnvelope.fromJson(legacy);
+      expect(decoded.checksum, isNull);
+      expect(decoded.tables.products, hasLength(1));
+    });
+
+    test('rejects a wrongly-typed checksum as corruption', () {
+      final bad = <String, dynamic>{...envelope().toJson()}..['checksum'] = 42;
+
+      expect(
+        () => BackupEnvelope.fromJson(bad),
+        throwsA(isA<CorruptBackupFailure>()),
+      );
+    });
+  });
+
   group('structural validation', () {
     test('rejects a non-BrewFlow document', () {
       expect(

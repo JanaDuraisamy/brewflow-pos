@@ -455,16 +455,91 @@ final class _SalesOverview extends StatelessWidget {
   }
 }
 
-final class _WeeklySalesChart extends StatelessWidget {
+final class _WeeklySalesChart extends StatefulWidget {
   const _WeeklySalesChart({required this.days, required this.windowStart});
 
   final List<int> days;
   final DateTime windowStart;
 
   @override
+  State<_WeeklySalesChart> createState() => _WeeklySalesChartState();
+}
+
+class _WeeklySalesChartState extends State<_WeeklySalesChart> {
+  int? _selected;
+
+  void _showDay(BuildContext context, int index) {
+    final amount = widget.days[index];
+    final date = widget.windowStart.add(Duration(days: index));
+    final label = DateFormat('EEE, d MMM yyyy').format(date);
+    final amountText = Money.formatPaise(amount);
+    setState(() => _selected = index);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Container(
+        margin: EdgeInsets.all(AppSpacing.md),
+        padding: EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: Theme.of(sheetContext).colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: const Icon(
+                    Icons.calendar_today_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
+                ),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: Theme.of(sheetContext).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                ),
+              ],
+            ),
+            SizedBox(height: AppSpacing.sm),
+            Divider(height: 1, color: Theme.of(sheetContext).dividerColor),
+            SizedBox(height: AppSpacing.sm),
+            Text(
+              amount > 0 ? amountText : 'No sales — 0',
+              style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: amount > 0 ? null : AppColors.error,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(() {
+      if (mounted) setState(() => _selected = null);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final maxValue = days.fold<int>(
+    final maxValue = widget.days.fold<int>(
       0,
       (max, value) => value > max ? value : max,
     );
@@ -492,7 +567,7 @@ final class _WeeklySalesChart extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < days.length; i++)
+        for (var i = 0; i < widget.days.length; i++)
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
@@ -502,15 +577,27 @@ final class _WeeklySalesChart extends StatelessWidget {
                   Expanded(
                     child: Align(
                       alignment: Alignment.bottomCenter,
-                      child: Container(
-                        width: double.infinity,
-                        height: 4 + (days[i] / maxValue) * 128,
-                        decoration: BoxDecoration(
-                          color: i == days.length - 1
-                              ? AppColors.gold
-                              : AppColors.primary,
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(AppRadius.sm),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _showDay(context, i),
+                        child: Container(
+                          width: double.infinity,
+                          height: 4 + (widget.days[i] / maxValue) * 128,
+                          decoration: BoxDecoration(
+                            color: _selected == i
+                                ? AppColors.gold
+                                : i == widget.days.length - 1
+                                ? AppColors.gold.withValues(alpha: 0.85)
+                                : AppColors.primary,
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(AppRadius.sm),
+                            ),
+                            border: _selected == i
+                                ? Border.all(
+                                    color: AppColors.charcoal,
+                                    width: 1.5,
+                                  )
+                                : null,
                           ),
                         ),
                       ),
@@ -522,12 +609,12 @@ final class _WeeklySalesChart extends StatelessWidget {
                     child: Text(
                       DateFormat(
                         'd MMM',
-                      ).format(windowStart.add(Duration(days: i))),
+                      ).format(widget.windowStart.add(Duration(days: i))),
                       style: textTheme.labelSmall?.copyWith(
-                        color: i == days.length - 1
+                        color: i == widget.days.length - 1
                             ? context.appColors.charcoal
                             : context.appColors.textSecondary,
-                        fontWeight: i == days.length - 1
+                        fontWeight: i == widget.days.length - 1
                             ? FontWeight.w700
                             : FontWeight.w500,
                       ),

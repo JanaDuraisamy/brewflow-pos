@@ -78,14 +78,23 @@ void main() {
         );
   }
 
+  Future<String> seedShop(String id) async {
+    await database
+        .into(database.shops)
+        .insert(ShopsCompanion.insert(id: Value(id), name: 'Shop $id'));
+    return id;
+  }
+
   Future<Purchase> seedPurchase({
     required String id,
     String? supplierId,
+    String? shopId,
     String purchaseNumber = 'PUR-000001',
     int totalPaise = 1000,
   }) => purchases.insert(
     PurchasesCompanion.insert(
       id: Value(id),
+      shopId: Value(shopId),
       supplierId: Value(supplierId),
       purchaseNumber: purchaseNumber,
       subtotalPaise: totalPaise,
@@ -295,11 +304,41 @@ void main() {
       },
     );
 
-    test('purchase numbers are unique', () async {
-      await seedPurchase(id: 'pu-1', purchaseNumber: 'PUR-000001');
+    test('purchase numbers are unique per shop', () async {
+      final shopId = await seedShop('shop-a');
+      await seedPurchase(
+        id: 'pu-1',
+        shopId: shopId,
+        purchaseNumber: 'PUR-000001',
+      );
+      // Same purchase number within the same shop must conflict.
       await expectLater(
-        seedPurchase(id: 'pu-2', purchaseNumber: 'PUR-000001'),
+        seedPurchase(
+          id: 'pu-2',
+          shopId: shopId,
+          purchaseNumber: 'PUR-000001',
+        ),
         throwsA(isA<SqliteException>()),
+      );
+    });
+
+    test('purchase numbers may repeat across different shops', () async {
+      final shopA = await seedShop('shop-a');
+      final shopB = await seedShop('shop-b');
+      await seedPurchase(
+        id: 'pu-1',
+        shopId: shopA,
+        purchaseNumber: 'PUR-000001',
+      );
+      // The same purchase number is allowed under a different shop.
+      await seedPurchase(
+        id: 'pu-2',
+        shopId: shopB,
+        purchaseNumber: 'PUR-000001',
+      );
+      expect(
+        (await purchases.all()).map((p) => p.id),
+        containsAll(['pu-1', 'pu-2']),
       );
     });
   });

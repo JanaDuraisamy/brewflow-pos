@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
+import 'package:brewflow_pos/features/sync/presentation/sync_status_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -126,7 +127,12 @@ final class _PhoneReportContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(reportsControllerProvider.future),
+      onRefresh: () async {
+        final syncFuture = ref.read(syncStatusProvider.notifier).syncNow();
+        // ignore: unused_result
+        await ref.refresh(reportsControllerProvider.future);
+        await syncFuture;
+      },
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(
@@ -325,7 +331,12 @@ final class _ReportContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(reportsControllerProvider.future),
+      onRefresh: () async {
+        final syncFuture = ref.read(syncStatusProvider.notifier).syncNow();
+        // ignore: unused_result
+        await ref.refresh(reportsControllerProvider.future);
+        await syncFuture;
+      },
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: AppSpacing.massive),
@@ -443,7 +454,7 @@ final class _SalesOverviewCard extends StatelessWidget {
   }
 }
 
-final class _DailySalesChart extends StatelessWidget {
+final class _DailySalesChart extends StatefulWidget {
   const _DailySalesChart({
     required this.daily,
     required this.startDay,
@@ -459,9 +470,132 @@ final class _DailySalesChart extends StatelessWidget {
   final double barMaxHeight;
 
   @override
+  State<_DailySalesChart> createState() => _DailySalesChartState();
+}
+
+class _DailySalesChartState extends State<_DailySalesChart> {
+  int? _selected;
+
+  void _showDay(BuildContext context, int index) {
+    final amount = widget.daily[index];
+    final date = widget.startDay?.add(Duration(days: index));
+    final label = date != null
+        ? DateFormat('EEE, d MMM yyyy').format(date)
+        : 'Day ${index + 1}';
+    final amountText = Money.formatPaise(amount);
+    setState(() => _selected = index);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Container(
+        margin: EdgeInsets.all(AppSpacing.md),
+        padding: EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: Theme.of(sheetContext).colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: const Icon(
+                    Icons.calendar_today_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
+                ),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: Theme.of(sheetContext).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                ),
+              ],
+            ),
+            SizedBox(height: AppSpacing.sm),
+            Divider(height: 1, color: Theme.of(sheetContext).dividerColor),
+            SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Sales',
+                        style: Theme.of(sheetContext).textTheme.labelSmall
+                            ?.copyWith(
+                              color: Theme.of(
+                                sheetContext,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        amount > 0 ? amountText : 'No sales — 0',
+                        style: Theme.of(sheetContext).textTheme.titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: amount > 0 ? null : AppColors.error,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: amount > 0
+                        ? AppColors.success.withValues(alpha: 0.12)
+                        : AppColors.textDisabled.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: Text(
+                    amount > 0 ? 'Revenue' : 'Zero',
+                    style: Theme.of(sheetContext).textTheme.labelSmall
+                        ?.copyWith(
+                          color: amount > 0
+                              ? AppColors.success
+                              : Theme.of(
+                                  sheetContext,
+                                ).colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(() {
+      if (mounted) setState(() => _selected = null);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final maxValue = daily.fold<int>(
+    final maxValue = widget.daily.fold<int>(
       0,
       (max, value) => value > max ? value : max,
     );
@@ -486,7 +620,7 @@ final class _DailySalesChart extends StatelessWidget {
         ),
       );
     }
-    if (daily.length > 366) {
+    if (widget.daily.length > 366) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -507,12 +641,12 @@ final class _DailySalesChart extends StatelessWidget {
         ),
       );
     }
-    final showLabels = daily.length <= 14;
+    final showLabels = widget.daily.length <= 14;
     final gap = showLabels ? AppSpacing.xs : 0.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < daily.length; i++)
+        for (var i = 0; i < widget.daily.length; i++)
           Expanded(
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: gap),
@@ -522,15 +656,30 @@ final class _DailySalesChart extends StatelessWidget {
                   Expanded(
                     child: Align(
                       alignment: Alignment.bottomCenter,
-                      child: Container(
-                        width: double.infinity,
-                        height: 4 + (daily[i] / maxValue) * barMaxHeight,
-                        decoration: BoxDecoration(
-                          color: i == daily.length - 1
-                              ? AppColors.gold
-                              : AppColors.primary,
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(AppRadius.sm),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _showDay(context, i),
+                        child: Container(
+                          width: double.infinity,
+                          height:
+                              4 +
+                              (widget.daily[i] / maxValue) *
+                                  widget.barMaxHeight,
+                          decoration: BoxDecoration(
+                            color: _selected == i
+                                ? AppColors.gold
+                                : i == widget.daily.length - 1
+                                ? AppColors.gold.withValues(alpha: 0.85)
+                                : AppColors.primary,
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(AppRadius.sm),
+                            ),
+                            border: _selected == i
+                                ? Border.all(
+                                    color: AppColors.charcoal,
+                                    width: 1.5,
+                                  )
+                                : null,
                           ),
                         ),
                       ),
@@ -538,18 +687,18 @@ final class _DailySalesChart extends StatelessWidget {
                   ),
                   if (showLabels) ...[
                     SizedBox(height: AppSpacing.xs),
-                    if (startDay != null)
+                    if (widget.startDay != null)
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
                           DateFormat(
                             'd MMM',
-                          ).format(startDay!.add(Duration(days: i))),
+                          ).format(widget.startDay!.add(Duration(days: i))),
                           style: textTheme.labelSmall?.copyWith(
-                            color: i == daily.length - 1
+                            color: i == widget.daily.length - 1
                                 ? context.appColors.charcoal
                                 : context.appColors.textSecondary,
-                            fontWeight: i == daily.length - 1
+                            fontWeight: i == widget.daily.length - 1
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                           ),

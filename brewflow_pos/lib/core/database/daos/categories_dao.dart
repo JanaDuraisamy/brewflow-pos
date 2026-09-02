@@ -14,15 +14,21 @@ final class CategoriesDao {
 
   final AppDatabase _db;
 
-  Future<List<Category>> getAll() {
-    final query = _db.select(_db.categories)
-      ..orderBy([(t) => OrderingTerm.asc(t.name)]);
+  Future<List<Category>> getAll({String? shopId}) {
+    final query = _db.select(_db.categories);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    query.orderBy([(t) => OrderingTerm.asc(t.name)]);
     return query.get();
   }
 
-  Stream<List<Category>> watchAll() {
-    final query = _db.select(_db.categories)
-      ..orderBy([(t) => OrderingTerm.asc(t.name)]);
+  Stream<List<Category>> watchAll({String? shopId}) {
+    final query = _db.select(_db.categories);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    query.orderBy([(t) => OrderingTerm.asc(t.name)]);
     return query.watch();
   }
 
@@ -33,7 +39,12 @@ final class CategoriesDao {
   /// Whether a category with this name already exists (case-insensitive).
   ///
   /// [exceptId] excludes one category so an edit can keep its own name.
-  Future<bool> nameExists(String name, {String? exceptId}) async {
+  /// When [shopId] is provided the check is scoped to that business.
+  Future<bool> nameExists(
+    String name, {
+    String? exceptId,
+    String? shopId,
+  }) async {
     final table = _db.categories;
     final query = _db.selectOnly(table)..addColumns([table.id]);
     final conditions = <Expression<bool>>[
@@ -41,6 +52,9 @@ final class CategoriesDao {
     ];
     if (exceptId != null) {
       conditions.add(table.id.isNotValue(exceptId));
+    }
+    if (shopId != null) {
+      conditions.add(table.shopId.equals(shopId));
     }
     query.where(conditions.reduce((a, b) => a & b));
     query.limit(1);

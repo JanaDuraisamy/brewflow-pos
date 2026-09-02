@@ -19,6 +19,7 @@ import '../helpers/fake_inventory_repository.dart';
 import '../helpers/fake_orders_repository.dart';
 import '../helpers/fake_preferences_storage.dart';
 import '../helpers/fake_settings_repository.dart';
+import '../helpers/fake_shop_name_repository.dart';
 import '../helpers/fake_stock_movement_repository.dart';
 
 void main() {
@@ -39,6 +40,9 @@ void main() {
           inventoryRepositoryProvider.overrideWithValue(billing.inventory),
           billingRepositoryProvider.overrideWithValue(billing),
           settingsRepositoryProvider.overrideWithValue(settings),
+          shopNameRepositoryProvider.overrideWithValue(
+            FakeShopNameRepository(),
+          ),
           stockMovementRepositoryProvider.overrideWithValue(
             FakeStockMovementRepository(),
           ),

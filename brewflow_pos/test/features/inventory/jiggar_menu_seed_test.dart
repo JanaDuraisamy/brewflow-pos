@@ -9,6 +9,7 @@ import 'package:brewflow_pos/features/sync/data/drift_sync_repository.dart';
 import 'package:brewflow_pos/features/sync/data/local_master_data_applier.dart';
 import 'package:brewflow_pos/features/sync/data/sync_engine.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -154,6 +155,17 @@ void main() {
       // Device A: seeding wired to the atomic outbox coordinator.
       final syncA = DriftSyncRepository(db);
       final cloud = FakeRemoteStore();
+      // Seed the canonical single-shop row (owner bootstraps it with the same
+      // id as the session shopId), so local writes, outbox payloads and the
+      // pull-side FK all resolve to 'shop'.
+      await db
+          .into(db.shops)
+          .insert(
+            ShopsCompanion.insert(
+              id: const Value('shop'),
+              name: 'JIGGAR Tea House',
+            ),
+          );
       final gatewayA = FakeRemoteMasterDataGateway(cloud, viewerShopId: 'shop');
       final coordinatorA = SyncOutboxCoordinator(
         syncA,
@@ -180,6 +192,16 @@ void main() {
       // Device B: empty database, pulls everything down.
       final dbB = AppDatabase(NativeDatabase.memory());
       addTearDown(dbB.close);
+      // Every device owns its canonical shop row; the pull lands shop-scoped
+      // rows and the shop_id FK must reference it.
+      await dbB
+          .into(dbB.shops)
+          .insert(
+            ShopsCompanion.insert(
+              id: const Value('shop'),
+              name: 'JIGGAR Tea House',
+            ),
+          );
       final syncB = DriftSyncRepository(dbB);
       final gatewayB = FakeRemoteMasterDataGateway(cloud, viewerShopId: 'shop');
       final engineB = SyncEngine(syncB, gatewayB, LocalMasterDataApplier(dbB));

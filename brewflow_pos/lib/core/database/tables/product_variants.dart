@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import 'products.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// ProductVariants — sellable size/option rows of a product
@@ -24,15 +25,23 @@ import 'products.dart';
 ///   product's policy, then to the global default.
 /// ---------------------------------------------------------------------------
 
+@TableIndex(name: 'idx_product_variants_shop', columns: {#shopId})
 @TableIndex(name: 'idx_product_variants_product_id', columns: {#productId})
 @TableIndex(name: 'idx_product_variants_sku', columns: {#sku})
-@TableIndex(name: 'idx_product_variants_updated_at', columns: {#updatedAt})
+@TableIndex(
+  name: 'idx_product_variants_updated_at',
+  columns: {#shopId, #updatedAt},
+)
 class ProductVariants extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this product variant.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning product. Products are never hard-deleted (soft deactivation
   /// instead); RESTRICT keeps variant history bound to its owner.
@@ -42,8 +51,13 @@ class ProductVariants extends Table {
   /// Variant display name, e.g. '250 ml'.
   TextColumn get name => text()();
 
-  /// Variant stock keeping unit / code. Unique when present.
-  TextColumn get sku => text().nullable().unique()();
+  /// Variant stock keeping unit / code. Unique when present, scoped per shop.
+  TextColumn get sku => text().nullable()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+    {shopId, sku},
+  ];
 
   /// Selling price in paise. Must be >= 0.
   IntColumn get sellingPricePaise =>

@@ -18,7 +18,7 @@ final class CustomersDao {
   ///
   /// [search] matches name, phone or email (case-insensitive substring).
   /// [active] restricts to active/inactive customers when non-null.
-  Future<List<Customer>> query({String? search, bool? active}) {
+  Future<List<Customer>> query({String? search, bool? active, String? shopId}) {
     final query = _db.select(_db.customers)
       ..orderBy([(t) => OrderingTerm.asc(t.name)]);
 
@@ -34,18 +34,30 @@ final class CustomersDao {
     if (active != null) {
       query.where((t) => t.isActive.equals(active));
     }
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
     return query.get();
   }
 
-  Future<Customer?> byId(String id) => (_db.select(
-    _db.customers,
-  )..where((t) => t.id.equals(id))).getSingleOrNull();
+  Future<Customer?> byId(String id, {String? shopId}) {
+    final query = _db.select(_db.customers)..where((t) => t.id.equals(id));
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    return query.getSingleOrNull();
+  }
 
   /// Whether a customer with this phone number already exists
   /// (case-insensitive).
   ///
   /// [exceptId] excludes one customer so an edit can keep its own phone.
-  Future<bool> phoneExists(String phone, {String? exceptId}) async {
+  /// When [shopId] is provided the check is scoped to that business.
+  Future<bool> phoneExists(
+    String phone, {
+    String? exceptId,
+    String? shopId,
+  }) async {
     final table = _db.customers;
     final query = _db.selectOnly(table)..addColumns([table.id]);
     final conditions = <Expression<bool>>[
@@ -53,6 +65,9 @@ final class CustomersDao {
     ];
     if (exceptId != null) {
       conditions.add(table.id.isNotValue(exceptId));
+    }
+    if (shopId != null) {
+      conditions.add(table.shopId.equals(shopId));
     }
     query.where(conditions.reduce((a, b) => a & b));
     query.limit(1);

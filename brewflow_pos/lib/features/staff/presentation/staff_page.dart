@@ -5,6 +5,7 @@ import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/features/staff/data/supabase_staff_provisioning.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -67,22 +68,52 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
     );
     if (input == null || !mounted) return;
     try {
+      // Resolve authoritative business shopId (Cafe vs Food Truck) from the
+      // Owner's active business context. Preserves the selected business and
+      // creates the Food Truck shop lazily on first use. Offline or single-
+      // business installs fall back to the sole existing shop.
+      String shopId;
+      try {
+        final business = ref.read(businessSwitcherProvider);
+        shopId = await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdFor(business);
+      } catch (_) {
+        final shop = await ref.read(staffRepositoryProvider).ensureShop();
+        shopId = shop.id;
+      }
+      final enrichedInput = StaffCreateInput(
+        email: input.email,
+        password: input.password,
+        displayName: input.displayName,
+        permissions: input.permissions,
+      );
+      // Pass shopId to Edge Function via provisioning service if supported;
+      // the function itself enforces Owner authorization (403 if cloud owner
+      // not yet synced — guide user to retry after sync).
       final identity = await ref
           .read(staffProvisioningServiceProvider)
-          .createStaffAuthUser(input);
-      final shop = await ref.read(staffRepositoryProvider).ensureShop();
+          .createStaffAuthUser(enrichedInput);
       await ref
           .read(staffRepositoryProvider)
           .createStaffProfile(
             identity: identity,
-            shopId: shop.id,
+            shopId: shopId,
             permissions: input.permissions,
             displayName: input.displayName,
           );
       _showMessage('Staff member added.');
       await _reload();
     } on StaffFailure catch (failure) {
-      _showMessage(failure.message);
+      // No orphan local staff is created on provisioning failure (identity
+      // only written after the 200 response). Surface the exact cloud reason
+      // and deployment blocker when the Edge Function is not deployed.
+      final msg =
+          failure.message.contains('create-staff') ||
+              failure.message.contains('FunctionsRelay')
+          ? 'Staff service not configured. Deploy supabase/functions/create-staff (see README) and ensure you are online as Owner, then retry.'
+          : failure.message;
+      _showMessage(msg);
     }
   }
 
@@ -238,6 +269,13 @@ final class _StaffFormDialogState extends ConsumerState<_StaffFormDialog> {
   final _password = TextEditingController();
   final _name = TextEditingController();
   Set<Permission> _permissions = defaultStaffPermissions;
+  BusinessContext _business = BusinessContext.cafe;
+
+  @override
+  void initState() {
+    super.initState();
+    _business = ref.read(businessSwitcherProvider);
+  }
 
   @override
   void dispose() {
@@ -292,6 +330,35 @@ final class _StaffFormDialogState extends ConsumerState<_StaffFormDialog> {
                     hintText: 'Optional',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                SizedBox(height: AppSpacing.md),
+                // Business scope for the new staff member (Owner only). Cafe
+                // staff cannot access Food Truck data and vice versa.
+                DropdownButtonFormField<BusinessContext>(
+                  initialValue: _business == BusinessContext.all
+                      ? BusinessContext.cafe
+                      : _business,
+                  decoration: const InputDecoration(
+                    labelText: 'Business *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: BusinessContext.cafe,
+                      child: Text('Cafe'),
+                    ),
+                    DropdownMenuItem(
+                      value: BusinessContext.foodTruck,
+                      child: Text('Food Truck'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _business = v);
+                    // Persist the Owner's choice for next staff creation.
+                    ref
+                        .read(businessSwitcherProvider.notifier)
+                        .select(v ?? BusinessContext.cafe);
+                  },
                 ),
                 SizedBox(height: AppSpacing.md),
                 _PermissionGroups(

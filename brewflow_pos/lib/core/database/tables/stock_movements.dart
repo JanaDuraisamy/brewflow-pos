@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import 'product_variants.dart';
 import 'products.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// StockMovements — append-only audit trail of every stock quantity change
@@ -33,13 +34,14 @@ import 'products.dart';
 ///   the application yet, and inventory valuation is out of scope.
 /// ---------------------------------------------------------------------------
 
+@TableIndex(name: 'idx_stock_movements_shop', columns: {#shopId})
 @TableIndex(
   name: 'idx_stock_movements_product_created_at',
-  columns: {#productId, #createdAt},
+  columns: {#shopId, #productId, #createdAt},
 )
 @TableIndex(
   name: 'idx_stock_movements_variant_created_at',
-  columns: {#variantId, #createdAt},
+  columns: {#shopId, #variantId, #createdAt},
 )
 class StockMovements extends Table {
   /// Local UUID v4 identifier, generated on this device.
@@ -47,6 +49,10 @@ class StockMovements extends Table {
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this movement.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// The product the movement belongs to. Products are never hard-deleted
   /// (soft deactivation instead); RESTRICT keeps history bound to its owner.

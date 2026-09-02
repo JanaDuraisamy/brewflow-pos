@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import 'categories.dart';
+import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
 /// Products — POS sellable items
@@ -14,15 +15,20 @@ import 'categories.dart';
 ///   will reconcile it with the server later.
 /// ---------------------------------------------------------------------------
 
+@TableIndex(name: 'idx_products_shop', columns: {#shopId})
 @TableIndex(name: 'idx_products_category_id', columns: {#categoryId})
 @TableIndex(name: 'idx_products_name', columns: {#name})
-@TableIndex(name: 'idx_products_updated_at', columns: {#updatedAt})
+@TableIndex(name: 'idx_products_updated_at', columns: {#shopId, #updatedAt})
 class Products extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  /// Business/shop that owns this product.
+  TextColumn get shopId =>
+      text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
   /// Owning category. Deleting a category with products is rejected
   /// (RESTRICT) to protect order and inventory history.
@@ -32,8 +38,13 @@ class Products extends Table {
   /// Product display name.
   TextColumn get name => text()();
 
-  /// Stock keeping unit / product code. Unique when present.
-  TextColumn get sku => text().nullable().unique()();
+  /// Stock keeping unit / product code. Unique when present, scoped per shop.
+  TextColumn get sku => text().nullable()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+    {shopId, sku},
+  ];
 
   /// Selling price in paise. Must be >= 0.
   IntColumn get sellingPricePaise =>

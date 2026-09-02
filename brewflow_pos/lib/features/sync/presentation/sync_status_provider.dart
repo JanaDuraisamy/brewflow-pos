@@ -5,6 +5,7 @@ import 'package:brewflow_pos/core/identity/device_identity.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
+import 'package:brewflow_pos/features/sync/presentation/sync_invalidation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// ---------------------------------------------------------------------------
@@ -221,6 +222,7 @@ final class SyncStatusController extends Notifier<SyncStatusSnapshot> {
       await ref
           .read(syncEngineProvider)
           .runCycle(deviceId: deviceId, shopId: shopId);
+      invalidateDomainProviders(ref);
       _lastSyncAt = DateTime.now().toUtc();
       _lastError = null;
       await _refresh();

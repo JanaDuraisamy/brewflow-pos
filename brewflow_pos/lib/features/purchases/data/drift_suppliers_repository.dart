@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/suppliers_dao.dart';
+import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
 import 'package:brewflow_pos/features/purchases/domain/suppliers_repository.dart';
@@ -34,11 +35,13 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   DriftSuppliersRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
-  }) : _suppliers = SuppliersDao(database),
+  }) : _database = database,
+       _suppliers = SuppliersDao(database),
        _outbox = outboxCoordinator;
 
   static const String tag = 'Suppliers';
 
+  final db.AppDatabase _database;
   final SuppliersDao _suppliers;
 
   /// Null when sync is not wired (tests / signed-out legacy flows).
@@ -91,6 +94,7 @@ final class DriftSuppliersRepository implements SuppliersRepository {
     String? address,
     String? notes,
     bool isActive = true,
+    String? shopId,
   }) async {
     final normalizedName = _requiredText(name, 'Supplier name is required.');
     final normalizedPhone = _optionalText(phone);
@@ -102,9 +106,11 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       throw const DuplicateSupplierPhoneFailure();
     }
     try {
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
       Future<Supplier> doCreate() async {
         final row = await _suppliers.insert(
           db.SuppliersCompanion.insert(
+            shopId: Value(resolvedShopId),
             name: normalizedName,
             phone: Value(normalizedPhone),
             email: Value(normalizedEmail),

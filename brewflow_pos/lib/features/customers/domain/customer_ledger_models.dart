@@ -6,17 +6,17 @@
 /// core/utils/money.dart); timestamps are UTC instants, converted to local
 /// time only for display.
 ///
-/// Every amount here is DERIVED from persisted rows — sales totals minus
-/// non-reversed customer payments — never stored. Sale payment status is
-/// computed, never persisted.
+/// Every amount here is DERIVED from persisted rows, never stored. The sale
+/// [PaymentStatus] is authoritative: only NOT_PAID (credit) sales generate
+/// debt, so PAID sales never contribute to a customer's outstanding balance.
 /// ---------------------------------------------------------------------------
 library;
 
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 
-/// Derived payment state of one sale, computed as:
-/// paidPaise == 0 → unpaid; 0 < paidPaise < totalPaise → partial;
-/// paidPaise >= totalPaise → paid.
+/// Derived payment state of one sale: a PAID sale is always `paid`; a
+/// NOT_PAID sale is `unpaid` when nothing is recorded, `partial` when some is
+/// recorded, or `paid` once recorded payments clear the total.
 enum SalePaymentStatus { unpaid, partial, paid }
 
 /// One customer-linked sale with its allocated payment totals.
@@ -114,7 +114,8 @@ final class CustomerLedgerSummary {
 
   final String customerId;
 
-  /// Sum of all customer-linked sale totals.
+  /// Sum of all NOT_PAID (credit) customer-linked sale totals — the open bill
+  /// value. Paid sales are settled at the counter and never count as debt.
   final int totalPurchasesPaise;
 
   /// Sum of all non-reversed payments.

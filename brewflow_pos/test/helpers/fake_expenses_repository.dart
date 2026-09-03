@@ -63,7 +63,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     return true;
   }
 
-  @override
+@override
   Future<List<Expense>> expenses({
     String? search,
     ExpenseCategory? category,
@@ -71,6 +71,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     DateTime? fromUtc,
     DateTime? toUtc,
     ExpenseStatusFilter status = ExpenseStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     loadCalls += 1;
     await _gate();
@@ -92,7 +93,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
               toUtc: toUtc,
               active: active,
             ))
-              expense,
+            expense,
         ]..sort((a, b) {
           final byDate = b.expenseDate.compareTo(a.expenseDate);
           return byDate != 0 ? byDate : b.createdAt.compareTo(a.createdAt);
@@ -101,7 +102,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
   }
 
   @override
-  Future<Expense?> expenseById(String id) async {
+  Future<Expense?> expenseById(String id, {List<String>? shopIds}) async {
     _throwIfLoadError();
     for (final expense in storedExpenses) {
       if (expense.id == id) {
@@ -195,7 +196,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
   }
 
   @override
-  Future<int> payablePaise() async {
+  Future<int> payablePaise({List<String>? shopIds}) async {
     _throwIfLoadError();
     var total = 0;
     for (final expense in storedExpenses) {

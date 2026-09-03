@@ -116,6 +116,8 @@ final class OrderItem {
     this.productId,
     this.variantId,
     this.variantName,
+    this.offerDiscountPaise = 0,
+    this.appliedOfferName,
   });
 
   final String productName;
@@ -123,6 +125,13 @@ final class OrderItem {
   final int unitPricePaise;
   final int quantity;
   final int lineTotalPaise;
+
+  /// Offer discount applied to this line in paise; 0 when no offer applied.
+  /// Absent (0) for rows persisted before this field was mapped.
+  final int offerDiscountPaise;
+
+  /// Display name of the applied offer; null when no offer applied.
+  final String? appliedOfferName;
 
   /// Product the line was sold from; lets analytics (e.g. dashboard profit)
   /// join the sale snapshot against the product's recorded cost price.

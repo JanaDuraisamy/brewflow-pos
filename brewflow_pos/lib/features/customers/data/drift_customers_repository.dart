@@ -50,6 +50,7 @@ final class DriftCustomersRepository implements CustomersRepository {
     CustomerStatusFilter status = CustomerStatusFilter.all,
   }) async {
     try {
+      final shopId = await resolveWritableShopId(_database);
       final rows = await _customers.query(
         search: search,
         active: switch (status) {
@@ -57,6 +58,7 @@ final class DriftCustomersRepository implements CustomersRepository {
           CustomerStatusFilter.active => true,
           CustomerStatusFilter.inactive => false,
         },
+        shopId: shopId,
       );
       return rows.map(_customerFromRow).toList();
     } on Exception catch (error, stackTrace) {
@@ -67,7 +69,8 @@ final class DriftCustomersRepository implements CustomersRepository {
   @override
   Future<Customer?> customerById(String id) async {
     try {
-      final row = await _customers.byId(id);
+      final shopId = await resolveWritableShopId(_database);
+      final row = await _customers.byId(id, shopId: shopId);
       return row == null ? null : _customerFromRow(row);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load customer', error, stackTrace);
@@ -77,7 +80,8 @@ final class DriftCustomersRepository implements CustomersRepository {
   @override
   Future<bool> phoneExists(String phone, {String? exceptId}) async {
     try {
-      return await _customers.phoneExists(phone, exceptId: exceptId);
+      final shopId = await resolveWritableShopId(_database);
+      return await _customers.phoneExists(phone, exceptId: exceptId, shopId: shopId);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to check phone number', error, stackTrace);
     }

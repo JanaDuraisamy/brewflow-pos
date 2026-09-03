@@ -11,6 +11,7 @@ Sale _sale() => Sale(
   receiptNumber: 'BF-000001',
   subtotalPaise: 12000,
   totalPaise: 12000,
+  offerDiscountPaise: 0,
   paymentStatus: PaymentStatus.paid,
   paymentMethod: PaymentMethod.cash,
   createdAt: DateTime.utc(2026, 8, 24, 9, 30),
@@ -30,6 +31,7 @@ ReceiptDocument _document() => ReceiptDocument.fromSale(
       unitPricePaise: 12000,
       quantity: 1,
       lineTotalPaise: 12000,
+      offerDiscountPaise: 0,
     ),
   ],
 );
@@ -113,6 +115,7 @@ void main() {
             unitPricePaise: 12000,
             quantity: 1,
             lineTotalPaise: 12000,
+            offerDiscountPaise: 0,
           ),
         ],
         customerName: 'Ramesh',
@@ -183,6 +186,7 @@ void main() {
             unitPricePaise: 15000,
             quantity: 1,
             lineTotalPaise: 15000,
+            offerDiscountPaise: 0,
           ),
         ],
       );

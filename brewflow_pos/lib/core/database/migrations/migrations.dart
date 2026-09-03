@@ -389,6 +389,34 @@ final class AppMigrations {
           "UPDATE offers SET shop_id = '$cafeId' WHERE shop_id = '00000000-0000-0000-0000-000000000000'",
         );
       },
+      from17To18: (m, schema) async {
+        // Product cloud image — purely additive. cloud_image_path is nullable
+        // so every existing product stays at imagePath-only (no cloud ref).
+        // product_image_sync is a new durable offline queue for image
+        // upload/download/delete intents (binary-free: paths and metadata only).
+        await m.addColumn(schema.products, schema.products.cloudImagePath);
+        await m.createTable(schema.productImageSync);
+        await m.database.customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_product_image_sync_identity'
+          ' ON product_image_sync (product_id, operation)',
+        );
+        await m.database.customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_product_image_sync_status'
+          ' ON product_image_sync (status, created_at)',
+        );
+      },
+      from18To19: (m, schema) async {
+        // Storage monitoring + monthly cleanup — purely additive. Two new local
+        // tables: a per-shop cleanup state row (last scan / cleanup timestamps)
+        // and owner-only cleanup-available notifications. Neither holds Storage
+        // object bytes; both are device-local bookkeeping.
+        await m.createTable(schema.storageCleanupState);
+        await m.createTable(schema.storageCleanupNotification);
+        await m.database.customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_storage_cleanup_notification'
+          ' ON storage_cleanup_notification (shop_id, kind)',
+        );
+      },
     )(migrator, from, to);
   }
 }

@@ -123,3 +123,10 @@ final class DuplicateStaffEmailFailure extends StaffFailure {
   const DuplicateStaffEmailFailure()
     : super('A staff member with this email already exists.');
 }
+
+/// Unexpected authorization store error; details are logged, never shown.
+final class UnexpectedAuthFailure extends StaffFailure {
+  const UnexpectedAuthFailure([
+    super.message = 'Authorization service unavailable. Please try again.',
+  ]);
+}

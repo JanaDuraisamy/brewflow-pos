@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -37,6 +38,18 @@ final class ProductImageStore {
     final fileName = '${const Uuid().v4()}.jpg';
     final destination = File(p.join(_root.path, fileName));
     await source.copy(destination.path);
+    return '$folderName/$fileName';
+  }
+
+  /// Writes raw [bytes] into the store under a fresh name and returns the
+  /// relative path to persist in [Product.imagePath]. Follows the same
+  /// atomic-save contract as [saveFrom]: every write produces a new file so
+  /// a partial write never corrupts a live image reference.
+  Future<String> saveBytes(Uint8List bytes) async {
+    await _root.create(recursive: true);
+    final fileName = '${const Uuid().v4()}.jpg';
+    final destination = File(p.join(_root.path, fileName));
+    await destination.writeAsBytes(bytes, flush: true);
     return '$folderName/$fileName';
   }
 

@@ -221,6 +221,7 @@ final class LocalMasterDataApplier {
                 costPricePaise: Value(row.costPricePaise),
                 stockQuantity: Value(row.stockQuantity),
                 imagePath: const Value.absent(),
+                cloudImagePath: Value(row.cloudImagePath),
                 stockUnit: Value(row.stockUnit.wire),
                 lowStockMode: Value(row.lowStockMode.wire),
                 lowStockThreshold: Value(row.lowStockThreshold),
@@ -353,6 +354,7 @@ final class LocalMasterDataApplier {
                 customerId: Value(row.customerId),
                 subtotalPaise: row.subtotalPaise,
                 totalPaise: row.totalPaise,
+                offerDiscountPaise: Value(row.offerDiscountPaise),
                 paymentMethod: Value(row.paymentMethod),
                 paymentStatus: Value(row.paymentStatus),
                 voided: Value(row.voided),
@@ -391,6 +393,10 @@ final class LocalMasterDataApplier {
                 unitPricePaise: row.unitPricePaise,
                 quantity: row.quantity,
                 lineTotalPaise: row.lineTotalPaise,
+                offerDiscountPaise: Value(row.offerDiscountPaise),
+                appliedOfferId: Value(row.appliedOfferId),
+                appliedOfferName: Value(row.appliedOfferName),
+                appliedOfferType: Value(row.appliedOfferType),
               ),
             );
       }

@@ -67,7 +67,7 @@ final class UnexpectedInventoryFailure extends InventoryFailure {
 /// Local-first inventory persistence contract. Implementations must be
 /// offline-capable (Drift) and never require network access.
 abstract interface class InventoryRepository {
-  Future<List<Category>> categories();
+  Future<List<Category>> categories({List<String>? shopIds});
 
   /// Every returned product carries its variants (empty list for products
   /// without variants) and a stock quantity that is the sum of variant stock
@@ -76,6 +76,7 @@ abstract interface class InventoryRepository {
     String? search,
     String? categoryId,
     ProductStatusFilter status,
+    List<String>? shopIds,
   });
 
   /// Whether a product with this SKU exists (case-insensitive).

@@ -119,6 +119,7 @@ void main() {
             receiptNumber: 'BF-000042',
             subtotalPaise: 12000,
             totalPaise: 12000,
+            offerDiscountPaise: 0,
             paymentMethod: 'CASH',
             paymentStatus: 'PAID',
             voided: false,
@@ -142,6 +143,10 @@ void main() {
             unitPricePaise: 12000,
             quantity: 1,
             lineTotalPaise: 12000,
+            offerDiscountPaise: 0,
+            appliedOfferId: null,
+            appliedOfferName: null,
+            appliedOfferType: null,
           ).toCompanion(false),
         );
     await database

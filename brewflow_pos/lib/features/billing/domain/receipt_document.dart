@@ -21,12 +21,16 @@ final class ReceiptLine {
     required this.unitPricePaise,
     required this.quantity,
     required this.lineTotalPaise,
+    this.offerDiscountPaise = 0,
+    this.appliedOfferName,
   });
 
   final String label;
   final int unitPricePaise;
   final int quantity;
   final int lineTotalPaise;
+  final int offerDiscountPaise;
+  final String? appliedOfferName;
 }
 
 final class ReceiptDocument {
@@ -39,6 +43,8 @@ final class ReceiptDocument {
     required this.lines,
     this.paymentMethod,
     this.customerName,
+    this.subtotalPaise = 0,
+    this.offerDiscountPaise = 0,
   });
 
   /// Configured business identity (Settings → Business Name).
@@ -46,6 +52,8 @@ final class ReceiptDocument {
   final String receiptNumber;
   final DateTime createdAt;
   final int totalPaise;
+  final int subtotalPaise;
+  final int offerDiscountPaise;
   final PaymentStatus paymentStatus;
   final PaymentMethod? paymentMethod;
 
@@ -65,6 +73,8 @@ final class ReceiptDocument {
     receiptNumber: sale.receiptNumber,
     createdAt: sale.createdAt,
     totalPaise: sale.totalPaise,
+    subtotalPaise: sale.subtotalPaise,
+    offerDiscountPaise: sale.offerDiscountPaise,
     paymentStatus: sale.paymentStatus,
     paymentMethod: sale.paymentMethod,
     customerName: customerName,
@@ -77,6 +87,8 @@ final class ReceiptDocument {
           unitPricePaise: item.unitPricePaise,
           quantity: item.quantity,
           lineTotalPaise: item.lineTotalPaise,
+          offerDiscountPaise: item.offerDiscountPaise,
+          appliedOfferName: item.appliedOfferName,
         ),
     ],
   );
@@ -90,6 +102,11 @@ final class ReceiptDocument {
     receiptNumber: order.receiptNumber,
     createdAt: order.createdAt,
     totalPaise: order.totalPaise,
+    subtotalPaise: order.subtotalPaise,
+    offerDiscountPaise: order.items.fold(
+      0,
+      (sum, item) => sum + item.offerDiscountPaise,
+    ),
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
     customerName: order.customerName,
@@ -102,6 +119,8 @@ final class ReceiptDocument {
           unitPricePaise: item.unitPricePaise,
           quantity: item.quantity,
           lineTotalPaise: item.lineTotalPaise,
+          offerDiscountPaise: item.offerDiscountPaise,
+          appliedOfferName: item.appliedOfferName,
         ),
     ],
   );
@@ -123,13 +142,29 @@ final class ReceiptDocument {
         '  ${Money.formatPaise(line.unitPricePaise)} x ${line.quantity}   '
         '${Money.formatPaise(line.lineTotalPaise)}',
       );
+      if (line.offerDiscountPaise > 0 && line.appliedOfferName != null) {
+        buffer.writeln(
+          '  Offer: ${line.appliedOfferName} -${Money.formatPaise(line.offerDiscountPaise)}',
+        );
+      }
     }
 
-    buffer
-      ..writeln('--------------------------------')
-      ..writeln(
-        'Total: ${Money.formatPaise(totalPaise)} (${paymentStatus.label})',
-      );
+    if (offerDiscountPaise > 0) {
+      buffer
+        ..writeln('--------------------------------')
+        ..writeln('Subtotal: ${Money.formatPaise(subtotalPaise)}')
+        ..writeln('Offer Discount: -${Money.formatPaise(offerDiscountPaise)}')
+        ..writeln('--------------------------------')
+        ..writeln(
+          'Total: ${Money.formatPaise(totalPaise)} (${paymentStatus.label})',
+        );
+    } else {
+      buffer
+        ..writeln('--------------------------------')
+        ..writeln(
+          'Total: ${Money.formatPaise(totalPaise)} (${paymentStatus.label})',
+        );
+    }
     if (paymentMethod != null) {
       buffer.writeln('Paid via ${paymentMethod!.name.toUpperCase()}');
     }

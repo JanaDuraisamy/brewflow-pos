@@ -152,6 +152,9 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'client_created_at': row.createdAt.toIso8601String(),
     // image_path intentionally never pushed: device-local asset paths are
     // meaningless on other devices (see master_data_models.dart).
+    // cloud_image_path IS pushed: it is metadata (a storage object key), and
+    // other devices need it to enqueue a DOWNLOAD of the image binary.
+    'cloud_image_path': row.cloudImagePath,
   };
 
   SyncProduct _productFromServer(Map<String, dynamic> json) => SyncProduct(
@@ -170,6 +173,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     memberPricePaise: json['member_price_paise'] as int?,
     isActive: json['is_active'] as bool,
     createdAt: _utc(json['client_created_at']),
+    cloudImagePath: json['cloud_image_path'] as String?,
   );
 
   // ---- Product variants -----------------------------------------------------
@@ -342,6 +346,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'payment_status': row.paymentStatus,
     'voided': row.voided,
     'voided_at': row.voidedAt?.toIso8601String(),
+    'offer_discount_paise': row.offerDiscountPaise,
     'client_created_at': row.createdAt.toIso8601String(),
   };
 
@@ -357,6 +362,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     createdAt: _utc(json['client_created_at']),
     voided: json['voided'] as bool? ?? false,
     voidedAt: json['voided_at'] != null ? _utc(json['voided_at']) : null,
+    // Tolerant: rows written before the offer-columns migration lack this.
+    offerDiscountPaise: json['offer_discount_paise'] as int? ?? 0,
   );
 
   // ---- Sale Items ------------------------------------------------------------
@@ -388,6 +395,10 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'unit_price_paise': row.unitPricePaise,
     'quantity': row.quantity,
     'line_total_paise': row.lineTotalPaise,
+    'offer_discount_paise': row.offerDiscountPaise,
+    'applied_offer_id': row.appliedOfferId,
+    'applied_offer_name': row.appliedOfferName,
+    'applied_offer_type': row.appliedOfferType,
     'client_created_at': DateTime.now().toUtc().toIso8601String(),
   };
 
@@ -403,6 +414,11 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     unitPricePaise: json['unit_price_paise'] as int,
     quantity: json['quantity'] as int,
     lineTotalPaise: json['line_total_paise'] as int,
+    // Tolerant: rows written before the offer-columns migration lack these.
+    offerDiscountPaise: json['offer_discount_paise'] as int? ?? 0,
+    appliedOfferId: json['applied_offer_id'] as String?,
+    appliedOfferName: json['applied_offer_name'] as String?,
+    appliedOfferType: json['applied_offer_type'] as String?,
   );
 
   // ---- Expenses ---------------------------------------------------------------

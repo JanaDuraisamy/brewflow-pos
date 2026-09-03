@@ -29,7 +29,10 @@ abstract interface class StaffRepository {
   });
 
   /// All STAFF profiles for management UI, oldest first.
-  Future<List<UserProfile>> staffMembers();
+  ///
+  /// When [shopId] is provided, only staff members of that shop are returned.
+  /// When null, returns staff across all shops (for owner Combined view).
+  Future<List<UserProfile>> staffMembers({String? shopId});
 
   /// Creates a local STAFF profile for an already-provisioned auth identity.
   /// Throws [DuplicateStaffEmailFailure] when the email is taken.

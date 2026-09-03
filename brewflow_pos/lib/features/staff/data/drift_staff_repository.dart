@@ -95,10 +95,12 @@ final class DriftStaffRepository implements StaffRepository {
   }
 
   @override
-  Future<List<UserProfile>> staffMembers() async {
-    final rows = await (_database.select(
-      _database.users,
-    )..where((t) => t.role.equals('STAFF'))).get();
+  Future<List<UserProfile>> staffMembers({String? shopId}) async {
+    final query = _database.select(_database.users)..where((t) => t.role.equals('STAFF'));
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    final rows = await query.get();
     final profiles = <UserProfile>[];
     for (final row in rows) {
       profiles.add(await _profileFromRow(row));
@@ -109,7 +111,7 @@ final class DriftStaffRepository implements StaffRepository {
     return profiles;
   }
 
-  @override
+@override
   Future<UserProfile> createStaffProfile({
     required AuthUser identity,
     required String shopId,
@@ -118,7 +120,9 @@ final class DriftStaffRepository implements StaffRepository {
   }) async {
     final emailTaken =
         await (_database.select(_database.users)..where(
-              (t) => t.email.lower().equals(identity.email.toLowerCase()),
+              (t) =>
+                  t.email.lower().equals(identity.email.toLowerCase()) &
+                  t.shopId.equals(shopId),
             ))
             .getSingleOrNull();
     if (emailTaken != null) {

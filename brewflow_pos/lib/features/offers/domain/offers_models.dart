@@ -11,6 +11,8 @@ import 'dart:convert';
 /// shape. Existing type configs are JSON-serialized in [Offer.configJson].
 /// ---------------------------------------------------------------------------
 
+export 'offer_calculator.dart';
+
 enum OfferType {
   percentage('PERCENTAGE'),
   combo('COMBO'),

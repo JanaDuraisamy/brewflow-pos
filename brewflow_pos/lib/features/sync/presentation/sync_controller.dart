@@ -7,6 +7,7 @@ import 'package:brewflow_pos/core/services/connectivity_service.dart'
     show ConnectivitySnapshot, ConnectivityStatus;
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart' as auth;
+import 'package:brewflow_pos/features/inventory/data/image_sync_coordinator.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/data/cloud_shop_resolver.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
@@ -327,6 +328,10 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
     try {
       if (state.phase != SyncSessionPhase.active) return;
       await cycle();
+      // After a pull, download product images whose cloud path arrived on this
+      // device but are not yet cached locally (and push any queued uploads).
+      // Fire-and-forget: image sync is never allowed to fail the data cycle.
+      unawaited(drainProductImages(ref));
       if (state.cloudConfirmed && state.phase != SyncSessionPhase.idle) {
         _cancelConnectivityWatch();
       }
@@ -558,5 +563,23 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
   /// initialized (e.g. bare test scopes).
   void _refreshAfterSync() {
     invalidateDomainProviders(ref);
+  }
+}
+
+/// Drains the product-image sync queue (uploads / downloads / deletes).
+/// Best-effort and never fatal: when Supabase is unavailable (cold start,
+/// test scope) the coordinator provider resolves to null and this is a no-op.
+Future<void> drainProductImages(Ref ref) async {
+  try {
+    final coordinator = await ref.read(imageSyncCoordinatorProvider.future);
+    if (coordinator == null) return;
+    await coordinator.drain();
+  } catch (error, stackTrace) {
+    AppLog.warning(
+      'Product image sync drain failed (will retry)',
+      tag: 'Sync',
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 }

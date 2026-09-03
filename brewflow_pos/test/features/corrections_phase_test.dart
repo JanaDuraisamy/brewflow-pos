@@ -5,10 +5,12 @@ import 'package:brewflow_pos/features/customers/presentation/customers_controlle
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/data/preferences_settings_repository.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,10 +18,12 @@ import '../helpers/fake_billing_repository.dart';
 import '../helpers/fake_customer_ledger_repository.dart';
 import '../helpers/fake_customers_repository.dart';
 import '../helpers/fake_inventory_repository.dart';
+import '../helpers/fake_offers_repository.dart';
 import '../helpers/fake_orders_repository.dart';
 import '../helpers/fake_preferences_storage.dart';
 import '../helpers/fake_settings_repository.dart';
 import '../helpers/fake_shop_name_repository.dart';
+import '../helpers/fake_staff_repository.dart';
 import '../helpers/fake_stock_movement_repository.dart';
 
 void main() {
@@ -50,6 +54,8 @@ void main() {
           customerLedgerRepositoryProvider.overrideWithValue(
             FakeCustomerLedgerRepository(),
           ),
+          offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ],
       );
       addTearDown(container.dispose);

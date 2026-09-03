@@ -66,4 +66,20 @@ class SaleItems extends Table {
   /// unitPricePaise * quantity in paise. Must be >= 0.
   IntColumn get lineTotalPaise =>
       integer().customConstraint('NOT NULL CHECK (line_total_paise >= 0)')();
+
+  /// Offer discount applied to this line in paise. >= 0.
+  IntColumn get offerDiscountPaise => integer().customConstraint(
+    'NOT NULL DEFAULT 0 CHECK (offer_discount_paise >= 0)',
+  )();
+
+  /// Applied offer ID; NULL when no offer applied.
+  TextColumn get appliedOfferId => text().nullable()();
+
+  /// Applied offer name; NULL when no offer applied.
+  TextColumn get appliedOfferName => text().nullable()();
+
+  /// Applied offer type; NULL when no offer applied.
+  TextColumn get appliedOfferType => text().nullable().customConstraint(
+    "CHECK (applied_offer_type IS NULL OR applied_offer_type IN ('PERCENTAGE','COMBO','BUY_X_GET_Y'))",
+  )();
 }

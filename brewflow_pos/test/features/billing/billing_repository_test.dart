@@ -1209,6 +1209,10 @@ void main() {
   });
 
   group('reads', () {
+    setUp(() async {
+      await seedShop();
+    });
+
     test('saleById returns null for unknown ids', () async {
       expect(await repository.saleById('missing'), isNull);
     });

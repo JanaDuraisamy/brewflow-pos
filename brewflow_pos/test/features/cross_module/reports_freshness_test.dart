@@ -1,10 +1,12 @@
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
+import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
@@ -13,6 +15,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_auth_repository.dart';
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 
 /// ---------------------------------------------------------------------------
@@ -39,6 +43,8 @@ void main() {
       overrides: [
         appDatabaseProvider.overrideWithValue(database),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+        offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+        authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
       ],
     );
     addTearDown(container.dispose);
@@ -134,10 +140,19 @@ void main() {
 
   test('a product cost-price update refreshes reported profit', () async {
     await seedProduct(costPricePaise: 8000);
+    // Prime the reports surface so its shop scope is resolved once up front;
+    // this mirrors the earlier tests in this file and avoids a checkout-time
+    // race where the reports shop and the sale shop could be resolved to
+    // different rows.
+    expect((await reports()).sales.totalPaise, 0);
     final product = (await container.read(productsProvider.future)).single;
     final cart = container.read(cartProvider.notifier);
     cart.add(product);
     await cart.checkout(PaymentMethod.cash);
+    await awaitUntil(() {
+      final value = container.read(reportsControllerProvider).value;
+      return value != null && value.sales.totalPaise == 15000;
+    }, reason: 'reports totals did not refresh after the sale');
     expect((await reports()).profitLoss.netProfitPaise, 7000);
 
     await container

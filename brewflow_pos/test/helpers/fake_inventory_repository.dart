@@ -40,7 +40,7 @@ final class FakeInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<List<Category>> categories() async {
+  Future<List<Category>> categories({List<String>? shopIds}) async {
     categoriesCalls += 1;
     await _gate();
     _throwIfLoadError();
@@ -53,6 +53,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     String? search,
     String? categoryId,
     ProductStatusFilter status = ProductStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     productsCalls += 1;
     await _gate();

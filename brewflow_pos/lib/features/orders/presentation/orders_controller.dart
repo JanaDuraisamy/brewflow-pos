@@ -5,10 +5,11 @@ import 'package:brewflow_pos/features/billing/presentation/billing_controller.da
 import 'package:brewflow_pos/features/orders/data/drift_orders_repository.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
-import '../../staff/presentation/staff_controller.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Orders State (Riverpod)
@@ -137,8 +138,16 @@ final class OrdersListController extends AsyncNotifier<OrdersFeed> {
   Future<OrdersFeed> build() async {
     final filter = ref.watch(ordersFilterProvider);
     final repository = ref.watch(ordersRepositoryProvider);
+    final businessContext = ref.watch(businessSwitcherProvider);
+    final shopIds = await ref
+        .read(businessSwitcherProvider.notifier)
+        .shopIdsForRead(businessContext);
     try {
-      final page = await repository.orders(filter: filter, limit: pageSize);
+      final page = await repository.orders(
+        filter: filter,
+        limit: pageSize,
+        shopIds: shopIds,
+      );
       return OrdersFeed(items: page.items, hasMore: page.hasMore);
     } on OrdersFailure {
       rethrow;
@@ -162,12 +171,17 @@ final class OrdersListController extends AsyncNotifier<OrdersFeed> {
     if (!accumulated.hasMore) return;
     final filterAtStart = ref.read(ordersFilterProvider);
     final repository = ref.read(ordersRepositoryProvider);
+    final businessContext = ref.read(businessSwitcherProvider);
+    final shopIds = await ref
+        .read(businessSwitcherProvider.notifier)
+        .shopIdsForRead(businessContext);
     _loadingMore = true;
     try {
       final page = await repository.orders(
         filter: filterAtStart,
         limit: pageSize,
         offset: accumulated.items.length,
+        shopIds: shopIds,
       );
       if (ref.read(ordersFilterProvider) != filterAtStart) {
         return;

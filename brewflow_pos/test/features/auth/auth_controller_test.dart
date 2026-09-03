@@ -4,11 +4,15 @@ import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_auth_repository.dart';
+import '../../helpers/fake_offers_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 void main() {
   late FakeAuthRepository fake;
@@ -17,7 +21,11 @@ void main() {
   setUp(() {
     fake = FakeAuthRepository();
     container = ProviderContainer(
-      overrides: [authRepositoryProvider.overrideWithValue(fake)],
+      overrides: [
+        authRepositoryProvider.overrideWithValue(fake),
+        offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      ],
     );
   });
 

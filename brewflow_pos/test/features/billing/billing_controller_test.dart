@@ -14,8 +14,10 @@ import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dar
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_repository.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,8 +25,10 @@ import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
 
 /// Counts stock-movement repository calls so tests can assert that cart
@@ -175,6 +179,8 @@ void main() {
         ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
         customerLedgerRepositoryProvider.overrideWithValue(ledger),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
       ],
     );
     addTearDown(container.dispose);

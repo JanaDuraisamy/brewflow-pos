@@ -63,6 +63,11 @@ class Sales extends Table {
   IntColumn get totalPaise =>
       integer().customConstraint('NOT NULL CHECK (total_paise >= 0)')();
 
+  /// Total offer discount applied to this sale in paise. >= 0.
+  IntColumn get offerDiscountPaise => integer().customConstraint(
+    'NOT NULL DEFAULT 0 CHECK (offer_discount_paise >= 0)',
+  )();
+
   /// Payment method captured at the counter: CASH, UPI or BANK. NULL for
   /// NOT_PAID (credit) sales, where no money moved at the counter.
   TextColumn get paymentMethod => text().nullable().customConstraint(

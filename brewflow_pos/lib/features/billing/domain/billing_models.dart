@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/core/utils/money.dart';
+import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Billing Domain Models
@@ -15,6 +16,23 @@ import 'package:brewflow_pos/core/utils/money.dart';
 /// purely so an in-memory [CartLine.maxQuantity] can never block a sale.
 /// It never reaches the database and never appears as stock anywhere.
 const int untrackedStockCap = 1000000;
+
+/// Tracks an applied offer on a cart line.
+final class AppliedOffer {
+  const AppliedOffer({
+    required this.offerId,
+    required this.offerName,
+    required this.offerType,
+    required this.discountPaise,
+    required this.appliedQuantity,
+  });
+
+  final String offerId;
+  final String offerName;
+  final OfferType offerType;
+  final int discountPaise;
+  final int appliedQuantity;
+}
 
 /// Accepted in-person payment methods. No gateway is involved; the enum
 /// simply labels what the counter accepted. Not applicable to NOT_PAID
@@ -86,6 +104,7 @@ final class CartLine {
     this.variantId,
     this.variantName,
     this.memberPricePaise,
+    this.appliedOffer,
   }) : assert(quantity > 0, 'CartLine quantity must be positive'),
        assert(maxQuantity >= quantity, 'maxQuantity must cover quantity');
 
@@ -108,6 +127,9 @@ final class CartLine {
   final int quantity;
   final int maxQuantity;
 
+  /// Applied offer on this line; null when no offer applies.
+  final AppliedOffer? appliedOffer;
+
   /// Identity of the stock entity this line deducts from: the variant when
   /// the line sells a variant, otherwise the product.
   String get keyId => variantId ?? productId;
@@ -129,7 +151,23 @@ final class CartLine {
   int? chargedLineTotalPaise(bool memberPricing) =>
       Money.multiplyPaise(chargedUnitPricePaise(memberPricing), quantity);
 
-  CartLine copyWith({int? quantity, int? unitPricePaise}) => CartLine(
+  /// Line total after member pricing but before offer discount.
+  int? chargedLineTotalBeforeOffer(bool memberPricing) =>
+      chargedLineTotalPaise(memberPricing);
+
+  /// Line total after member pricing AND offer discount.
+  int? chargedLineTotalAfterOffer(bool memberPricing) {
+    final beforeOffer = chargedLineTotalBeforeOffer(memberPricing);
+    if (beforeOffer == null) return null;
+    final discount = appliedOffer?.discountPaise ?? 0;
+    return (beforeOffer - discount).clamp(0, beforeOffer);
+  }
+
+  CartLine copyWith({
+    int? quantity,
+    int? unitPricePaise,
+    AppliedOffer? appliedOffer,
+  }) => CartLine(
     productId: productId,
     productName: productName,
     sku: sku,
@@ -139,7 +177,10 @@ final class CartLine {
     unitPricePaise: unitPricePaise ?? this.unitPricePaise,
     quantity: quantity ?? this.quantity,
     maxQuantity: maxQuantity,
+    appliedOffer: appliedOffer ?? this.appliedOffer,
   );
+
+  CartLine clearOffer() => copyWith(appliedOffer: null);
 }
 
 /// Immutable cart: a list of unique stock-entity lines (variant or product)
@@ -196,17 +237,37 @@ final class Cart {
   /// Total pieces across all lines.
   int get itemCount => _lines.fold(0, (sum, line) => sum + line.quantity);
 
-  /// Safe sum of line totals; null when the cart exceeds [Money.maxPaise].
+  /// Safe sum of line totals (base prices); null when the cart exceeds [Money.maxPaise].
   int? get subtotalPaise => Money.sumPaise(_lines.map((l) => l.lineTotalPaise));
 
-  /// No discounts or taxes yet, so the charged total equals the subtotal.
-  int? get totalPaise => subtotalPaise;
+  /// Total offer discount across all lines in paise.
+  int get totalOfferDiscountPaise => _lines.fold(
+    0,
+    (sum, line) => sum + (line.appliedOffer?.discountPaise ?? 0),
+  );
+
+  /// Safe sum of the charged line totals after member pricing but BEFORE offers.
+  int? get chargedTotalBeforeOffersPaise => Money.sumPaise(
+    _lines.map((l) => l.chargedLineTotalPaise(memberPricing)!),
+  );
+
+  /// Safe sum of the charged line totals after member pricing AND offers.
+  int? get chargedTotalAfterOffersPaise {
+    final beforeOffers = chargedTotalBeforeOffersPaise;
+    if (beforeOffers == null) return null;
+    return (beforeOffers - totalOfferDiscountPaise).clamp(0, beforeOffers);
+  }
+
+  /// Final total the customer pays (after member pricing and offers).
+  int? get totalPaise => chargedTotalAfterOffersPaise;
 
   /// Safe sum of the charged line totals ([CartLine.chargedLineTotalPaise]
   /// with [memberPricing]); null when the cart exceeds [Money.maxPaise].
-  int? get chargedTotalPaise => Money.sumPaise(
-    _lines.map((l) => l.chargedLineTotalPaise(memberPricing)!),
-  );
+  /// DEPRECATED: Use [chargedTotalBeforeOffersPaise] or [chargedTotalAfterOffersPaise].
+  @Deprecated(
+    'Use chargedTotalBeforeOffersPaise or chargedTotalAfterOffersPaise',
+  )
+  int? get chargedTotalPaise => chargedTotalBeforeOffersPaise;
 
   /// Lines with [CartLine.unitPricePaise] resolved to the charged price
   /// (member price where the cart has member pricing enabled and the line has
@@ -305,8 +366,17 @@ final class HeldBill {
 
   /// Charged total with the bill's member-pricing state; null above the safe
   /// ceiling (unreachable in practice — checkout would have rejected it).
-  int? get totalPaise =>
-      Money.sumPaise(lines.map((l) => l.chargedLineTotalPaise(memberPricing)!));
+  int? get totalPaise {
+    final beforeOffers = Money.sumPaise(
+      lines.map((l) => l.chargedLineTotalPaise(memberPricing)!),
+    );
+    if (beforeOffers == null) return null;
+    final discount = lines.fold(
+      0,
+      (sum, line) => sum + (line.appliedOffer?.discountPaise ?? 0),
+    );
+    return (beforeOffers - discount).clamp(0, beforeOffers);
+  }
 
   /// Restores the cart to exactly what the counter had when the bill was held.
   Cart toCart() => Cart.fromLines(
@@ -323,6 +393,7 @@ final class Sale {
     required this.receiptNumber,
     required this.subtotalPaise,
     required this.totalPaise,
+    required this.offerDiscountPaise,
     required this.paymentStatus,
     required this.createdAt,
     required this.updatedAt,
@@ -336,6 +407,7 @@ final class Sale {
   final String receiptNumber;
   final int subtotalPaise;
   final int totalPaise;
+  final int offerDiscountPaise;
 
   /// Collection status chosen at the counter: paid or not paid (credit).
   final PaymentStatus paymentStatus;
@@ -366,9 +438,13 @@ final class SaleItem {
     required this.unitPricePaise,
     required this.quantity,
     required this.lineTotalPaise,
+    required this.offerDiscountPaise,
     this.sku,
     this.variantId,
     this.variantName,
+    this.appliedOfferId,
+    this.appliedOfferName,
+    this.appliedOfferType,
   });
 
   final String id;
@@ -387,6 +463,12 @@ final class SaleItem {
   final int unitPricePaise;
   final int quantity;
   final int lineTotalPaise;
+  final int offerDiscountPaise;
+
+  /// Offer applied to this line; null if no offer.
+  final String? appliedOfferId;
+  final String? appliedOfferName;
+  final OfferType? appliedOfferType;
 }
 
 /// Result of a successfully completed checkout.

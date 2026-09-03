@@ -1,0 +1,37 @@
+-- ---------------------------------------------------------------------------
+-- BrewFlow POS — Phase: Storage Monitoring + Monthly Cleanup
+--
+-- Owner-only storage usage screen and monthly orphan-image cleanup.
+--
+-- Contract (deliberate, do not "simplify"):
+--
+-- 1. NO SERVICE-ROLE KEY ON DEVICES. Listing every object in the bucket and
+--    permanently deleting orphan Storage objects are PRIVILEGED operations
+--    that row-scoped Storage RLS cannot safely express. Both run inside the
+--    `storage-cleanup` Edge Function (service role, server-side) and are
+--    gated there on the caller being an active OWNER of the target shop.
+-- 2. ORPHAN DETECTION IS SERVER-AUTHORITATIVE. `public.products.cloud_image_path`
+--    is the sole reference set. An object under `product-images/<shopId>/products/`
+--    is an orphan iff its name matches NO product's cloud_image_path for that
+--    shop. The client never computes this itself (it cannot list untrusted
+--    buckets), so referenced images can never be misclassified.
+-- 3. NEVER DELETE A REFERENCED IMAGE. The delete action re-scans orphans at
+--    delete time and deletes ONLY paths that are confirmed unreferenced — a
+--    newly-referenced object is skipped even if it was listed as a candidate
+--    moments earlier.
+-- 4. IDEMPOTENT. Re-running a scan returns the same stats; deleting an object
+--    that is already gone is a no-op. Repeated cleanup converges (no growth).
+-- 5. NO AUTO-PERMANENT-DELETE. The scan is read-only. Permanent deletion
+--    happens only after the owner confirms on-device, which issues an
+--    explicit `delete` request listing the exact object paths.
+--
+-- Append-only: never edit released migrations. Apply with:
+--   supabase db execute --file supabase/migrations/0009_storage_cleanup.sql
+-- ---------------------------------------------------------------------------
+
+-- Configured storage limit (bytes) for a shop. Null means "no enforcement /
+-- unlimited" and the usage screen then shows usage without a hard ceiling.
+-- This is a server/admin concern (read by the edge function); it is not part
+-- of the device-local shop record, so the master-data shop sync is untouched.
+alter table public.shops
+  add column if not exists storage_limit_bytes bigint;

@@ -2,6 +2,7 @@ import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_inventory_repository.dart';
+import 'package:brewflow_pos/features/inventory/data/drift_image_sync_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
@@ -35,6 +36,7 @@ final inventoryRepositoryProvider = Provider<InventoryRepository>((ref) {
   return DriftInventoryRepository(
     ref.watch(appDatabaseProvider),
     outboxCoordinator: ref.watch(syncOutboxCoordinatorProvider),
+    imageQueue: DriftImageSyncRepository(ref.watch(appDatabaseProvider)),
   );
 });
 

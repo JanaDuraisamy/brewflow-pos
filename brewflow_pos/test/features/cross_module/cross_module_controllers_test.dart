@@ -7,12 +7,14 @@ import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dar
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 
 /// ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ void main() {
       overrides: [
         appDatabaseProvider.overrideWithValue(database),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+        offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
       ],
     );
     addTearDown(container.dispose);
@@ -166,6 +169,7 @@ void main() {
           settingsRepositoryProvider.overrideWithValue(
             FakeSettingsRepository(),
           ),
+          offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
         ],
       );
       addTearDown(container.dispose);

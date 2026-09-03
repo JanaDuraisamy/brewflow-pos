@@ -3505,6 +3505,17 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _cloudImagePathMeta = const VerificationMeta(
+    'cloudImagePath',
+  );
+  @override
+  late final GeneratedColumn<String> cloudImagePath = GeneratedColumn<String>(
+    'cloud_image_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _isActiveMeta = const VerificationMeta(
     'isActive',
   );
@@ -3560,6 +3571,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     membershipEnabled,
     memberPricePaise,
     imagePath,
+    cloudImagePath,
     isActive,
     createdAt,
     updatedAt,
@@ -3684,6 +3696,15 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         imagePath.isAcceptableOrUnknown(data['image_path']!, _imagePathMeta),
       );
     }
+    if (data.containsKey('cloud_image_path')) {
+      context.handle(
+        _cloudImagePathMeta,
+        cloudImagePath.isAcceptableOrUnknown(
+          data['cloud_image_path']!,
+          _cloudImagePathMeta,
+        ),
+      );
+    }
     if (data.containsKey('is_active')) {
       context.handle(
         _isActiveMeta,
@@ -3771,6 +3792,10 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.string,
         data['${effectivePrefix}image_path'],
       ),
+      cloudImagePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cloud_image_path'],
+      ),
       isActive: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_active'],
@@ -3847,6 +3872,12 @@ class Product extends DataClass implements Insertable<Product> {
   /// offline.
   final String? imagePath;
 
+  /// Cloud object path (Supabase Storage) of the product image; NULL when the
+  /// image is only local or absent. Stored as a path/metadata reference so the
+  /// device never holds raw bytes in the database — other devices pull the
+  /// object from cloud storage and cache it locally under [Products.imagePath].
+  final String? cloudImagePath;
+
   /// Soft switch to hide a product from the POS without deleting it.
   final bool isActive;
 
@@ -3870,6 +3901,7 @@ class Product extends DataClass implements Insertable<Product> {
     required this.membershipEnabled,
     this.memberPricePaise,
     this.imagePath,
+    this.cloudImagePath,
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
@@ -3903,6 +3935,9 @@ class Product extends DataClass implements Insertable<Product> {
     if (!nullToAbsent || imagePath != null) {
       map['image_path'] = Variable<String>(imagePath);
     }
+    if (!nullToAbsent || cloudImagePath != null) {
+      map['cloud_image_path'] = Variable<String>(cloudImagePath);
+    }
     map['is_active'] = Variable<bool>(isActive);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -3935,6 +3970,9 @@ class Product extends DataClass implements Insertable<Product> {
       imagePath: imagePath == null && nullToAbsent
           ? const Value.absent()
           : Value(imagePath),
+      cloudImagePath: cloudImagePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cloudImagePath),
       isActive: Value(isActive),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -3961,6 +3999,7 @@ class Product extends DataClass implements Insertable<Product> {
       membershipEnabled: serializer.fromJson<bool>(json['membershipEnabled']),
       memberPricePaise: serializer.fromJson<int?>(json['memberPricePaise']),
       imagePath: serializer.fromJson<String?>(json['imagePath']),
+      cloudImagePath: serializer.fromJson<String?>(json['cloudImagePath']),
       isActive: serializer.fromJson<bool>(json['isActive']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -3984,6 +4023,7 @@ class Product extends DataClass implements Insertable<Product> {
       'membershipEnabled': serializer.toJson<bool>(membershipEnabled),
       'memberPricePaise': serializer.toJson<int?>(memberPricePaise),
       'imagePath': serializer.toJson<String?>(imagePath),
+      'cloudImagePath': serializer.toJson<String?>(cloudImagePath),
       'isActive': serializer.toJson<bool>(isActive),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -4005,6 +4045,7 @@ class Product extends DataClass implements Insertable<Product> {
     bool? membershipEnabled,
     Value<int?> memberPricePaise = const Value.absent(),
     Value<String?> imagePath = const Value.absent(),
+    Value<String?> cloudImagePath = const Value.absent(),
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -4029,6 +4070,9 @@ class Product extends DataClass implements Insertable<Product> {
         ? memberPricePaise.value
         : this.memberPricePaise,
     imagePath: imagePath.present ? imagePath.value : this.imagePath,
+    cloudImagePath: cloudImagePath.present
+        ? cloudImagePath.value
+        : this.cloudImagePath,
     isActive: isActive ?? this.isActive,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -4065,6 +4109,9 @@ class Product extends DataClass implements Insertable<Product> {
           ? data.memberPricePaise.value
           : this.memberPricePaise,
       imagePath: data.imagePath.present ? data.imagePath.value : this.imagePath,
+      cloudImagePath: data.cloudImagePath.present
+          ? data.cloudImagePath.value
+          : this.cloudImagePath,
       isActive: data.isActive.present ? data.isActive.value : this.isActive,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -4088,6 +4135,7 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('membershipEnabled: $membershipEnabled, ')
           ..write('memberPricePaise: $memberPricePaise, ')
           ..write('imagePath: $imagePath, ')
+          ..write('cloudImagePath: $cloudImagePath, ')
           ..write('isActive: $isActive, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -4111,6 +4159,7 @@ class Product extends DataClass implements Insertable<Product> {
     membershipEnabled,
     memberPricePaise,
     imagePath,
+    cloudImagePath,
     isActive,
     createdAt,
     updatedAt,
@@ -4133,6 +4182,7 @@ class Product extends DataClass implements Insertable<Product> {
           other.membershipEnabled == this.membershipEnabled &&
           other.memberPricePaise == this.memberPricePaise &&
           other.imagePath == this.imagePath &&
+          other.cloudImagePath == this.cloudImagePath &&
           other.isActive == this.isActive &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -4153,6 +4203,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<bool> membershipEnabled;
   final Value<int?> memberPricePaise;
   final Value<String?> imagePath;
+  final Value<String?> cloudImagePath;
   final Value<bool> isActive;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -4172,6 +4223,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.membershipEnabled = const Value.absent(),
     this.memberPricePaise = const Value.absent(),
     this.imagePath = const Value.absent(),
+    this.cloudImagePath = const Value.absent(),
     this.isActive = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4192,6 +4244,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.membershipEnabled = const Value.absent(),
     this.memberPricePaise = const Value.absent(),
     this.imagePath = const Value.absent(),
+    this.cloudImagePath = const Value.absent(),
     this.isActive = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4214,6 +4267,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<bool>? membershipEnabled,
     Expression<int>? memberPricePaise,
     Expression<String>? imagePath,
+    Expression<String>? cloudImagePath,
     Expression<bool>? isActive,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -4234,6 +4288,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       if (membershipEnabled != null) 'membership_enabled': membershipEnabled,
       if (memberPricePaise != null) 'member_price_paise': memberPricePaise,
       if (imagePath != null) 'image_path': imagePath,
+      if (cloudImagePath != null) 'cloud_image_path': cloudImagePath,
       if (isActive != null) 'is_active': isActive,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -4256,6 +4311,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<bool>? membershipEnabled,
     Value<int?>? memberPricePaise,
     Value<String?>? imagePath,
+    Value<String?>? cloudImagePath,
     Value<bool>? isActive,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -4276,6 +4332,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       membershipEnabled: membershipEnabled ?? this.membershipEnabled,
       memberPricePaise: memberPricePaise ?? this.memberPricePaise,
       imagePath: imagePath ?? this.imagePath,
+      cloudImagePath: cloudImagePath ?? this.cloudImagePath,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -4328,6 +4385,9 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (imagePath.present) {
       map['image_path'] = Variable<String>(imagePath.value);
     }
+    if (cloudImagePath.present) {
+      map['cloud_image_path'] = Variable<String>(cloudImagePath.value);
+    }
     if (isActive.present) {
       map['is_active'] = Variable<bool>(isActive.value);
     }
@@ -4360,6 +4420,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('membershipEnabled: $membershipEnabled, ')
           ..write('memberPricePaise: $memberPricePaise, ')
           ..write('imagePath: $imagePath, ')
+          ..write('cloudImagePath: $cloudImagePath, ')
           ..write('isActive: $isActive, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -6126,6 +6187,18 @@ class $SalesTable extends Sales with TableInfo<$SalesTable, Sale> {
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL CHECK (total_paise >= 0)',
   );
+  static const VerificationMeta _offerDiscountPaiseMeta =
+      const VerificationMeta('offerDiscountPaise');
+  @override
+  late final GeneratedColumn<int> offerDiscountPaise = GeneratedColumn<int>(
+    'offer_discount_paise',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 0 CHECK (offer_discount_paise >= 0)',
+    defaultValue: const CustomExpression('0'),
+  );
   static const VerificationMeta _paymentMethodMeta = const VerificationMeta(
     'paymentMethod',
   );
@@ -6209,6 +6282,7 @@ class $SalesTable extends Sales with TableInfo<$SalesTable, Sale> {
     receiptNumber,
     subtotalPaise,
     totalPaise,
+    offerDiscountPaise,
     paymentMethod,
     paymentStatus,
     createdAt,
@@ -6272,6 +6346,15 @@ class $SalesTable extends Sales with TableInfo<$SalesTable, Sale> {
       );
     } else if (isInserting) {
       context.missing(_totalPaiseMeta);
+    }
+    if (data.containsKey('offer_discount_paise')) {
+      context.handle(
+        _offerDiscountPaiseMeta,
+        offerDiscountPaise.isAcceptableOrUnknown(
+          data['offer_discount_paise']!,
+          _offerDiscountPaiseMeta,
+        ),
+      );
     }
     if (data.containsKey('payment_method')) {
       context.handle(
@@ -6352,6 +6435,10 @@ class $SalesTable extends Sales with TableInfo<$SalesTable, Sale> {
         DriftSqlType.int,
         data['${effectivePrefix}total_paise'],
       )!,
+      offerDiscountPaise: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}offer_discount_paise'],
+      )!,
       paymentMethod: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}payment_method'],
@@ -6405,6 +6492,9 @@ class Sale extends DataClass implements Insertable<Sale> {
   /// Amount charged in paise. Equals the subtotal (no discounts/taxes yet).
   final int totalPaise;
 
+  /// Total offer discount applied to this sale in paise. >= 0.
+  final int offerDiscountPaise;
+
   /// Payment method captured at the counter: CASH, UPI or BANK. NULL for
   /// NOT_PAID (credit) sales, where no money moved at the counter.
   final String? paymentMethod;
@@ -6434,6 +6524,7 @@ class Sale extends DataClass implements Insertable<Sale> {
     required this.receiptNumber,
     required this.subtotalPaise,
     required this.totalPaise,
+    required this.offerDiscountPaise,
     this.paymentMethod,
     required this.paymentStatus,
     required this.createdAt,
@@ -6454,6 +6545,7 @@ class Sale extends DataClass implements Insertable<Sale> {
     map['receipt_number'] = Variable<String>(receiptNumber);
     map['subtotal_paise'] = Variable<int>(subtotalPaise);
     map['total_paise'] = Variable<int>(totalPaise);
+    map['offer_discount_paise'] = Variable<int>(offerDiscountPaise);
     if (!nullToAbsent || paymentMethod != null) {
       map['payment_method'] = Variable<String>(paymentMethod);
     }
@@ -6479,6 +6571,7 @@ class Sale extends DataClass implements Insertable<Sale> {
       receiptNumber: Value(receiptNumber),
       subtotalPaise: Value(subtotalPaise),
       totalPaise: Value(totalPaise),
+      offerDiscountPaise: Value(offerDiscountPaise),
       paymentMethod: paymentMethod == null && nullToAbsent
           ? const Value.absent()
           : Value(paymentMethod),
@@ -6504,6 +6597,7 @@ class Sale extends DataClass implements Insertable<Sale> {
       receiptNumber: serializer.fromJson<String>(json['receiptNumber']),
       subtotalPaise: serializer.fromJson<int>(json['subtotalPaise']),
       totalPaise: serializer.fromJson<int>(json['totalPaise']),
+      offerDiscountPaise: serializer.fromJson<int>(json['offerDiscountPaise']),
       paymentMethod: serializer.fromJson<String?>(json['paymentMethod']),
       paymentStatus: serializer.fromJson<String>(json['paymentStatus']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -6522,6 +6616,7 @@ class Sale extends DataClass implements Insertable<Sale> {
       'receiptNumber': serializer.toJson<String>(receiptNumber),
       'subtotalPaise': serializer.toJson<int>(subtotalPaise),
       'totalPaise': serializer.toJson<int>(totalPaise),
+      'offerDiscountPaise': serializer.toJson<int>(offerDiscountPaise),
       'paymentMethod': serializer.toJson<String?>(paymentMethod),
       'paymentStatus': serializer.toJson<String>(paymentStatus),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -6538,6 +6633,7 @@ class Sale extends DataClass implements Insertable<Sale> {
     String? receiptNumber,
     int? subtotalPaise,
     int? totalPaise,
+    int? offerDiscountPaise,
     Value<String?> paymentMethod = const Value.absent(),
     String? paymentStatus,
     DateTime? createdAt,
@@ -6551,6 +6647,7 @@ class Sale extends DataClass implements Insertable<Sale> {
     receiptNumber: receiptNumber ?? this.receiptNumber,
     subtotalPaise: subtotalPaise ?? this.subtotalPaise,
     totalPaise: totalPaise ?? this.totalPaise,
+    offerDiscountPaise: offerDiscountPaise ?? this.offerDiscountPaise,
     paymentMethod: paymentMethod.present
         ? paymentMethod.value
         : this.paymentMethod,
@@ -6576,6 +6673,9 @@ class Sale extends DataClass implements Insertable<Sale> {
       totalPaise: data.totalPaise.present
           ? data.totalPaise.value
           : this.totalPaise,
+      offerDiscountPaise: data.offerDiscountPaise.present
+          ? data.offerDiscountPaise.value
+          : this.offerDiscountPaise,
       paymentMethod: data.paymentMethod.present
           ? data.paymentMethod.value
           : this.paymentMethod,
@@ -6598,6 +6698,7 @@ class Sale extends DataClass implements Insertable<Sale> {
           ..write('receiptNumber: $receiptNumber, ')
           ..write('subtotalPaise: $subtotalPaise, ')
           ..write('totalPaise: $totalPaise, ')
+          ..write('offerDiscountPaise: $offerDiscountPaise, ')
           ..write('paymentMethod: $paymentMethod, ')
           ..write('paymentStatus: $paymentStatus, ')
           ..write('createdAt: $createdAt, ')
@@ -6616,6 +6717,7 @@ class Sale extends DataClass implements Insertable<Sale> {
     receiptNumber,
     subtotalPaise,
     totalPaise,
+    offerDiscountPaise,
     paymentMethod,
     paymentStatus,
     createdAt,
@@ -6633,6 +6735,7 @@ class Sale extends DataClass implements Insertable<Sale> {
           other.receiptNumber == this.receiptNumber &&
           other.subtotalPaise == this.subtotalPaise &&
           other.totalPaise == this.totalPaise &&
+          other.offerDiscountPaise == this.offerDiscountPaise &&
           other.paymentMethod == this.paymentMethod &&
           other.paymentStatus == this.paymentStatus &&
           other.createdAt == this.createdAt &&
@@ -6648,6 +6751,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
   final Value<String> receiptNumber;
   final Value<int> subtotalPaise;
   final Value<int> totalPaise;
+  final Value<int> offerDiscountPaise;
   final Value<String?> paymentMethod;
   final Value<String> paymentStatus;
   final Value<DateTime> createdAt;
@@ -6662,6 +6766,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
     this.receiptNumber = const Value.absent(),
     this.subtotalPaise = const Value.absent(),
     this.totalPaise = const Value.absent(),
+    this.offerDiscountPaise = const Value.absent(),
     this.paymentMethod = const Value.absent(),
     this.paymentStatus = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -6677,6 +6782,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
     required String receiptNumber,
     required int subtotalPaise,
     required int totalPaise,
+    this.offerDiscountPaise = const Value.absent(),
     this.paymentMethod = const Value.absent(),
     this.paymentStatus = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -6694,6 +6800,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
     Expression<String>? receiptNumber,
     Expression<int>? subtotalPaise,
     Expression<int>? totalPaise,
+    Expression<int>? offerDiscountPaise,
     Expression<String>? paymentMethod,
     Expression<String>? paymentStatus,
     Expression<DateTime>? createdAt,
@@ -6709,6 +6816,8 @@ class SalesCompanion extends UpdateCompanion<Sale> {
       if (receiptNumber != null) 'receipt_number': receiptNumber,
       if (subtotalPaise != null) 'subtotal_paise': subtotalPaise,
       if (totalPaise != null) 'total_paise': totalPaise,
+      if (offerDiscountPaise != null)
+        'offer_discount_paise': offerDiscountPaise,
       if (paymentMethod != null) 'payment_method': paymentMethod,
       if (paymentStatus != null) 'payment_status': paymentStatus,
       if (createdAt != null) 'created_at': createdAt,
@@ -6726,6 +6835,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
     Value<String>? receiptNumber,
     Value<int>? subtotalPaise,
     Value<int>? totalPaise,
+    Value<int>? offerDiscountPaise,
     Value<String?>? paymentMethod,
     Value<String>? paymentStatus,
     Value<DateTime>? createdAt,
@@ -6741,6 +6851,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
       receiptNumber: receiptNumber ?? this.receiptNumber,
       subtotalPaise: subtotalPaise ?? this.subtotalPaise,
       totalPaise: totalPaise ?? this.totalPaise,
+      offerDiscountPaise: offerDiscountPaise ?? this.offerDiscountPaise,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       paymentStatus: paymentStatus ?? this.paymentStatus,
       createdAt: createdAt ?? this.createdAt,
@@ -6771,6 +6882,9 @@ class SalesCompanion extends UpdateCompanion<Sale> {
     }
     if (totalPaise.present) {
       map['total_paise'] = Variable<int>(totalPaise.value);
+    }
+    if (offerDiscountPaise.present) {
+      map['offer_discount_paise'] = Variable<int>(offerDiscountPaise.value);
     }
     if (paymentMethod.present) {
       map['payment_method'] = Variable<String>(paymentMethod.value);
@@ -6805,6 +6919,7 @@ class SalesCompanion extends UpdateCompanion<Sale> {
           ..write('receiptNumber: $receiptNumber, ')
           ..write('subtotalPaise: $subtotalPaise, ')
           ..write('totalPaise: $totalPaise, ')
+          ..write('offerDiscountPaise: $offerDiscountPaise, ')
           ..write('paymentMethod: $paymentMethod, ')
           ..write('paymentStatus: $paymentStatus, ')
           ..write('createdAt: $createdAt, ')
@@ -8442,6 +8557,53 @@ class $SaleItemsTable extends SaleItems
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL CHECK (line_total_paise >= 0)',
   );
+  static const VerificationMeta _offerDiscountPaiseMeta =
+      const VerificationMeta('offerDiscountPaise');
+  @override
+  late final GeneratedColumn<int> offerDiscountPaise = GeneratedColumn<int>(
+    'offer_discount_paise',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 0 CHECK (offer_discount_paise >= 0)',
+    defaultValue: const CustomExpression('0'),
+  );
+  static const VerificationMeta _appliedOfferIdMeta = const VerificationMeta(
+    'appliedOfferId',
+  );
+  @override
+  late final GeneratedColumn<String> appliedOfferId = GeneratedColumn<String>(
+    'applied_offer_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _appliedOfferNameMeta = const VerificationMeta(
+    'appliedOfferName',
+  );
+  @override
+  late final GeneratedColumn<String> appliedOfferName = GeneratedColumn<String>(
+    'applied_offer_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _appliedOfferTypeMeta = const VerificationMeta(
+    'appliedOfferType',
+  );
+  @override
+  late final GeneratedColumn<String> appliedOfferType = GeneratedColumn<String>(
+    'applied_offer_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints:
+        'CHECK (applied_offer_type IS NULL OR applied_offer_type IN (\'PERCENTAGE\',\'COMBO\',\'BUY_X_GET_Y\'))',
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -8455,6 +8617,10 @@ class $SaleItemsTable extends SaleItems
     unitPricePaise,
     quantity,
     lineTotalPaise,
+    offerDiscountPaise,
+    appliedOfferId,
+    appliedOfferName,
+    appliedOfferType,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -8555,6 +8721,42 @@ class $SaleItemsTable extends SaleItems
     } else if (isInserting) {
       context.missing(_lineTotalPaiseMeta);
     }
+    if (data.containsKey('offer_discount_paise')) {
+      context.handle(
+        _offerDiscountPaiseMeta,
+        offerDiscountPaise.isAcceptableOrUnknown(
+          data['offer_discount_paise']!,
+          _offerDiscountPaiseMeta,
+        ),
+      );
+    }
+    if (data.containsKey('applied_offer_id')) {
+      context.handle(
+        _appliedOfferIdMeta,
+        appliedOfferId.isAcceptableOrUnknown(
+          data['applied_offer_id']!,
+          _appliedOfferIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('applied_offer_name')) {
+      context.handle(
+        _appliedOfferNameMeta,
+        appliedOfferName.isAcceptableOrUnknown(
+          data['applied_offer_name']!,
+          _appliedOfferNameMeta,
+        ),
+      );
+    }
+    if (data.containsKey('applied_offer_type')) {
+      context.handle(
+        _appliedOfferTypeMeta,
+        appliedOfferType.isAcceptableOrUnknown(
+          data['applied_offer_type']!,
+          _appliedOfferTypeMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -8608,6 +8810,22 @@ class $SaleItemsTable extends SaleItems
         DriftSqlType.int,
         data['${effectivePrefix}line_total_paise'],
       )!,
+      offerDiscountPaise: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}offer_discount_paise'],
+      )!,
+      appliedOfferId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}applied_offer_id'],
+      ),
+      appliedOfferName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}applied_offer_name'],
+      ),
+      appliedOfferType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}applied_offer_type'],
+      ),
     );
   }
 
@@ -8651,6 +8869,18 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
 
   /// unitPricePaise * quantity in paise. Must be >= 0.
   final int lineTotalPaise;
+
+  /// Offer discount applied to this line in paise. >= 0.
+  final int offerDiscountPaise;
+
+  /// Applied offer ID; NULL when no offer applied.
+  final String? appliedOfferId;
+
+  /// Applied offer name; NULL when no offer applied.
+  final String? appliedOfferName;
+
+  /// Applied offer type; NULL when no offer applied.
+  final String? appliedOfferType;
   const SaleItem({
     required this.id,
     this.shopId,
@@ -8663,6 +8893,10 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     required this.unitPricePaise,
     required this.quantity,
     required this.lineTotalPaise,
+    required this.offerDiscountPaise,
+    this.appliedOfferId,
+    this.appliedOfferName,
+    this.appliedOfferType,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -8686,6 +8920,16 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     map['unit_price_paise'] = Variable<int>(unitPricePaise);
     map['quantity'] = Variable<int>(quantity);
     map['line_total_paise'] = Variable<int>(lineTotalPaise);
+    map['offer_discount_paise'] = Variable<int>(offerDiscountPaise);
+    if (!nullToAbsent || appliedOfferId != null) {
+      map['applied_offer_id'] = Variable<String>(appliedOfferId);
+    }
+    if (!nullToAbsent || appliedOfferName != null) {
+      map['applied_offer_name'] = Variable<String>(appliedOfferName);
+    }
+    if (!nullToAbsent || appliedOfferType != null) {
+      map['applied_offer_type'] = Variable<String>(appliedOfferType);
+    }
     return map;
   }
 
@@ -8708,6 +8952,16 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       unitPricePaise: Value(unitPricePaise),
       quantity: Value(quantity),
       lineTotalPaise: Value(lineTotalPaise),
+      offerDiscountPaise: Value(offerDiscountPaise),
+      appliedOfferId: appliedOfferId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(appliedOfferId),
+      appliedOfferName: appliedOfferName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(appliedOfferName),
+      appliedOfferType: appliedOfferType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(appliedOfferType),
     );
   }
 
@@ -8728,6 +8982,10 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       unitPricePaise: serializer.fromJson<int>(json['unitPricePaise']),
       quantity: serializer.fromJson<int>(json['quantity']),
       lineTotalPaise: serializer.fromJson<int>(json['lineTotalPaise']),
+      offerDiscountPaise: serializer.fromJson<int>(json['offerDiscountPaise']),
+      appliedOfferId: serializer.fromJson<String?>(json['appliedOfferId']),
+      appliedOfferName: serializer.fromJson<String?>(json['appliedOfferName']),
+      appliedOfferType: serializer.fromJson<String?>(json['appliedOfferType']),
     );
   }
   @override
@@ -8745,6 +9003,10 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       'unitPricePaise': serializer.toJson<int>(unitPricePaise),
       'quantity': serializer.toJson<int>(quantity),
       'lineTotalPaise': serializer.toJson<int>(lineTotalPaise),
+      'offerDiscountPaise': serializer.toJson<int>(offerDiscountPaise),
+      'appliedOfferId': serializer.toJson<String?>(appliedOfferId),
+      'appliedOfferName': serializer.toJson<String?>(appliedOfferName),
+      'appliedOfferType': serializer.toJson<String?>(appliedOfferType),
     };
   }
 
@@ -8760,6 +9022,10 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     int? unitPricePaise,
     int? quantity,
     int? lineTotalPaise,
+    int? offerDiscountPaise,
+    Value<String?> appliedOfferId = const Value.absent(),
+    Value<String?> appliedOfferName = const Value.absent(),
+    Value<String?> appliedOfferType = const Value.absent(),
   }) => SaleItem(
     id: id ?? this.id,
     shopId: shopId.present ? shopId.value : this.shopId,
@@ -8772,6 +9038,16 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     unitPricePaise: unitPricePaise ?? this.unitPricePaise,
     quantity: quantity ?? this.quantity,
     lineTotalPaise: lineTotalPaise ?? this.lineTotalPaise,
+    offerDiscountPaise: offerDiscountPaise ?? this.offerDiscountPaise,
+    appliedOfferId: appliedOfferId.present
+        ? appliedOfferId.value
+        : this.appliedOfferId,
+    appliedOfferName: appliedOfferName.present
+        ? appliedOfferName.value
+        : this.appliedOfferName,
+    appliedOfferType: appliedOfferType.present
+        ? appliedOfferType.value
+        : this.appliedOfferType,
   );
   SaleItem copyWithCompanion(SaleItemsCompanion data) {
     return SaleItem(
@@ -8794,6 +9070,18 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       lineTotalPaise: data.lineTotalPaise.present
           ? data.lineTotalPaise.value
           : this.lineTotalPaise,
+      offerDiscountPaise: data.offerDiscountPaise.present
+          ? data.offerDiscountPaise.value
+          : this.offerDiscountPaise,
+      appliedOfferId: data.appliedOfferId.present
+          ? data.appliedOfferId.value
+          : this.appliedOfferId,
+      appliedOfferName: data.appliedOfferName.present
+          ? data.appliedOfferName.value
+          : this.appliedOfferName,
+      appliedOfferType: data.appliedOfferType.present
+          ? data.appliedOfferType.value
+          : this.appliedOfferType,
     );
   }
 
@@ -8810,7 +9098,11 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
           ..write('sku: $sku, ')
           ..write('unitPricePaise: $unitPricePaise, ')
           ..write('quantity: $quantity, ')
-          ..write('lineTotalPaise: $lineTotalPaise')
+          ..write('lineTotalPaise: $lineTotalPaise, ')
+          ..write('offerDiscountPaise: $offerDiscountPaise, ')
+          ..write('appliedOfferId: $appliedOfferId, ')
+          ..write('appliedOfferName: $appliedOfferName, ')
+          ..write('appliedOfferType: $appliedOfferType')
           ..write(')'))
         .toString();
   }
@@ -8828,6 +9120,10 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     unitPricePaise,
     quantity,
     lineTotalPaise,
+    offerDiscountPaise,
+    appliedOfferId,
+    appliedOfferName,
+    appliedOfferType,
   );
   @override
   bool operator ==(Object other) =>
@@ -8843,7 +9139,11 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
           other.sku == this.sku &&
           other.unitPricePaise == this.unitPricePaise &&
           other.quantity == this.quantity &&
-          other.lineTotalPaise == this.lineTotalPaise);
+          other.lineTotalPaise == this.lineTotalPaise &&
+          other.offerDiscountPaise == this.offerDiscountPaise &&
+          other.appliedOfferId == this.appliedOfferId &&
+          other.appliedOfferName == this.appliedOfferName &&
+          other.appliedOfferType == this.appliedOfferType);
 }
 
 class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
@@ -8858,6 +9158,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
   final Value<int> unitPricePaise;
   final Value<int> quantity;
   final Value<int> lineTotalPaise;
+  final Value<int> offerDiscountPaise;
+  final Value<String?> appliedOfferId;
+  final Value<String?> appliedOfferName;
+  final Value<String?> appliedOfferType;
   final Value<int> rowid;
   const SaleItemsCompanion({
     this.id = const Value.absent(),
@@ -8871,6 +9175,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     this.unitPricePaise = const Value.absent(),
     this.quantity = const Value.absent(),
     this.lineTotalPaise = const Value.absent(),
+    this.offerDiscountPaise = const Value.absent(),
+    this.appliedOfferId = const Value.absent(),
+    this.appliedOfferName = const Value.absent(),
+    this.appliedOfferType = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   SaleItemsCompanion.insert({
@@ -8885,6 +9193,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     required int unitPricePaise,
     required int quantity,
     required int lineTotalPaise,
+    this.offerDiscountPaise = const Value.absent(),
+    this.appliedOfferId = const Value.absent(),
+    this.appliedOfferName = const Value.absent(),
+    this.appliedOfferType = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : saleId = Value(saleId),
        productId = Value(productId),
@@ -8904,6 +9216,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     Expression<int>? unitPricePaise,
     Expression<int>? quantity,
     Expression<int>? lineTotalPaise,
+    Expression<int>? offerDiscountPaise,
+    Expression<String>? appliedOfferId,
+    Expression<String>? appliedOfferName,
+    Expression<String>? appliedOfferType,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -8918,6 +9234,11 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
       if (unitPricePaise != null) 'unit_price_paise': unitPricePaise,
       if (quantity != null) 'quantity': quantity,
       if (lineTotalPaise != null) 'line_total_paise': lineTotalPaise,
+      if (offerDiscountPaise != null)
+        'offer_discount_paise': offerDiscountPaise,
+      if (appliedOfferId != null) 'applied_offer_id': appliedOfferId,
+      if (appliedOfferName != null) 'applied_offer_name': appliedOfferName,
+      if (appliedOfferType != null) 'applied_offer_type': appliedOfferType,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -8934,6 +9255,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     Value<int>? unitPricePaise,
     Value<int>? quantity,
     Value<int>? lineTotalPaise,
+    Value<int>? offerDiscountPaise,
+    Value<String?>? appliedOfferId,
+    Value<String?>? appliedOfferName,
+    Value<String?>? appliedOfferType,
     Value<int>? rowid,
   }) {
     return SaleItemsCompanion(
@@ -8948,6 +9273,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
       unitPricePaise: unitPricePaise ?? this.unitPricePaise,
       quantity: quantity ?? this.quantity,
       lineTotalPaise: lineTotalPaise ?? this.lineTotalPaise,
+      offerDiscountPaise: offerDiscountPaise ?? this.offerDiscountPaise,
+      appliedOfferId: appliedOfferId ?? this.appliedOfferId,
+      appliedOfferName: appliedOfferName ?? this.appliedOfferName,
+      appliedOfferType: appliedOfferType ?? this.appliedOfferType,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -8988,6 +9317,18 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     if (lineTotalPaise.present) {
       map['line_total_paise'] = Variable<int>(lineTotalPaise.value);
     }
+    if (offerDiscountPaise.present) {
+      map['offer_discount_paise'] = Variable<int>(offerDiscountPaise.value);
+    }
+    if (appliedOfferId.present) {
+      map['applied_offer_id'] = Variable<String>(appliedOfferId.value);
+    }
+    if (appliedOfferName.present) {
+      map['applied_offer_name'] = Variable<String>(appliedOfferName.value);
+    }
+    if (appliedOfferType.present) {
+      map['applied_offer_type'] = Variable<String>(appliedOfferType.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -9008,6 +9349,10 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
           ..write('unitPricePaise: $unitPricePaise, ')
           ..write('quantity: $quantity, ')
           ..write('lineTotalPaise: $lineTotalPaise, ')
+          ..write('offerDiscountPaise: $offerDiscountPaise, ')
+          ..write('appliedOfferId: $appliedOfferId, ')
+          ..write('appliedOfferName: $appliedOfferName, ')
+          ..write('appliedOfferType: $appliedOfferType, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -12955,6 +13300,1636 @@ class OffersCompanion extends UpdateCompanion<Offer> {
   }
 }
 
+class $ProductImageSyncTable extends ProductImageSync
+    with TableInfo<$ProductImageSyncTable, ProductImageSyncData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ProductImageSyncTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    clientDefault: () => Uuid().v4(),
+  );
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _productIdMeta = const VerificationMeta(
+    'productId',
+  );
+  @override
+  late final GeneratedColumn<String> productId = GeneratedColumn<String>(
+    'product_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operationMeta = const VerificationMeta(
+    'operation',
+  );
+  @override
+  late final GeneratedColumn<String> operation = GeneratedColumn<String>(
+    'operation',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _cloudPathMeta = const VerificationMeta(
+    'cloudPath',
+  );
+  @override
+  late final GeneratedColumn<String> cloudPath = GeneratedColumn<String>(
+    'cloud_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _localPathMeta = const VerificationMeta(
+    'localPath',
+  );
+  @override
+  late final GeneratedColumn<String> localPath = GeneratedColumn<String>(
+    'local_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('PENDING'),
+  );
+  static const VerificationMeta _attemptCountMeta = const VerificationMeta(
+    'attemptCount',
+  );
+  @override
+  late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lastAttemptAtMeta = const VerificationMeta(
+    'lastAttemptAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastAttemptAt =
+      GeneratedColumn<DateTime>(
+        'last_attempt_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _lastErrorMeta = const VerificationMeta(
+    'lastError',
+  );
+  @override
+  late final GeneratedColumn<String> lastError = GeneratedColumn<String>(
+    'last_error',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    shopId,
+    productId,
+    operation,
+    cloudPath,
+    localPath,
+    status,
+    attemptCount,
+    lastAttemptAt,
+    lastError,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'product_image_sync';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ProductImageSyncData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_shopIdMeta);
+    }
+    if (data.containsKey('product_id')) {
+      context.handle(
+        _productIdMeta,
+        productId.isAcceptableOrUnknown(data['product_id']!, _productIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_productIdMeta);
+    }
+    if (data.containsKey('operation')) {
+      context.handle(
+        _operationMeta,
+        operation.isAcceptableOrUnknown(data['operation']!, _operationMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_operationMeta);
+    }
+    if (data.containsKey('cloud_path')) {
+      context.handle(
+        _cloudPathMeta,
+        cloudPath.isAcceptableOrUnknown(data['cloud_path']!, _cloudPathMeta),
+      );
+    }
+    if (data.containsKey('local_path')) {
+      context.handle(
+        _localPathMeta,
+        localPath.isAcceptableOrUnknown(data['local_path']!, _localPathMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('attempt_count')) {
+      context.handle(
+        _attemptCountMeta,
+        attemptCount.isAcceptableOrUnknown(
+          data['attempt_count']!,
+          _attemptCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_attempt_at')) {
+      context.handle(
+        _lastAttemptAtMeta,
+        lastAttemptAt.isAcceptableOrUnknown(
+          data['last_attempt_at']!,
+          _lastAttemptAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_error')) {
+      context.handle(
+        _lastErrorMeta,
+        lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  ProductImageSyncData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ProductImageSyncData(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      )!,
+      productId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}product_id'],
+      )!,
+      operation: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operation'],
+      )!,
+      cloudPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cloud_path'],
+      ),
+      localPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}local_path'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      attemptCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempt_count'],
+      )!,
+      lastAttemptAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_attempt_at'],
+      ),
+      lastError: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_error'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $ProductImageSyncTable createAlias(String alias) {
+    return $ProductImageSyncTable(attachedDatabase, alias);
+  }
+}
+
+class ProductImageSyncData extends DataClass
+    implements Insertable<ProductImageSyncData> {
+  /// Local UUID v4 identifier.
+  final String id;
+
+  /// Shop scope of the image (isolation boundary for cloud path + RLS).
+  final String shopId;
+
+  /// Stable UUID of the product the image belongs to.
+  final String productId;
+
+  /// Operation: 'UPLOAD', 'DOWNLOAD' or 'DELETE'.
+  final String operation;
+
+  /// Supabase Storage object path for this image (the destination of an
+  /// UPLOAD, the source of a DOWNLOAD, or the object a DELETE removes).
+  final String? cloudPath;
+
+  /// Local relative image path involved in the intent: the local file an
+  /// UPLOAD reads from, or the cache path a DOWNLOAD writes to.
+  final String? localPath;
+
+  /// PENDING → IN_FLIGHT → DONE / FAILED (FAILED keeps rows for inspection;
+  /// retry counters live here too).
+  final String status;
+  final int attemptCount;
+  final DateTime? lastAttemptAt;
+  final String? lastError;
+  final DateTime createdAt;
+  const ProductImageSyncData({
+    required this.id,
+    required this.shopId,
+    required this.productId,
+    required this.operation,
+    this.cloudPath,
+    this.localPath,
+    required this.status,
+    required this.attemptCount,
+    this.lastAttemptAt,
+    this.lastError,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['shop_id'] = Variable<String>(shopId);
+    map['product_id'] = Variable<String>(productId);
+    map['operation'] = Variable<String>(operation);
+    if (!nullToAbsent || cloudPath != null) {
+      map['cloud_path'] = Variable<String>(cloudPath);
+    }
+    if (!nullToAbsent || localPath != null) {
+      map['local_path'] = Variable<String>(localPath);
+    }
+    map['status'] = Variable<String>(status);
+    map['attempt_count'] = Variable<int>(attemptCount);
+    if (!nullToAbsent || lastAttemptAt != null) {
+      map['last_attempt_at'] = Variable<DateTime>(lastAttemptAt);
+    }
+    if (!nullToAbsent || lastError != null) {
+      map['last_error'] = Variable<String>(lastError);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  ProductImageSyncCompanion toCompanion(bool nullToAbsent) {
+    return ProductImageSyncCompanion(
+      id: Value(id),
+      shopId: Value(shopId),
+      productId: Value(productId),
+      operation: Value(operation),
+      cloudPath: cloudPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cloudPath),
+      localPath: localPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localPath),
+      status: Value(status),
+      attemptCount: Value(attemptCount),
+      lastAttemptAt: lastAttemptAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastAttemptAt),
+      lastError: lastError == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastError),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory ProductImageSyncData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ProductImageSyncData(
+      id: serializer.fromJson<String>(json['id']),
+      shopId: serializer.fromJson<String>(json['shopId']),
+      productId: serializer.fromJson<String>(json['productId']),
+      operation: serializer.fromJson<String>(json['operation']),
+      cloudPath: serializer.fromJson<String?>(json['cloudPath']),
+      localPath: serializer.fromJson<String?>(json['localPath']),
+      status: serializer.fromJson<String>(json['status']),
+      attemptCount: serializer.fromJson<int>(json['attemptCount']),
+      lastAttemptAt: serializer.fromJson<DateTime?>(json['lastAttemptAt']),
+      lastError: serializer.fromJson<String?>(json['lastError']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'shopId': serializer.toJson<String>(shopId),
+      'productId': serializer.toJson<String>(productId),
+      'operation': serializer.toJson<String>(operation),
+      'cloudPath': serializer.toJson<String?>(cloudPath),
+      'localPath': serializer.toJson<String?>(localPath),
+      'status': serializer.toJson<String>(status),
+      'attemptCount': serializer.toJson<int>(attemptCount),
+      'lastAttemptAt': serializer.toJson<DateTime?>(lastAttemptAt),
+      'lastError': serializer.toJson<String?>(lastError),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  ProductImageSyncData copyWith({
+    String? id,
+    String? shopId,
+    String? productId,
+    String? operation,
+    Value<String?> cloudPath = const Value.absent(),
+    Value<String?> localPath = const Value.absent(),
+    String? status,
+    int? attemptCount,
+    Value<DateTime?> lastAttemptAt = const Value.absent(),
+    Value<String?> lastError = const Value.absent(),
+    DateTime? createdAt,
+  }) => ProductImageSyncData(
+    id: id ?? this.id,
+    shopId: shopId ?? this.shopId,
+    productId: productId ?? this.productId,
+    operation: operation ?? this.operation,
+    cloudPath: cloudPath.present ? cloudPath.value : this.cloudPath,
+    localPath: localPath.present ? localPath.value : this.localPath,
+    status: status ?? this.status,
+    attemptCount: attemptCount ?? this.attemptCount,
+    lastAttemptAt: lastAttemptAt.present
+        ? lastAttemptAt.value
+        : this.lastAttemptAt,
+    lastError: lastError.present ? lastError.value : this.lastError,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  ProductImageSyncData copyWithCompanion(ProductImageSyncCompanion data) {
+    return ProductImageSyncData(
+      id: data.id.present ? data.id.value : this.id,
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      productId: data.productId.present ? data.productId.value : this.productId,
+      operation: data.operation.present ? data.operation.value : this.operation,
+      cloudPath: data.cloudPath.present ? data.cloudPath.value : this.cloudPath,
+      localPath: data.localPath.present ? data.localPath.value : this.localPath,
+      status: data.status.present ? data.status.value : this.status,
+      attemptCount: data.attemptCount.present
+          ? data.attemptCount.value
+          : this.attemptCount,
+      lastAttemptAt: data.lastAttemptAt.present
+          ? data.lastAttemptAt.value
+          : this.lastAttemptAt,
+      lastError: data.lastError.present ? data.lastError.value : this.lastError,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProductImageSyncData(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('productId: $productId, ')
+          ..write('operation: $operation, ')
+          ..write('cloudPath: $cloudPath, ')
+          ..write('localPath: $localPath, ')
+          ..write('status: $status, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('lastAttemptAt: $lastAttemptAt, ')
+          ..write('lastError: $lastError, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    shopId,
+    productId,
+    operation,
+    cloudPath,
+    localPath,
+    status,
+    attemptCount,
+    lastAttemptAt,
+    lastError,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ProductImageSyncData &&
+          other.id == this.id &&
+          other.shopId == this.shopId &&
+          other.productId == this.productId &&
+          other.operation == this.operation &&
+          other.cloudPath == this.cloudPath &&
+          other.localPath == this.localPath &&
+          other.status == this.status &&
+          other.attemptCount == this.attemptCount &&
+          other.lastAttemptAt == this.lastAttemptAt &&
+          other.lastError == this.lastError &&
+          other.createdAt == this.createdAt);
+}
+
+class ProductImageSyncCompanion extends UpdateCompanion<ProductImageSyncData> {
+  final Value<String> id;
+  final Value<String> shopId;
+  final Value<String> productId;
+  final Value<String> operation;
+  final Value<String?> cloudPath;
+  final Value<String?> localPath;
+  final Value<String> status;
+  final Value<int> attemptCount;
+  final Value<DateTime?> lastAttemptAt;
+  final Value<String?> lastError;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const ProductImageSyncCompanion({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    this.productId = const Value.absent(),
+    this.operation = const Value.absent(),
+    this.cloudPath = const Value.absent(),
+    this.localPath = const Value.absent(),
+    this.status = const Value.absent(),
+    this.attemptCount = const Value.absent(),
+    this.lastAttemptAt = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ProductImageSyncCompanion.insert({
+    this.id = const Value.absent(),
+    required String shopId,
+    required String productId,
+    required String operation,
+    this.cloudPath = const Value.absent(),
+    this.localPath = const Value.absent(),
+    this.status = const Value.absent(),
+    this.attemptCount = const Value.absent(),
+    this.lastAttemptAt = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : shopId = Value(shopId),
+       productId = Value(productId),
+       operation = Value(operation);
+  static Insertable<ProductImageSyncData> custom({
+    Expression<String>? id,
+    Expression<String>? shopId,
+    Expression<String>? productId,
+    Expression<String>? operation,
+    Expression<String>? cloudPath,
+    Expression<String>? localPath,
+    Expression<String>? status,
+    Expression<int>? attemptCount,
+    Expression<DateTime>? lastAttemptAt,
+    Expression<String>? lastError,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (shopId != null) 'shop_id': shopId,
+      if (productId != null) 'product_id': productId,
+      if (operation != null) 'operation': operation,
+      if (cloudPath != null) 'cloud_path': cloudPath,
+      if (localPath != null) 'local_path': localPath,
+      if (status != null) 'status': status,
+      if (attemptCount != null) 'attempt_count': attemptCount,
+      if (lastAttemptAt != null) 'last_attempt_at': lastAttemptAt,
+      if (lastError != null) 'last_error': lastError,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ProductImageSyncCompanion copyWith({
+    Value<String>? id,
+    Value<String>? shopId,
+    Value<String>? productId,
+    Value<String>? operation,
+    Value<String?>? cloudPath,
+    Value<String?>? localPath,
+    Value<String>? status,
+    Value<int>? attemptCount,
+    Value<DateTime?>? lastAttemptAt,
+    Value<String?>? lastError,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return ProductImageSyncCompanion(
+      id: id ?? this.id,
+      shopId: shopId ?? this.shopId,
+      productId: productId ?? this.productId,
+      operation: operation ?? this.operation,
+      cloudPath: cloudPath ?? this.cloudPath,
+      localPath: localPath ?? this.localPath,
+      status: status ?? this.status,
+      attemptCount: attemptCount ?? this.attemptCount,
+      lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
+      lastError: lastError ?? this.lastError,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (productId.present) {
+      map['product_id'] = Variable<String>(productId.value);
+    }
+    if (operation.present) {
+      map['operation'] = Variable<String>(operation.value);
+    }
+    if (cloudPath.present) {
+      map['cloud_path'] = Variable<String>(cloudPath.value);
+    }
+    if (localPath.present) {
+      map['local_path'] = Variable<String>(localPath.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (attemptCount.present) {
+      map['attempt_count'] = Variable<int>(attemptCount.value);
+    }
+    if (lastAttemptAt.present) {
+      map['last_attempt_at'] = Variable<DateTime>(lastAttemptAt.value);
+    }
+    if (lastError.present) {
+      map['last_error'] = Variable<String>(lastError.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProductImageSyncCompanion(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('productId: $productId, ')
+          ..write('operation: $operation, ')
+          ..write('cloudPath: $cloudPath, ')
+          ..write('localPath: $localPath, ')
+          ..write('status: $status, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('lastAttemptAt: $lastAttemptAt, ')
+          ..write('lastError: $lastError, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $StorageCleanupNotificationTable extends StorageCleanupNotification
+    with
+        TableInfo<
+          $StorageCleanupNotificationTable,
+          StorageCleanupNotificationData
+        > {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StorageCleanupNotificationTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    clientDefault: () => Uuid().v4(),
+  );
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _orphanCountMeta = const VerificationMeta(
+    'orphanCount',
+  );
+  @override
+  late final GeneratedColumn<int> orphanCount = GeneratedColumn<int>(
+    'orphan_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _reclaimableBytesMeta = const VerificationMeta(
+    'reclaimableBytes',
+  );
+  @override
+  late final GeneratedColumn<int> reclaimableBytes = GeneratedColumn<int>(
+    'reclaimable_bytes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _isReadMeta = const VerificationMeta('isRead');
+  @override
+  late final GeneratedColumn<bool> isRead = GeneratedColumn<bool>(
+    'is_read',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_read" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _dismissedMeta = const VerificationMeta(
+    'dismissed',
+  );
+  @override
+  late final GeneratedColumn<bool> dismissed = GeneratedColumn<bool>(
+    'dismissed',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("dismissed" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    shopId,
+    kind,
+    orphanCount,
+    reclaimableBytes,
+    isRead,
+    dismissed,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'storage_cleanup_notification';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<StorageCleanupNotificationData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_shopIdMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('orphan_count')) {
+      context.handle(
+        _orphanCountMeta,
+        orphanCount.isAcceptableOrUnknown(
+          data['orphan_count']!,
+          _orphanCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('reclaimable_bytes')) {
+      context.handle(
+        _reclaimableBytesMeta,
+        reclaimableBytes.isAcceptableOrUnknown(
+          data['reclaimable_bytes']!,
+          _reclaimableBytesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('is_read')) {
+      context.handle(
+        _isReadMeta,
+        isRead.isAcceptableOrUnknown(data['is_read']!, _isReadMeta),
+      );
+    }
+    if (data.containsKey('dismissed')) {
+      context.handle(
+        _dismissedMeta,
+        dismissed.isAcceptableOrUnknown(data['dismissed']!, _dismissedMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StorageCleanupNotificationData map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StorageCleanupNotificationData(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      orphanCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}orphan_count'],
+      )!,
+      reclaimableBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}reclaimable_bytes'],
+      )!,
+      isRead: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_read'],
+      )!,
+      dismissed: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}dismissed'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $StorageCleanupNotificationTable createAlias(String alias) {
+    return $StorageCleanupNotificationTable(attachedDatabase, alias);
+  }
+}
+
+class StorageCleanupNotificationData extends DataClass
+    implements Insertable<StorageCleanupNotificationData> {
+  /// Local UUID v4 identifier.
+  final String id;
+
+  /// Shop scope of the cleanup (isolation boundary).
+  final String shopId;
+
+  /// Notification kind: 'CLEANUP_AVAILABLE'.
+  final String kind;
+
+  /// Number of orphan (unreferenced) product images found.
+  final int orphanCount;
+
+  /// Total reclaimable bytes across the orphan images.
+  final int reclaimableBytes;
+
+  /// Whether the owner has opened the notification details.
+  final bool isRead;
+
+  /// Whether the owner has dismissed/cleared the notification.
+  final bool dismissed;
+  final DateTime createdAt;
+  const StorageCleanupNotificationData({
+    required this.id,
+    required this.shopId,
+    required this.kind,
+    required this.orphanCount,
+    required this.reclaimableBytes,
+    required this.isRead,
+    required this.dismissed,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['shop_id'] = Variable<String>(shopId);
+    map['kind'] = Variable<String>(kind);
+    map['orphan_count'] = Variable<int>(orphanCount);
+    map['reclaimable_bytes'] = Variable<int>(reclaimableBytes);
+    map['is_read'] = Variable<bool>(isRead);
+    map['dismissed'] = Variable<bool>(dismissed);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  StorageCleanupNotificationCompanion toCompanion(bool nullToAbsent) {
+    return StorageCleanupNotificationCompanion(
+      id: Value(id),
+      shopId: Value(shopId),
+      kind: Value(kind),
+      orphanCount: Value(orphanCount),
+      reclaimableBytes: Value(reclaimableBytes),
+      isRead: Value(isRead),
+      dismissed: Value(dismissed),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory StorageCleanupNotificationData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StorageCleanupNotificationData(
+      id: serializer.fromJson<String>(json['id']),
+      shopId: serializer.fromJson<String>(json['shopId']),
+      kind: serializer.fromJson<String>(json['kind']),
+      orphanCount: serializer.fromJson<int>(json['orphanCount']),
+      reclaimableBytes: serializer.fromJson<int>(json['reclaimableBytes']),
+      isRead: serializer.fromJson<bool>(json['isRead']),
+      dismissed: serializer.fromJson<bool>(json['dismissed']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'shopId': serializer.toJson<String>(shopId),
+      'kind': serializer.toJson<String>(kind),
+      'orphanCount': serializer.toJson<int>(orphanCount),
+      'reclaimableBytes': serializer.toJson<int>(reclaimableBytes),
+      'isRead': serializer.toJson<bool>(isRead),
+      'dismissed': serializer.toJson<bool>(dismissed),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  StorageCleanupNotificationData copyWith({
+    String? id,
+    String? shopId,
+    String? kind,
+    int? orphanCount,
+    int? reclaimableBytes,
+    bool? isRead,
+    bool? dismissed,
+    DateTime? createdAt,
+  }) => StorageCleanupNotificationData(
+    id: id ?? this.id,
+    shopId: shopId ?? this.shopId,
+    kind: kind ?? this.kind,
+    orphanCount: orphanCount ?? this.orphanCount,
+    reclaimableBytes: reclaimableBytes ?? this.reclaimableBytes,
+    isRead: isRead ?? this.isRead,
+    dismissed: dismissed ?? this.dismissed,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  StorageCleanupNotificationData copyWithCompanion(
+    StorageCleanupNotificationCompanion data,
+  ) {
+    return StorageCleanupNotificationData(
+      id: data.id.present ? data.id.value : this.id,
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      orphanCount: data.orphanCount.present
+          ? data.orphanCount.value
+          : this.orphanCount,
+      reclaimableBytes: data.reclaimableBytes.present
+          ? data.reclaimableBytes.value
+          : this.reclaimableBytes,
+      isRead: data.isRead.present ? data.isRead.value : this.isRead,
+      dismissed: data.dismissed.present ? data.dismissed.value : this.dismissed,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageCleanupNotificationData(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('kind: $kind, ')
+          ..write('orphanCount: $orphanCount, ')
+          ..write('reclaimableBytes: $reclaimableBytes, ')
+          ..write('isRead: $isRead, ')
+          ..write('dismissed: $dismissed, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    shopId,
+    kind,
+    orphanCount,
+    reclaimableBytes,
+    isRead,
+    dismissed,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StorageCleanupNotificationData &&
+          other.id == this.id &&
+          other.shopId == this.shopId &&
+          other.kind == this.kind &&
+          other.orphanCount == this.orphanCount &&
+          other.reclaimableBytes == this.reclaimableBytes &&
+          other.isRead == this.isRead &&
+          other.dismissed == this.dismissed &&
+          other.createdAt == this.createdAt);
+}
+
+class StorageCleanupNotificationCompanion
+    extends UpdateCompanion<StorageCleanupNotificationData> {
+  final Value<String> id;
+  final Value<String> shopId;
+  final Value<String> kind;
+  final Value<int> orphanCount;
+  final Value<int> reclaimableBytes;
+  final Value<bool> isRead;
+  final Value<bool> dismissed;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const StorageCleanupNotificationCompanion({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.orphanCount = const Value.absent(),
+    this.reclaimableBytes = const Value.absent(),
+    this.isRead = const Value.absent(),
+    this.dismissed = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  StorageCleanupNotificationCompanion.insert({
+    this.id = const Value.absent(),
+    required String shopId,
+    required String kind,
+    this.orphanCount = const Value.absent(),
+    this.reclaimableBytes = const Value.absent(),
+    this.isRead = const Value.absent(),
+    this.dismissed = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : shopId = Value(shopId),
+       kind = Value(kind);
+  static Insertable<StorageCleanupNotificationData> custom({
+    Expression<String>? id,
+    Expression<String>? shopId,
+    Expression<String>? kind,
+    Expression<int>? orphanCount,
+    Expression<int>? reclaimableBytes,
+    Expression<bool>? isRead,
+    Expression<bool>? dismissed,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (shopId != null) 'shop_id': shopId,
+      if (kind != null) 'kind': kind,
+      if (orphanCount != null) 'orphan_count': orphanCount,
+      if (reclaimableBytes != null) 'reclaimable_bytes': reclaimableBytes,
+      if (isRead != null) 'is_read': isRead,
+      if (dismissed != null) 'dismissed': dismissed,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  StorageCleanupNotificationCompanion copyWith({
+    Value<String>? id,
+    Value<String>? shopId,
+    Value<String>? kind,
+    Value<int>? orphanCount,
+    Value<int>? reclaimableBytes,
+    Value<bool>? isRead,
+    Value<bool>? dismissed,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return StorageCleanupNotificationCompanion(
+      id: id ?? this.id,
+      shopId: shopId ?? this.shopId,
+      kind: kind ?? this.kind,
+      orphanCount: orphanCount ?? this.orphanCount,
+      reclaimableBytes: reclaimableBytes ?? this.reclaimableBytes,
+      isRead: isRead ?? this.isRead,
+      dismissed: dismissed ?? this.dismissed,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (orphanCount.present) {
+      map['orphan_count'] = Variable<int>(orphanCount.value);
+    }
+    if (reclaimableBytes.present) {
+      map['reclaimable_bytes'] = Variable<int>(reclaimableBytes.value);
+    }
+    if (isRead.present) {
+      map['is_read'] = Variable<bool>(isRead.value);
+    }
+    if (dismissed.present) {
+      map['dismissed'] = Variable<bool>(dismissed.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageCleanupNotificationCompanion(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('kind: $kind, ')
+          ..write('orphanCount: $orphanCount, ')
+          ..write('reclaimableBytes: $reclaimableBytes, ')
+          ..write('isRead: $isRead, ')
+          ..write('dismissed: $dismissed, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $StorageCleanupStateTable extends StorageCleanupState
+    with TableInfo<$StorageCleanupStateTable, StorageCleanupStateData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StorageCleanupStateTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lastScanAtMeta = const VerificationMeta(
+    'lastScanAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastScanAt = GeneratedColumn<DateTime>(
+    'last_scan_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastCleanupAtMeta = const VerificationMeta(
+    'lastCleanupAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastCleanupAt =
+      GeneratedColumn<DateTime>(
+        'last_cleanup_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _lastUsedBytesMeta = const VerificationMeta(
+    'lastUsedBytes',
+  );
+  @override
+  late final GeneratedColumn<int> lastUsedBytes = GeneratedColumn<int>(
+    'last_used_bytes',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastReclaimableBytesMeta =
+      const VerificationMeta('lastReclaimableBytes');
+  @override
+  late final GeneratedColumn<int> lastReclaimableBytes = GeneratedColumn<int>(
+    'last_reclaimable_bytes',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    shopId,
+    lastScanAt,
+    lastCleanupAt,
+    lastUsedBytes,
+    lastReclaimableBytes,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'storage_cleanup_state';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<StorageCleanupStateData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_shopIdMeta);
+    }
+    if (data.containsKey('last_scan_at')) {
+      context.handle(
+        _lastScanAtMeta,
+        lastScanAt.isAcceptableOrUnknown(
+          data['last_scan_at']!,
+          _lastScanAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_cleanup_at')) {
+      context.handle(
+        _lastCleanupAtMeta,
+        lastCleanupAt.isAcceptableOrUnknown(
+          data['last_cleanup_at']!,
+          _lastCleanupAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_used_bytes')) {
+      context.handle(
+        _lastUsedBytesMeta,
+        lastUsedBytes.isAcceptableOrUnknown(
+          data['last_used_bytes']!,
+          _lastUsedBytesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_reclaimable_bytes')) {
+      context.handle(
+        _lastReclaimableBytesMeta,
+        lastReclaimableBytes.isAcceptableOrUnknown(
+          data['last_reclaimable_bytes']!,
+          _lastReclaimableBytesMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {shopId};
+  @override
+  StorageCleanupStateData map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StorageCleanupStateData(
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      )!,
+      lastScanAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_scan_at'],
+      ),
+      lastCleanupAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_cleanup_at'],
+      ),
+      lastUsedBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_used_bytes'],
+      ),
+      lastReclaimableBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_reclaimable_bytes'],
+      ),
+    );
+  }
+
+  @override
+  $StorageCleanupStateTable createAlias(String alias) {
+    return $StorageCleanupStateTable(attachedDatabase, alias);
+  }
+}
+
+class StorageCleanupStateData extends DataClass
+    implements Insertable<StorageCleanupStateData> {
+  /// Shop scope (isolation boundary). The natural key for this bookkeeping.
+  final String shopId;
+
+  /// UTC timestamp of the last completed usage scan.
+  final DateTime? lastScanAt;
+
+  /// UTC timestamp of the last owner-confirmed cleanup.
+  final DateTime? lastCleanupAt;
+
+  /// Latest known used bytes (snapshot, informational for offline display).
+  final int? lastUsedBytes;
+
+  /// Latest known reclaimable bytes (snapshot).
+  final int? lastReclaimableBytes;
+  const StorageCleanupStateData({
+    required this.shopId,
+    this.lastScanAt,
+    this.lastCleanupAt,
+    this.lastUsedBytes,
+    this.lastReclaimableBytes,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['shop_id'] = Variable<String>(shopId);
+    if (!nullToAbsent || lastScanAt != null) {
+      map['last_scan_at'] = Variable<DateTime>(lastScanAt);
+    }
+    if (!nullToAbsent || lastCleanupAt != null) {
+      map['last_cleanup_at'] = Variable<DateTime>(lastCleanupAt);
+    }
+    if (!nullToAbsent || lastUsedBytes != null) {
+      map['last_used_bytes'] = Variable<int>(lastUsedBytes);
+    }
+    if (!nullToAbsent || lastReclaimableBytes != null) {
+      map['last_reclaimable_bytes'] = Variable<int>(lastReclaimableBytes);
+    }
+    return map;
+  }
+
+  StorageCleanupStateCompanion toCompanion(bool nullToAbsent) {
+    return StorageCleanupStateCompanion(
+      shopId: Value(shopId),
+      lastScanAt: lastScanAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastScanAt),
+      lastCleanupAt: lastCleanupAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastCleanupAt),
+      lastUsedBytes: lastUsedBytes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastUsedBytes),
+      lastReclaimableBytes: lastReclaimableBytes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastReclaimableBytes),
+    );
+  }
+
+  factory StorageCleanupStateData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StorageCleanupStateData(
+      shopId: serializer.fromJson<String>(json['shopId']),
+      lastScanAt: serializer.fromJson<DateTime?>(json['lastScanAt']),
+      lastCleanupAt: serializer.fromJson<DateTime?>(json['lastCleanupAt']),
+      lastUsedBytes: serializer.fromJson<int?>(json['lastUsedBytes']),
+      lastReclaimableBytes: serializer.fromJson<int?>(
+        json['lastReclaimableBytes'],
+      ),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'shopId': serializer.toJson<String>(shopId),
+      'lastScanAt': serializer.toJson<DateTime?>(lastScanAt),
+      'lastCleanupAt': serializer.toJson<DateTime?>(lastCleanupAt),
+      'lastUsedBytes': serializer.toJson<int?>(lastUsedBytes),
+      'lastReclaimableBytes': serializer.toJson<int?>(lastReclaimableBytes),
+    };
+  }
+
+  StorageCleanupStateData copyWith({
+    String? shopId,
+    Value<DateTime?> lastScanAt = const Value.absent(),
+    Value<DateTime?> lastCleanupAt = const Value.absent(),
+    Value<int?> lastUsedBytes = const Value.absent(),
+    Value<int?> lastReclaimableBytes = const Value.absent(),
+  }) => StorageCleanupStateData(
+    shopId: shopId ?? this.shopId,
+    lastScanAt: lastScanAt.present ? lastScanAt.value : this.lastScanAt,
+    lastCleanupAt: lastCleanupAt.present
+        ? lastCleanupAt.value
+        : this.lastCleanupAt,
+    lastUsedBytes: lastUsedBytes.present
+        ? lastUsedBytes.value
+        : this.lastUsedBytes,
+    lastReclaimableBytes: lastReclaimableBytes.present
+        ? lastReclaimableBytes.value
+        : this.lastReclaimableBytes,
+  );
+  StorageCleanupStateData copyWithCompanion(StorageCleanupStateCompanion data) {
+    return StorageCleanupStateData(
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      lastScanAt: data.lastScanAt.present
+          ? data.lastScanAt.value
+          : this.lastScanAt,
+      lastCleanupAt: data.lastCleanupAt.present
+          ? data.lastCleanupAt.value
+          : this.lastCleanupAt,
+      lastUsedBytes: data.lastUsedBytes.present
+          ? data.lastUsedBytes.value
+          : this.lastUsedBytes,
+      lastReclaimableBytes: data.lastReclaimableBytes.present
+          ? data.lastReclaimableBytes.value
+          : this.lastReclaimableBytes,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageCleanupStateData(')
+          ..write('shopId: $shopId, ')
+          ..write('lastScanAt: $lastScanAt, ')
+          ..write('lastCleanupAt: $lastCleanupAt, ')
+          ..write('lastUsedBytes: $lastUsedBytes, ')
+          ..write('lastReclaimableBytes: $lastReclaimableBytes')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    shopId,
+    lastScanAt,
+    lastCleanupAt,
+    lastUsedBytes,
+    lastReclaimableBytes,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StorageCleanupStateData &&
+          other.shopId == this.shopId &&
+          other.lastScanAt == this.lastScanAt &&
+          other.lastCleanupAt == this.lastCleanupAt &&
+          other.lastUsedBytes == this.lastUsedBytes &&
+          other.lastReclaimableBytes == this.lastReclaimableBytes);
+}
+
+class StorageCleanupStateCompanion
+    extends UpdateCompanion<StorageCleanupStateData> {
+  final Value<String> shopId;
+  final Value<DateTime?> lastScanAt;
+  final Value<DateTime?> lastCleanupAt;
+  final Value<int?> lastUsedBytes;
+  final Value<int?> lastReclaimableBytes;
+  final Value<int> rowid;
+  const StorageCleanupStateCompanion({
+    this.shopId = const Value.absent(),
+    this.lastScanAt = const Value.absent(),
+    this.lastCleanupAt = const Value.absent(),
+    this.lastUsedBytes = const Value.absent(),
+    this.lastReclaimableBytes = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  StorageCleanupStateCompanion.insert({
+    required String shopId,
+    this.lastScanAt = const Value.absent(),
+    this.lastCleanupAt = const Value.absent(),
+    this.lastUsedBytes = const Value.absent(),
+    this.lastReclaimableBytes = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : shopId = Value(shopId);
+  static Insertable<StorageCleanupStateData> custom({
+    Expression<String>? shopId,
+    Expression<DateTime>? lastScanAt,
+    Expression<DateTime>? lastCleanupAt,
+    Expression<int>? lastUsedBytes,
+    Expression<int>? lastReclaimableBytes,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (shopId != null) 'shop_id': shopId,
+      if (lastScanAt != null) 'last_scan_at': lastScanAt,
+      if (lastCleanupAt != null) 'last_cleanup_at': lastCleanupAt,
+      if (lastUsedBytes != null) 'last_used_bytes': lastUsedBytes,
+      if (lastReclaimableBytes != null)
+        'last_reclaimable_bytes': lastReclaimableBytes,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  StorageCleanupStateCompanion copyWith({
+    Value<String>? shopId,
+    Value<DateTime?>? lastScanAt,
+    Value<DateTime?>? lastCleanupAt,
+    Value<int?>? lastUsedBytes,
+    Value<int?>? lastReclaimableBytes,
+    Value<int>? rowid,
+  }) {
+    return StorageCleanupStateCompanion(
+      shopId: shopId ?? this.shopId,
+      lastScanAt: lastScanAt ?? this.lastScanAt,
+      lastCleanupAt: lastCleanupAt ?? this.lastCleanupAt,
+      lastUsedBytes: lastUsedBytes ?? this.lastUsedBytes,
+      lastReclaimableBytes: lastReclaimableBytes ?? this.lastReclaimableBytes,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (lastScanAt.present) {
+      map['last_scan_at'] = Variable<DateTime>(lastScanAt.value);
+    }
+    if (lastCleanupAt.present) {
+      map['last_cleanup_at'] = Variable<DateTime>(lastCleanupAt.value);
+    }
+    if (lastUsedBytes.present) {
+      map['last_used_bytes'] = Variable<int>(lastUsedBytes.value);
+    }
+    if (lastReclaimableBytes.present) {
+      map['last_reclaimable_bytes'] = Variable<int>(lastReclaimableBytes.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageCleanupStateCompanion(')
+          ..write('shopId: $shopId, ')
+          ..write('lastScanAt: $lastScanAt, ')
+          ..write('lastCleanupAt: $lastCleanupAt, ')
+          ..write('lastUsedBytes: $lastUsedBytes, ')
+          ..write('lastReclaimableBytes: $lastReclaimableBytes, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -12986,6 +14961,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $PurchaseSequencesTable purchaseSequences =
       $PurchaseSequencesTable(this);
   late final $OffersTable offers = $OffersTable(this);
+  late final $ProductImageSyncTable productImageSync = $ProductImageSyncTable(
+    this,
+  );
+  late final $StorageCleanupNotificationTable storageCleanupNotification =
+      $StorageCleanupNotificationTable(this);
+  late final $StorageCleanupStateTable storageCleanupState =
+      $StorageCleanupStateTable(this);
   late final Index idxUsersUpdatedAt = Index(
     'idx_users_updated_at',
     'CREATE INDEX idx_users_updated_at ON users (updated_at)',
@@ -13170,6 +15152,18 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_offers_shop_active',
     'CREATE INDEX idx_offers_shop_active ON offers (shop_id, is_active)',
   );
+  late final Index idxProductImageSyncIdentity = Index(
+    'idx_product_image_sync_identity',
+    'CREATE INDEX idx_product_image_sync_identity ON product_image_sync (product_id, operation)',
+  );
+  late final Index idxProductImageSyncStatus = Index(
+    'idx_product_image_sync_status',
+    'CREATE INDEX idx_product_image_sync_status ON product_image_sync (status, created_at)',
+  );
+  late final Index idxStorageCleanupNotification = Index(
+    'idx_storage_cleanup_notification',
+    'CREATE INDEX idx_storage_cleanup_notification ON storage_cleanup_notification (shop_id, kind)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -13196,6 +15190,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     purchaseItems,
     purchaseSequences,
     offers,
+    productImageSync,
+    storageCleanupNotification,
+    storageCleanupState,
     idxUsersUpdatedAt,
     idxShopsUpdatedAt,
     idxDevicesShop,
@@ -13242,6 +15239,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxPurchaseItemsPurchaseId,
     idxOffersShop,
     idxOffersShopActive,
+    idxProductImageSyncIdentity,
+    idxProductImageSyncStatus,
+    idxStorageCleanupNotification,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -17271,6 +19271,7 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<bool> membershipEnabled,
       Value<int?> memberPricePaise,
       Value<String?> imagePath,
+      Value<String?> cloudImagePath,
       Value<bool> isActive,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -17292,6 +19293,7 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<bool> membershipEnabled,
       Value<int?> memberPricePaise,
       Value<String?> imagePath,
+      Value<String?> cloudImagePath,
       Value<bool> isActive,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -17486,6 +19488,11 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<String> get imagePath => $composableBuilder(
     column: $table.imagePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cloudImagePath => $composableBuilder(
+    column: $table.cloudImagePath,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -17720,6 +19727,11 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get cloudImagePath => $composableBuilder(
+    column: $table.cloudImagePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isActive => $composableBuilder(
     column: $table.isActive,
     builder: (column) => ColumnOrderings(column),
@@ -17840,6 +19852,11 @@ class $$ProductsTableAnnotationComposer
 
   GeneratedColumn<String> get imagePath =>
       $composableBuilder(column: $table.imagePath, builder: (column) => column);
+
+  GeneratedColumn<String> get cloudImagePath => $composableBuilder(
+    column: $table.cloudImagePath,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<bool> get isActive =>
       $composableBuilder(column: $table.isActive, builder: (column) => column);
@@ -18046,6 +20063,7 @@ class $$ProductsTableTableManager
                 Value<bool> membershipEnabled = const Value.absent(),
                 Value<int?> memberPricePaise = const Value.absent(),
                 Value<String?> imagePath = const Value.absent(),
+                Value<String?> cloudImagePath = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -18065,6 +20083,7 @@ class $$ProductsTableTableManager
                 membershipEnabled: membershipEnabled,
                 memberPricePaise: memberPricePaise,
                 imagePath: imagePath,
+                cloudImagePath: cloudImagePath,
                 isActive: isActive,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -18086,6 +20105,7 @@ class $$ProductsTableTableManager
                 Value<bool> membershipEnabled = const Value.absent(),
                 Value<int?> memberPricePaise = const Value.absent(),
                 Value<String?> imagePath = const Value.absent(),
+                Value<String?> cloudImagePath = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -18105,6 +20125,7 @@ class $$ProductsTableTableManager
                 membershipEnabled: membershipEnabled,
                 memberPricePaise: memberPricePaise,
                 imagePath: imagePath,
+                cloudImagePath: cloudImagePath,
                 isActive: isActive,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -19882,6 +21903,7 @@ typedef $$SalesTableCreateCompanionBuilder =
       required String receiptNumber,
       required int subtotalPaise,
       required int totalPaise,
+      Value<int> offerDiscountPaise,
       Value<String?> paymentMethod,
       Value<String> paymentStatus,
       Value<DateTime> createdAt,
@@ -19898,6 +21920,7 @@ typedef $$SalesTableUpdateCompanionBuilder =
       Value<String> receiptNumber,
       Value<int> subtotalPaise,
       Value<int> totalPaise,
+      Value<int> offerDiscountPaise,
       Value<String?> paymentMethod,
       Value<String> paymentStatus,
       Value<DateTime> createdAt,
@@ -20009,6 +22032,11 @@ class $$SalesTableFilterComposer extends Composer<_$AppDatabase, $SalesTable> {
 
   ColumnFilters<int> get totalPaise => $composableBuilder(
     column: $table.totalPaise,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get offerDiscountPaise => $composableBuilder(
+    column: $table.offerDiscountPaise,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -20168,6 +22196,11 @@ class $$SalesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get offerDiscountPaise => $composableBuilder(
+    column: $table.offerDiscountPaise,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get paymentMethod => $composableBuilder(
     column: $table.paymentMethod,
     builder: (column) => ColumnOrderings(column),
@@ -20269,6 +22302,11 @@ class $$SalesTableAnnotationComposer
 
   GeneratedColumn<int> get totalPaise => $composableBuilder(
     column: $table.totalPaise,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get offerDiscountPaise => $composableBuilder(
+    column: $table.offerDiscountPaise,
     builder: (column) => column,
   );
 
@@ -20430,6 +22468,7 @@ class $$SalesTableTableManager
                 Value<String> receiptNumber = const Value.absent(),
                 Value<int> subtotalPaise = const Value.absent(),
                 Value<int> totalPaise = const Value.absent(),
+                Value<int> offerDiscountPaise = const Value.absent(),
                 Value<String?> paymentMethod = const Value.absent(),
                 Value<String> paymentStatus = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -20444,6 +22483,7 @@ class $$SalesTableTableManager
                 receiptNumber: receiptNumber,
                 subtotalPaise: subtotalPaise,
                 totalPaise: totalPaise,
+                offerDiscountPaise: offerDiscountPaise,
                 paymentMethod: paymentMethod,
                 paymentStatus: paymentStatus,
                 createdAt: createdAt,
@@ -20460,6 +22500,7 @@ class $$SalesTableTableManager
                 required String receiptNumber,
                 required int subtotalPaise,
                 required int totalPaise,
+                Value<int> offerDiscountPaise = const Value.absent(),
                 Value<String?> paymentMethod = const Value.absent(),
                 Value<String> paymentStatus = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -20474,6 +22515,7 @@ class $$SalesTableTableManager
                 receiptNumber: receiptNumber,
                 subtotalPaise: subtotalPaise,
                 totalPaise: totalPaise,
+                offerDiscountPaise: offerDiscountPaise,
                 paymentMethod: paymentMethod,
                 paymentStatus: paymentStatus,
                 createdAt: createdAt,
@@ -21731,6 +23773,10 @@ typedef $$SaleItemsTableCreateCompanionBuilder =
       required int unitPricePaise,
       required int quantity,
       required int lineTotalPaise,
+      Value<int> offerDiscountPaise,
+      Value<String?> appliedOfferId,
+      Value<String?> appliedOfferName,
+      Value<String?> appliedOfferType,
       Value<int> rowid,
     });
 typedef $$SaleItemsTableUpdateCompanionBuilder =
@@ -21746,6 +23792,10 @@ typedef $$SaleItemsTableUpdateCompanionBuilder =
       Value<int> unitPricePaise,
       Value<int> quantity,
       Value<int> lineTotalPaise,
+      Value<int> offerDiscountPaise,
+      Value<String?> appliedOfferId,
+      Value<String?> appliedOfferName,
+      Value<String?> appliedOfferType,
       Value<int> rowid,
     });
 
@@ -21869,6 +23919,26 @@ class $$SaleItemsTableFilterComposer
 
   ColumnFilters<int> get lineTotalPaise => $composableBuilder(
     column: $table.lineTotalPaise,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get offerDiscountPaise => $composableBuilder(
+    column: $table.offerDiscountPaise,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get appliedOfferId => $composableBuilder(
+    column: $table.appliedOfferId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get appliedOfferName => $composableBuilder(
+    column: $table.appliedOfferName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get appliedOfferType => $composableBuilder(
+    column: $table.appliedOfferType,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -22009,6 +24079,26 @@ class $$SaleItemsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get offerDiscountPaise => $composableBuilder(
+    column: $table.offerDiscountPaise,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get appliedOfferId => $composableBuilder(
+    column: $table.appliedOfferId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get appliedOfferName => $composableBuilder(
+    column: $table.appliedOfferName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get appliedOfferType => $composableBuilder(
+    column: $table.appliedOfferType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$ShopsTableOrderingComposer get shopId {
     final $$ShopsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -22137,6 +24227,26 @@ class $$SaleItemsTableAnnotationComposer
 
   GeneratedColumn<int> get lineTotalPaise => $composableBuilder(
     column: $table.lineTotalPaise,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get offerDiscountPaise => $composableBuilder(
+    column: $table.offerDiscountPaise,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get appliedOfferId => $composableBuilder(
+    column: $table.appliedOfferId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get appliedOfferName => $composableBuilder(
+    column: $table.appliedOfferName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get appliedOfferType => $composableBuilder(
+    column: $table.appliedOfferType,
     builder: (column) => column,
   );
 
@@ -22277,6 +24387,10 @@ class $$SaleItemsTableTableManager
                 Value<int> unitPricePaise = const Value.absent(),
                 Value<int> quantity = const Value.absent(),
                 Value<int> lineTotalPaise = const Value.absent(),
+                Value<int> offerDiscountPaise = const Value.absent(),
+                Value<String?> appliedOfferId = const Value.absent(),
+                Value<String?> appliedOfferName = const Value.absent(),
+                Value<String?> appliedOfferType = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => SaleItemsCompanion(
                 id: id,
@@ -22290,6 +24404,10 @@ class $$SaleItemsTableTableManager
                 unitPricePaise: unitPricePaise,
                 quantity: quantity,
                 lineTotalPaise: lineTotalPaise,
+                offerDiscountPaise: offerDiscountPaise,
+                appliedOfferId: appliedOfferId,
+                appliedOfferName: appliedOfferName,
+                appliedOfferType: appliedOfferType,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -22305,6 +24423,10 @@ class $$SaleItemsTableTableManager
                 required int unitPricePaise,
                 required int quantity,
                 required int lineTotalPaise,
+                Value<int> offerDiscountPaise = const Value.absent(),
+                Value<String?> appliedOfferId = const Value.absent(),
+                Value<String?> appliedOfferName = const Value.absent(),
+                Value<String?> appliedOfferType = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => SaleItemsCompanion.insert(
                 id: id,
@@ -22318,6 +24440,10 @@ class $$SaleItemsTableTableManager
                 unitPricePaise: unitPricePaise,
                 quantity: quantity,
                 lineTotalPaise: lineTotalPaise,
+                offerDiscountPaise: offerDiscountPaise,
+                appliedOfferId: appliedOfferId,
+                appliedOfferName: appliedOfferName,
+                appliedOfferType: appliedOfferType,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -25949,6 +28075,838 @@ typedef $$OffersTableProcessedTableManager =
       Offer,
       PrefetchHooks Function({bool shopId})
     >;
+typedef $$ProductImageSyncTableCreateCompanionBuilder =
+    ProductImageSyncCompanion Function({
+      Value<String> id,
+      required String shopId,
+      required String productId,
+      required String operation,
+      Value<String?> cloudPath,
+      Value<String?> localPath,
+      Value<String> status,
+      Value<int> attemptCount,
+      Value<DateTime?> lastAttemptAt,
+      Value<String?> lastError,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+typedef $$ProductImageSyncTableUpdateCompanionBuilder =
+    ProductImageSyncCompanion Function({
+      Value<String> id,
+      Value<String> shopId,
+      Value<String> productId,
+      Value<String> operation,
+      Value<String?> cloudPath,
+      Value<String?> localPath,
+      Value<String> status,
+      Value<int> attemptCount,
+      Value<DateTime?> lastAttemptAt,
+      Value<String?> lastError,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+
+class $$ProductImageSyncTableFilterComposer
+    extends Composer<_$AppDatabase, $ProductImageSyncTable> {
+  $$ProductImageSyncTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get shopId => $composableBuilder(
+    column: $table.shopId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get operation => $composableBuilder(
+    column: $table.operation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cloudPath => $composableBuilder(
+    column: $table.cloudPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get localPath => $composableBuilder(
+    column: $table.localPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastAttemptAt => $composableBuilder(
+    column: $table.lastAttemptAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$ProductImageSyncTableOrderingComposer
+    extends Composer<_$AppDatabase, $ProductImageSyncTable> {
+  $$ProductImageSyncTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get shopId => $composableBuilder(
+    column: $table.shopId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get operation => $composableBuilder(
+    column: $table.operation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get cloudPath => $composableBuilder(
+    column: $table.cloudPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get localPath => $composableBuilder(
+    column: $table.localPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastAttemptAt => $composableBuilder(
+    column: $table.lastAttemptAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$ProductImageSyncTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ProductImageSyncTable> {
+  $$ProductImageSyncTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get shopId =>
+      $composableBuilder(column: $table.shopId, builder: (column) => column);
+
+  GeneratedColumn<String> get productId =>
+      $composableBuilder(column: $table.productId, builder: (column) => column);
+
+  GeneratedColumn<String> get operation =>
+      $composableBuilder(column: $table.operation, builder: (column) => column);
+
+  GeneratedColumn<String> get cloudPath =>
+      $composableBuilder(column: $table.cloudPath, builder: (column) => column);
+
+  GeneratedColumn<String> get localPath =>
+      $composableBuilder(column: $table.localPath, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get lastAttemptAt => $composableBuilder(
+    column: $table.lastAttemptAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get lastError =>
+      $composableBuilder(column: $table.lastError, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$ProductImageSyncTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $ProductImageSyncTable,
+          ProductImageSyncData,
+          $$ProductImageSyncTableFilterComposer,
+          $$ProductImageSyncTableOrderingComposer,
+          $$ProductImageSyncTableAnnotationComposer,
+          $$ProductImageSyncTableCreateCompanionBuilder,
+          $$ProductImageSyncTableUpdateCompanionBuilder,
+          (
+            ProductImageSyncData,
+            BaseReferences<
+              _$AppDatabase,
+              $ProductImageSyncTable,
+              ProductImageSyncData
+            >,
+          ),
+          ProductImageSyncData,
+          PrefetchHooks Function()
+        > {
+  $$ProductImageSyncTableTableManager(
+    _$AppDatabase db,
+    $ProductImageSyncTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ProductImageSyncTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ProductImageSyncTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ProductImageSyncTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> shopId = const Value.absent(),
+                Value<String> productId = const Value.absent(),
+                Value<String> operation = const Value.absent(),
+                Value<String?> cloudPath = const Value.absent(),
+                Value<String?> localPath = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int> attemptCount = const Value.absent(),
+                Value<DateTime?> lastAttemptAt = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ProductImageSyncCompanion(
+                id: id,
+                shopId: shopId,
+                productId: productId,
+                operation: operation,
+                cloudPath: cloudPath,
+                localPath: localPath,
+                status: status,
+                attemptCount: attemptCount,
+                lastAttemptAt: lastAttemptAt,
+                lastError: lastError,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                required String shopId,
+                required String productId,
+                required String operation,
+                Value<String?> cloudPath = const Value.absent(),
+                Value<String?> localPath = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int> attemptCount = const Value.absent(),
+                Value<DateTime?> lastAttemptAt = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ProductImageSyncCompanion.insert(
+                id: id,
+                shopId: shopId,
+                productId: productId,
+                operation: operation,
+                cloudPath: cloudPath,
+                localPath: localPath,
+                status: status,
+                attemptCount: attemptCount,
+                lastAttemptAt: lastAttemptAt,
+                lastError: lastError,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$ProductImageSyncTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $ProductImageSyncTable,
+      ProductImageSyncData,
+      $$ProductImageSyncTableFilterComposer,
+      $$ProductImageSyncTableOrderingComposer,
+      $$ProductImageSyncTableAnnotationComposer,
+      $$ProductImageSyncTableCreateCompanionBuilder,
+      $$ProductImageSyncTableUpdateCompanionBuilder,
+      (
+        ProductImageSyncData,
+        BaseReferences<
+          _$AppDatabase,
+          $ProductImageSyncTable,
+          ProductImageSyncData
+        >,
+      ),
+      ProductImageSyncData,
+      PrefetchHooks Function()
+    >;
+typedef $$StorageCleanupNotificationTableCreateCompanionBuilder =
+    StorageCleanupNotificationCompanion Function({
+      Value<String> id,
+      required String shopId,
+      required String kind,
+      Value<int> orphanCount,
+      Value<int> reclaimableBytes,
+      Value<bool> isRead,
+      Value<bool> dismissed,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+typedef $$StorageCleanupNotificationTableUpdateCompanionBuilder =
+    StorageCleanupNotificationCompanion Function({
+      Value<String> id,
+      Value<String> shopId,
+      Value<String> kind,
+      Value<int> orphanCount,
+      Value<int> reclaimableBytes,
+      Value<bool> isRead,
+      Value<bool> dismissed,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+
+class $$StorageCleanupNotificationTableFilterComposer
+    extends Composer<_$AppDatabase, $StorageCleanupNotificationTable> {
+  $$StorageCleanupNotificationTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get shopId => $composableBuilder(
+    column: $table.shopId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get orphanCount => $composableBuilder(
+    column: $table.orphanCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get reclaimableBytes => $composableBuilder(
+    column: $table.reclaimableBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isRead => $composableBuilder(
+    column: $table.isRead,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get dismissed => $composableBuilder(
+    column: $table.dismissed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$StorageCleanupNotificationTableOrderingComposer
+    extends Composer<_$AppDatabase, $StorageCleanupNotificationTable> {
+  $$StorageCleanupNotificationTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get shopId => $composableBuilder(
+    column: $table.shopId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get orphanCount => $composableBuilder(
+    column: $table.orphanCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get reclaimableBytes => $composableBuilder(
+    column: $table.reclaimableBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isRead => $composableBuilder(
+    column: $table.isRead,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get dismissed => $composableBuilder(
+    column: $table.dismissed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$StorageCleanupNotificationTableAnnotationComposer
+    extends Composer<_$AppDatabase, $StorageCleanupNotificationTable> {
+  $$StorageCleanupNotificationTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get shopId =>
+      $composableBuilder(column: $table.shopId, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<int> get orphanCount => $composableBuilder(
+    column: $table.orphanCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get reclaimableBytes => $composableBuilder(
+    column: $table.reclaimableBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isRead =>
+      $composableBuilder(column: $table.isRead, builder: (column) => column);
+
+  GeneratedColumn<bool> get dismissed =>
+      $composableBuilder(column: $table.dismissed, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$StorageCleanupNotificationTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $StorageCleanupNotificationTable,
+          StorageCleanupNotificationData,
+          $$StorageCleanupNotificationTableFilterComposer,
+          $$StorageCleanupNotificationTableOrderingComposer,
+          $$StorageCleanupNotificationTableAnnotationComposer,
+          $$StorageCleanupNotificationTableCreateCompanionBuilder,
+          $$StorageCleanupNotificationTableUpdateCompanionBuilder,
+          (
+            StorageCleanupNotificationData,
+            BaseReferences<
+              _$AppDatabase,
+              $StorageCleanupNotificationTable,
+              StorageCleanupNotificationData
+            >,
+          ),
+          StorageCleanupNotificationData,
+          PrefetchHooks Function()
+        > {
+  $$StorageCleanupNotificationTableTableManager(
+    _$AppDatabase db,
+    $StorageCleanupNotificationTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StorageCleanupNotificationTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$StorageCleanupNotificationTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$StorageCleanupNotificationTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> shopId = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<int> orphanCount = const Value.absent(),
+                Value<int> reclaimableBytes = const Value.absent(),
+                Value<bool> isRead = const Value.absent(),
+                Value<bool> dismissed = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => StorageCleanupNotificationCompanion(
+                id: id,
+                shopId: shopId,
+                kind: kind,
+                orphanCount: orphanCount,
+                reclaimableBytes: reclaimableBytes,
+                isRead: isRead,
+                dismissed: dismissed,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                required String shopId,
+                required String kind,
+                Value<int> orphanCount = const Value.absent(),
+                Value<int> reclaimableBytes = const Value.absent(),
+                Value<bool> isRead = const Value.absent(),
+                Value<bool> dismissed = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => StorageCleanupNotificationCompanion.insert(
+                id: id,
+                shopId: shopId,
+                kind: kind,
+                orphanCount: orphanCount,
+                reclaimableBytes: reclaimableBytes,
+                isRead: isRead,
+                dismissed: dismissed,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$StorageCleanupNotificationTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $StorageCleanupNotificationTable,
+      StorageCleanupNotificationData,
+      $$StorageCleanupNotificationTableFilterComposer,
+      $$StorageCleanupNotificationTableOrderingComposer,
+      $$StorageCleanupNotificationTableAnnotationComposer,
+      $$StorageCleanupNotificationTableCreateCompanionBuilder,
+      $$StorageCleanupNotificationTableUpdateCompanionBuilder,
+      (
+        StorageCleanupNotificationData,
+        BaseReferences<
+          _$AppDatabase,
+          $StorageCleanupNotificationTable,
+          StorageCleanupNotificationData
+        >,
+      ),
+      StorageCleanupNotificationData,
+      PrefetchHooks Function()
+    >;
+typedef $$StorageCleanupStateTableCreateCompanionBuilder =
+    StorageCleanupStateCompanion Function({
+      required String shopId,
+      Value<DateTime?> lastScanAt,
+      Value<DateTime?> lastCleanupAt,
+      Value<int?> lastUsedBytes,
+      Value<int?> lastReclaimableBytes,
+      Value<int> rowid,
+    });
+typedef $$StorageCleanupStateTableUpdateCompanionBuilder =
+    StorageCleanupStateCompanion Function({
+      Value<String> shopId,
+      Value<DateTime?> lastScanAt,
+      Value<DateTime?> lastCleanupAt,
+      Value<int?> lastUsedBytes,
+      Value<int?> lastReclaimableBytes,
+      Value<int> rowid,
+    });
+
+class $$StorageCleanupStateTableFilterComposer
+    extends Composer<_$AppDatabase, $StorageCleanupStateTable> {
+  $$StorageCleanupStateTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get shopId => $composableBuilder(
+    column: $table.shopId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastScanAt => $composableBuilder(
+    column: $table.lastScanAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastCleanupAt => $composableBuilder(
+    column: $table.lastCleanupAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastUsedBytes => $composableBuilder(
+    column: $table.lastUsedBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastReclaimableBytes => $composableBuilder(
+    column: $table.lastReclaimableBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$StorageCleanupStateTableOrderingComposer
+    extends Composer<_$AppDatabase, $StorageCleanupStateTable> {
+  $$StorageCleanupStateTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get shopId => $composableBuilder(
+    column: $table.shopId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastScanAt => $composableBuilder(
+    column: $table.lastScanAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastCleanupAt => $composableBuilder(
+    column: $table.lastCleanupAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lastUsedBytes => $composableBuilder(
+    column: $table.lastUsedBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lastReclaimableBytes => $composableBuilder(
+    column: $table.lastReclaimableBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$StorageCleanupStateTableAnnotationComposer
+    extends Composer<_$AppDatabase, $StorageCleanupStateTable> {
+  $$StorageCleanupStateTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get shopId =>
+      $composableBuilder(column: $table.shopId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastScanAt => $composableBuilder(
+    column: $table.lastScanAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get lastCleanupAt => $composableBuilder(
+    column: $table.lastCleanupAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastUsedBytes => $composableBuilder(
+    column: $table.lastUsedBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastReclaimableBytes => $composableBuilder(
+    column: $table.lastReclaimableBytes,
+    builder: (column) => column,
+  );
+}
+
+class $$StorageCleanupStateTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $StorageCleanupStateTable,
+          StorageCleanupStateData,
+          $$StorageCleanupStateTableFilterComposer,
+          $$StorageCleanupStateTableOrderingComposer,
+          $$StorageCleanupStateTableAnnotationComposer,
+          $$StorageCleanupStateTableCreateCompanionBuilder,
+          $$StorageCleanupStateTableUpdateCompanionBuilder,
+          (
+            StorageCleanupStateData,
+            BaseReferences<
+              _$AppDatabase,
+              $StorageCleanupStateTable,
+              StorageCleanupStateData
+            >,
+          ),
+          StorageCleanupStateData,
+          PrefetchHooks Function()
+        > {
+  $$StorageCleanupStateTableTableManager(
+    _$AppDatabase db,
+    $StorageCleanupStateTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StorageCleanupStateTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StorageCleanupStateTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$StorageCleanupStateTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> shopId = const Value.absent(),
+                Value<DateTime?> lastScanAt = const Value.absent(),
+                Value<DateTime?> lastCleanupAt = const Value.absent(),
+                Value<int?> lastUsedBytes = const Value.absent(),
+                Value<int?> lastReclaimableBytes = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => StorageCleanupStateCompanion(
+                shopId: shopId,
+                lastScanAt: lastScanAt,
+                lastCleanupAt: lastCleanupAt,
+                lastUsedBytes: lastUsedBytes,
+                lastReclaimableBytes: lastReclaimableBytes,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String shopId,
+                Value<DateTime?> lastScanAt = const Value.absent(),
+                Value<DateTime?> lastCleanupAt = const Value.absent(),
+                Value<int?> lastUsedBytes = const Value.absent(),
+                Value<int?> lastReclaimableBytes = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => StorageCleanupStateCompanion.insert(
+                shopId: shopId,
+                lastScanAt: lastScanAt,
+                lastCleanupAt: lastCleanupAt,
+                lastUsedBytes: lastUsedBytes,
+                lastReclaimableBytes: lastReclaimableBytes,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$StorageCleanupStateTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $StorageCleanupStateTable,
+      StorageCleanupStateData,
+      $$StorageCleanupStateTableFilterComposer,
+      $$StorageCleanupStateTableOrderingComposer,
+      $$StorageCleanupStateTableAnnotationComposer,
+      $$StorageCleanupStateTableCreateCompanionBuilder,
+      $$StorageCleanupStateTableUpdateCompanionBuilder,
+      (
+        StorageCleanupStateData,
+        BaseReferences<
+          _$AppDatabase,
+          $StorageCleanupStateTable,
+          StorageCleanupStateData
+        >,
+      ),
+      StorageCleanupStateData,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -25995,4 +28953,14 @@ class $AppDatabaseManager {
       $$PurchaseSequencesTableTableManager(_db, _db.purchaseSequences);
   $$OffersTableTableManager get offers =>
       $$OffersTableTableManager(_db, _db.offers);
+  $$ProductImageSyncTableTableManager get productImageSync =>
+      $$ProductImageSyncTableTableManager(_db, _db.productImageSync);
+  $$StorageCleanupNotificationTableTableManager
+  get storageCleanupNotification =>
+      $$StorageCleanupNotificationTableTableManager(
+        _db,
+        _db.storageCleanupNotification,
+      );
+  $$StorageCleanupStateTableTableManager get storageCleanupState =>
+      $$StorageCleanupStateTableTableManager(_db, _db.storageCleanupState);
 }

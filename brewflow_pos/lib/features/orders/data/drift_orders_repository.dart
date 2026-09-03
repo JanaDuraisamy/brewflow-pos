@@ -111,6 +111,8 @@ final class DriftOrdersRepository implements OrdersRepository {
               productId: item.productId,
               variantId: item.variantId,
               variantName: item.variantName,
+              offerDiscountPaise: item.offerDiscountPaise,
+              appliedOfferName: item.appliedOfferName,
             ),
         ],
       );

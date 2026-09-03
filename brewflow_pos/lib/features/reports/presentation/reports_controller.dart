@@ -133,12 +133,13 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
           ? await _fetchWindow(orders, fromUtc, toUtc, shopIds: shopIds)
           : <OrderSummary>[];
 
-      final products = await inventory.products();
-      final categories = await inventory.categories();
+      final products = await inventory.products(shopIds: shopIds);
+      final categories = await inventory.categories(shopIds: shopIds);
       final recorded = await expenses.expenses(
         fromUtc: fromUtc,
         toUtc: toUtc,
         status: ExpenseStatusFilter.active,
+        shopIds: shopIds,
       );
 
       final productById = <String, Product>{

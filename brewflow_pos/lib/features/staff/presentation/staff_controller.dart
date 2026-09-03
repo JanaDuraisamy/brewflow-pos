@@ -138,18 +138,12 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
       rethrow;
     } catch (error, stackTrace) {
       AppLog.error(
-        'Authorization store unavailable — falling back to legacy access',
+        'Authorization store unavailable',
         tag: tag,
         error: error,
         stackTrace: stackTrace,
       );
-      return const UserProfile(
-        id: 'legacy',
-        email: 'legacy',
-        role: UserRole.owner,
-        isActive: true,
-        permissions: {},
-      );
+      throw const UnexpectedAuthFailure();
     }
   }
 

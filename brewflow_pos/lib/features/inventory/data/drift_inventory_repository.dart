@@ -5,6 +5,8 @@ import 'package:brewflow_pos/core/database/daos/products_dao.dart';
 import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/features/inventory/data/drift_image_sync_repository.dart';
+import 'package:brewflow_pos/features/inventory/data/product_image_cloud_store.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
@@ -42,8 +44,11 @@ final class DriftInventoryRepository implements InventoryRepository {
   DriftInventoryRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
+    DriftImageSyncRepository? imageQueue,
   }) : _database = database,
        _outbox = outboxCoordinator,
+       // ignore: prefer_initializing_formals
+       _imageQueue = imageQueue,
        _categories = CategoriesDao(database),
        _products = ProductsDao(database),
        _variants = ProductVariantsDao(database),
@@ -61,9 +66,20 @@ final class DriftInventoryRepository implements InventoryRepository {
   /// Null when sync is not wired (tests / signed-out legacy flows).
   final SyncOutboxCoordinator? _outbox;
 
+  /// Null when product image cloud sync is not wired; enqueues are no-ops.
+  final DriftImageSyncRepository? _imageQueue;
+
   @override
-  Future<List<Category>> categories() async {
+  Future<List<Category>> categories({List<String>? shopIds}) async {
     try {
+      if (shopIds != null && shopIds.isNotEmpty) {
+        final allRows = <db.Category>[];
+        for (final id in shopIds) {
+          final rows = await _categories.getAll(shopId: id);
+          allRows.addAll(rows);
+        }
+        return allRows.map(_categoryFromRow).toList();
+      }
       final rows = await _categories.getAll();
       return rows.map(_categoryFromRow).toList();
     } on Exception catch (error, stackTrace) {
@@ -76,8 +92,30 @@ final class DriftInventoryRepository implements InventoryRepository {
     String? search,
     String? categoryId,
     ProductStatusFilter status = ProductStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     try {
+      if (shopIds != null && shopIds.isNotEmpty) {
+        final allRows = <db.Product>[];
+        for (final id in shopIds) {
+          final rows = await _products.query(
+            search: search,
+            categoryId: categoryId,
+            active: switch (status) {
+              ProductStatusFilter.all => null,
+              ProductStatusFilter.active => true,
+              ProductStatusFilter.inactive => false,
+            },
+            shopId: id,
+          );
+          allRows.addAll(rows);
+        }
+        final variantsByProduct = await _variants.allByProduct();
+        return [
+          for (final row in allRows)
+            _productFromRow(row, variants: variantsByProduct[row.id] ?? const []),
+        ];
+      }
       final rows = await _products.query(
         search: search,
         categoryId: categoryId,
@@ -100,7 +138,8 @@ final class DriftInventoryRepository implements InventoryRepository {
   @override
   Future<bool> skuExists(String sku, {String? exceptId}) async {
     try {
-      return await _products.skuExists(sku, exceptId: exceptId);
+      final shopId = await resolveWritableShopId(_database);
+      return await _products.skuExists(sku, exceptId: exceptId, shopId: shopId);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to check SKU', error, stackTrace);
     }
@@ -396,6 +435,13 @@ final class DriftInventoryRepository implements InventoryRepository {
                   _variantAppend(variant, context),
               ],
             ));
+      if (imagePath != null) {
+        await _enqueueImageUpload(
+          productId: product.id,
+          shopId: resolvedShopId,
+          localPath: imagePath,
+        );
+      }
       return product;
     } on InventoryFailure {
       rethrow;
@@ -577,6 +623,16 @@ final class DriftInventoryRepository implements InventoryRepository {
               },
             );
       await write;
+      if (imagePath != null) {
+        final row = await _products.byId(id);
+        if (row != null) {
+          await _enqueueImageUpload(
+            productId: id,
+            shopId: row.shopId ?? (await resolveWritableShopId(_database)),
+            localPath: imagePath,
+          );
+        }
+      }
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -619,13 +675,33 @@ final class DriftInventoryRepository implements InventoryRepository {
       });
 
       final coordinator = _outbox;
+      final imageQueue = _imageQueue;
       Future<ProductDeleteResult> commit() async {
+        final ProductDeleteResult result;
         if (decision.referenced) {
           await _products.updateActive(id, false);
-          return ProductDeleteResult.deactivated;
+          result = ProductDeleteResult.deactivated;
+        } else {
+          await _products.deleteById(id);
+          result = ProductDeleteResult.deleted;
         }
-        await _products.deleteById(id);
-        return ProductDeleteResult.deleted;
+        // Enqueue a cloud-image DELETE (cloud object + local cache) for the
+        // product. Both the cloud path and any local file are removed later
+        // by the image sync coordinator. Fire-and-forget: the queue is
+        // durable and deduplicated, and the app must never fail a delete
+        // because image sync is unavailable.
+        if (imageQueue != null &&
+            (decision.row.cloudImagePath != null ||
+                decision.row.imagePath != null)) {
+          await imageQueue.enqueueDelete(
+            shopId:
+                decision.row.shopId ?? (await resolveWritableShopId(_database)),
+            productId: id,
+            cloudPath: decision.row.cloudImagePath ?? '',
+            localPath: decision.row.imagePath,
+          );
+        }
+        return result;
       }
 
       if (coordinator == null) {
@@ -668,10 +744,46 @@ final class DriftInventoryRepository implements InventoryRepository {
     return _variants.skuExists(sku, exceptId: exceptVariantId);
   }
 
+  // ---- Product image cloud sync (Phase: product image upload) -----------
+  //
+  // When an image queue is wired, an UPLOAD intent is enqueued whenever a
+  // product is created/updated with a local image [imagePath]. The queue is
+  // durable and deduplicated, so a re-save or an offline cycle never
+  // duplicates cloud work. Device-local paths are never part of the row-sync
+  // wire contract (see master_data_models.dart); the image queue carries
+  // binary intents separately.
+
+  Future<void> _enqueueImageUpload({
+    required String productId,
+    required String shopId,
+    required String localPath,
+  }) async {
+    final queue = _imageQueue;
+    if (queue == null) return;
+    try {
+      await queue.enqueueUpload(
+        shopId: shopId,
+        productId: productId,
+        localPath: localPath,
+        cloudPath: ProductImageCloud.cloudPathFor(shopId, productId),
+      );
+    } on Exception catch (error, stackTrace) {
+      // Offline-first: a queue enqueue failure must never fail a product
+      // write. Log and move on; image sync retries on the next cycle.
+      AppLog.warning(
+        'Failed to enqueue product image upload for $productId',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   // ---- Sync payload builders (Phase 6.1) -----------------------------------
   //
-  // imagePath is deliberately NOT part of the wire contract: image files are
-  // device-local until a storage phase exists.
+  // imagePath (a device-local asset path) is deliberately NOT part of the wire
+  // contract. cloudImagePath IS: it is a storage object key that other devices
+  // need to download the image binary.
 
   static OutboxAppend _productAppend(
     Product product,
@@ -705,6 +817,7 @@ final class DriftInventoryRepository implements InventoryRepository {
       memberPricePaise: product.memberPricePaise,
       isActive: product.isActive,
       createdAt: product.createdAt,
+      cloudImagePath: product.cloudImagePath,
     ).toJson(),
   );
 
@@ -872,6 +985,7 @@ final class DriftInventoryRepository implements InventoryRepository {
         ? row.stockQuantity
         : variants.fold(0, (sum, v) => sum + v.stockQuantity),
     imagePath: row.imagePath,
+    cloudImagePath: row.cloudImagePath,
     stockUnit: StockUnit.fromDbValue(row.stockUnit),
     lowStockMode: LowStockMode.fromDbValue(row.lowStockMode),
     lowStockThreshold: row.lowStockThreshold,

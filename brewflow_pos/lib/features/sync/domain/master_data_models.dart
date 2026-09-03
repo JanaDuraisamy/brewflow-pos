@@ -177,6 +177,7 @@ final class SyncProduct {
     this.memberPricePaise,
     required this.isActive,
     required this.createdAt,
+    this.cloudImagePath,
   });
 
   factory SyncProduct.fromJson(Map<String, dynamic> json) => SyncProduct(
@@ -195,6 +196,7 @@ final class SyncProduct {
     memberPricePaise: json['memberPricePaise'] as int?,
     isActive: json['isActive'] as bool,
     createdAt: DateTime.parse(json['createdAt'] as String),
+    cloudImagePath: json['cloudImagePath'] as String?,
   );
 
   final String id;
@@ -216,6 +218,11 @@ final class SyncProduct {
   final bool isActive;
   final DateTime createdAt;
 
+  /// Cloud object path (Supabase Storage) of the product image; null when no
+  /// image is uploaded. This is metadata only — binary is never carried on
+  /// the wire. Other devices read it to enqueue a local DOWNLOAD.
+  final String? cloudImagePath;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -232,6 +239,7 @@ final class SyncProduct {
     'memberPricePaise': memberPricePaise,
     'isActive': isActive,
     'createdAt': createdAt.toIso8601String(),
+    'cloudImagePath': cloudImagePath,
   };
 }
 
@@ -466,6 +474,7 @@ final class SyncSale {
     required this.createdAt,
     this.voided = false,
     this.voidedAt,
+    this.offerDiscountPaise = 0,
   });
 
   factory SyncSale.fromJson(Map<String, dynamic> json) => SyncSale(
@@ -482,6 +491,8 @@ final class SyncSale {
     voidedAt: json['voidedAt'] != null
         ? DateTime.parse(json['voidedAt'] as String)
         : null,
+    // Tolerant: payloads written before offer sync carry no discount field.
+    offerDiscountPaise: json['offerDiscountPaise'] as int? ?? 0,
   );
 
   final String id;
@@ -496,6 +507,9 @@ final class SyncSale {
   final bool voided;
   final DateTime? voidedAt;
 
+  /// Total offer discount on this sale in paise; 0 when no offer applied.
+  final int offerDiscountPaise;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -508,6 +522,7 @@ final class SyncSale {
     'createdAt': createdAt.toIso8601String(),
     'voided': voided,
     'voidedAt': voidedAt?.toIso8601String(),
+    'offerDiscountPaise': offerDiscountPaise,
   };
 }
 
@@ -528,6 +543,10 @@ final class SyncSaleItem {
     required this.unitPricePaise,
     required this.quantity,
     required this.lineTotalPaise,
+    this.offerDiscountPaise = 0,
+    this.appliedOfferId,
+    this.appliedOfferName,
+    this.appliedOfferType,
   });
 
   factory SyncSaleItem.fromJson(Map<String, dynamic> json) => SyncSaleItem(
@@ -542,6 +561,11 @@ final class SyncSaleItem {
     unitPricePaise: json['unitPricePaise'] as int,
     quantity: json['quantity'] as int,
     lineTotalPaise: json['lineTotalPaise'] as int,
+    // Tolerant: payloads written before offer sync carry no offer fields.
+    offerDiscountPaise: json['offerDiscountPaise'] as int? ?? 0,
+    appliedOfferId: json['appliedOfferId'] as String?,
+    appliedOfferName: json['appliedOfferName'] as String?,
+    appliedOfferType: json['appliedOfferType'] as String?,
   );
 
   final String id;
@@ -556,6 +580,15 @@ final class SyncSaleItem {
   final int quantity;
   final int lineTotalPaise;
 
+  /// Offer discount on this line in paise; 0 when no offer applied.
+  final int offerDiscountPaise;
+
+  /// Identity of the applied offer (offer-table id, display name, wire
+  /// type); all null when no offer applied.
+  final String? appliedOfferId;
+  final String? appliedOfferName;
+  final String? appliedOfferType;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -568,6 +601,10 @@ final class SyncSaleItem {
     'unitPricePaise': unitPricePaise,
     'quantity': quantity,
     'lineTotalPaise': lineTotalPaise,
+    'offerDiscountPaise': offerDiscountPaise,
+    'appliedOfferId': appliedOfferId,
+    'appliedOfferName': appliedOfferName,
+    'appliedOfferType': appliedOfferType,
   };
 }
 

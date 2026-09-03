@@ -5,6 +5,7 @@ import 'package:brewflow_pos/features/billing/presentation/billing_controller.da
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
@@ -13,6 +14,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 
 /// ---------------------------------------------------------------------------
@@ -40,6 +42,7 @@ void main() {
       overrides: [
         appDatabaseProvider.overrideWithValue(database),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+        offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
       ],
     );
     addTearDown(container.dispose);

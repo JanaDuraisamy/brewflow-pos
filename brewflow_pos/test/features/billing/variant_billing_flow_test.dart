@@ -4,8 +4,10 @@ import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,8 +15,10 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 /// ---------------------------------------------------------------------------
 /// P0 FIX 4 / 6 / 7 — variant selection, inline customer creation and
@@ -96,6 +100,8 @@ Future<void> _pump(WidgetTester tester) async {
         customersRepositoryProvider.overrideWithValue(customers),
         ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
+        offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
       ],
       child: const MaterialApp(home: Scaffold(body: PosPage())),
     ),

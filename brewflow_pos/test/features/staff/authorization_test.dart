@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/data/supabase_staff_provisioning.dart';
@@ -28,6 +29,7 @@ import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 import '../../helpers/fake_shop_name_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
 
 AuthUser _authUser(String id, String email) => AuthUser(id: id, email: email);
@@ -56,6 +58,7 @@ AuthUser _authUser(String id, String email) => AuthUser(id: id, email: email);
       settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
       shopNameRepositoryProvider.overrideWithValue(FakeShopNameRepository()),
       expensesRepositoryProvider.overrideWithValue(FakeExpensesRepository()),
+      offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
     ],
   );
   addTearDown(container.dispose);

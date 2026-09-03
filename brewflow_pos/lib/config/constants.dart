@@ -37,7 +37,7 @@ final class AppConstants {
   static const String databaseFileName = 'brewflow_pos.db';
 
   /// Current schema version. Bump on every database migration.
-  static const int databaseSchemaVersion = 17;
+  static const int databaseSchemaVersion = 19;
 
   /// Prefix for human-readable receipt numbers (e.g. 'BF-000042').
   static const String receiptPrefix = 'BF-';

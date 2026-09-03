@@ -8,6 +8,7 @@ Sale _sale({PaymentStatus status = PaymentStatus.paid}) => Sale(
   receiptNumber: 'BF-000001',
   subtotalPaise: 32000,
   totalPaise: 32000,
+  offerDiscountPaise: 0,
   paymentStatus: status,
   paymentMethod: status == PaymentStatus.paid ? PaymentMethod.upi : null,
   createdAt: DateTime.utc(2026, 8, 24, 9, 30),
@@ -30,6 +31,7 @@ void main() {
             unitPricePaise: 12000,
             quantity: 2,
             lineTotalPaise: 24000,
+            offerDiscountPaise: 0,
           ),
           SaleItem(
             id: 'i2',
@@ -40,6 +42,7 @@ void main() {
             unitPricePaise: 8000,
             quantity: 1,
             lineTotalPaise: 8000,
+            offerDiscountPaise: 0,
           ),
         ],
       );
@@ -73,6 +76,7 @@ void main() {
         receiptNumber: 'BF-000001',
         subtotalPaise: 24000,
         totalPaise: 24000,
+        offerDiscountPaise: 0,
         paymentStatus: PaymentStatus.paid,
         paymentMethod: PaymentMethod.upi,
         createdAt: DateTime.utc(2026, 8, 24, 9, 30),
@@ -91,6 +95,7 @@ void main() {
             unitPricePaise: 12000,
             quantity: 2,
             lineTotalPaise: 24000,
+            offerDiscountPaise: 0,
           ),
         ],
       );
@@ -117,6 +122,38 @@ void main() {
       );
 
       expect(fromOrderDoc.toPlainText(), fromSaleDoc.toPlainText());
+    });
+
+    test('fromOrder preserves offer discounts from history', () {
+      final document = ReceiptDocument.fromOrder(
+        shopName: 'Shop',
+        order: Order(
+          id: 's1',
+          receiptNumber: 'BF-000001',
+          subtotalPaise: 20000,
+          totalPaise: 18000,
+          paymentStatus: PaymentStatus.paid,
+          createdAt: DateTime.utc(2026, 8, 24, 9, 30),
+          paymentMethod: PaymentMethod.upi,
+          items: [
+            OrderItem(
+              productName: 'Filter Coffee',
+              sku: 'FC-01',
+              unitPricePaise: 10000,
+              quantity: 2,
+              lineTotalPaise: 20000,
+              offerDiscountPaise: 2000,
+              appliedOfferName: 'Monsoon 10%',
+            ),
+          ],
+        ),
+      );
+
+      final text = document.toPlainText();
+      expect(text, contains('Offer: Monsoon 10% -₹20.00'));
+      expect(text, contains('Subtotal: ₹200.00'));
+      expect(text, contains('Offer Discount: -₹20.00'));
+      expect(text, contains('Total: ₹180.00 (Paid)'));
     });
   });
 }

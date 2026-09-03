@@ -9,6 +9,7 @@ import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
+import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
@@ -114,6 +115,7 @@ final class DriftBillingRepository implements BillingRepository {
                 paymentMethod: result.sale.paymentMethod?.dbValue,
                 paymentStatus: result.sale.paymentStatus.dbValue,
                 createdAt: result.sale.createdAt,
+                offerDiscountPaise: result.sale.offerDiscountPaise,
               ).toJson(),
             ),
           ];
@@ -134,6 +136,10 @@ final class DriftBillingRepository implements BillingRepository {
                   unitPricePaise: item.unitPricePaise,
                   quantity: item.quantity,
                   lineTotalPaise: item.lineTotalPaise,
+                  offerDiscountPaise: item.offerDiscountPaise,
+                  appliedOfferId: item.appliedOfferId,
+                  appliedOfferName: item.appliedOfferName,
+                  appliedOfferType: item.appliedOfferType?.wire,
                 ).toJson(),
               ),
             );
@@ -328,6 +334,13 @@ final class DriftBillingRepository implements BillingRepository {
       );
     }
 
+    // Calculate total offer discount from cart lines
+    final totalOfferDiscount = lines.fold(
+      0,
+      (sum, line) => sum + (line.appliedOffer?.discountPaise ?? 0),
+    );
+    final totalPaise = (subtotal - totalOfferDiscount).clamp(0, subtotal);
+
     final receiptNumber = await _nextReceiptNumber(shopId);
     await _database
         .into(_database.sales)
@@ -338,7 +351,8 @@ final class DriftBillingRepository implements BillingRepository {
             receiptNumber: receiptNumber,
             customerId: Value(customerId),
             subtotalPaise: subtotal,
-            totalPaise: subtotal,
+            totalPaise: totalPaise,
+            offerDiscountPaise: Value(totalOfferDiscount),
             // Credit sales persist no payment method — the debt lives in the
             // customer ledger, derived from this sale's total minus payments.
             paymentMethod: Value(
@@ -367,6 +381,12 @@ final class DriftBillingRepository implements BillingRepository {
             unitPricePaise: entry.line.unitPricePaise,
             quantity: entry.line.quantity,
             lineTotalPaise: entry.lineTotal,
+            offerDiscountPaise: Value(
+              entry.line.appliedOffer?.discountPaise ?? 0,
+            ),
+            appliedOfferId: Value(entry.line.appliedOffer?.offerId),
+            appliedOfferName: Value(entry.line.appliedOffer?.offerName),
+            appliedOfferType: Value(entry.line.appliedOffer?.offerType.wire),
           ),
       ]);
     });
@@ -377,7 +397,8 @@ final class DriftBillingRepository implements BillingRepository {
       id: saleId,
       receiptNumber: receiptNumber,
       subtotalPaise: subtotal,
-      totalPaise: subtotal,
+      totalPaise: totalPaise,
+      offerDiscountPaise: totalOfferDiscount,
       paymentStatus: paymentStatus,
       paymentMethod: paymentStatus == PaymentStatus.notPaid
           ? null
@@ -476,6 +497,7 @@ final class DriftBillingRepository implements BillingRepository {
       memberPricePaise: product.memberPricePaise,
       isActive: product.isActive,
       createdAt: product.createdAt,
+      cloudImagePath: product.cloudImagePath,
     ).toJson(),
   );
 
@@ -551,7 +573,8 @@ final class DriftBillingRepository implements BillingRepository {
   @override
   Future<Sale?> saleById(String id) async {
     try {
-      final row = await _sales.byId(id);
+      final shopId = await resolveWritableShopId(_database);
+      final row = await _sales.byId(id, shopId: shopId);
       return row == null ? null : _saleFromRow(row);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load sale', error, stackTrace);
@@ -571,7 +594,8 @@ final class DriftBillingRepository implements BillingRepository {
   @override
   Future<List<Sale>> sales() async {
     try {
-      final rows = await _sales.all();
+      final shopId = await resolveWritableShopId(_database);
+      final rows = await _sales.all(shopId: shopId);
       return rows.map(_saleFromRow).toList();
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load sales', error, stackTrace);
@@ -663,6 +687,7 @@ final class DriftBillingRepository implements BillingRepository {
             createdAt: saleRow.createdAt,
             voided: saleRow.voided,
             voidedAt: saleRow.voidedAt,
+            offerDiscountPaise: saleRow.offerDiscountPaise,
           ).toJson();
           final out = <OutboxAppend>[
             OutboxAppend(
@@ -710,6 +735,7 @@ final class DriftBillingRepository implements BillingRepository {
     receiptNumber: row.receiptNumber,
     subtotalPaise: row.subtotalPaise,
     totalPaise: row.totalPaise,
+    offerDiscountPaise: row.offerDiscountPaise,
     paymentStatus: PaymentStatus.fromDbValue(row.paymentStatus)!,
     paymentMethod: row.paymentMethod == null
         ? null
@@ -726,11 +752,17 @@ final class DriftBillingRepository implements BillingRepository {
     saleId: row.saleId,
     productId: row.productId,
     productName: row.productName,
-    sku: row.sku,
-    variantId: row.variantId,
-    variantName: row.variantName,
     unitPricePaise: row.unitPricePaise,
     quantity: row.quantity,
     lineTotalPaise: row.lineTotalPaise,
+    offerDiscountPaise: row.offerDiscountPaise,
+    sku: row.sku,
+    variantId: row.variantId,
+    variantName: row.variantName,
+    appliedOfferId: row.appliedOfferId,
+    appliedOfferName: row.appliedOfferName,
+    appliedOfferType: row.appliedOfferType == null
+        ? null
+        : OfferType.fromWire(row.appliedOfferType!),
   );
 }

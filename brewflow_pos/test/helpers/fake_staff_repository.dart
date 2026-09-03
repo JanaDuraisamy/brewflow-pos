@@ -38,9 +38,13 @@ final class FakeStaffRepository implements StaffRepository {
   }
 
   @override
-  Future<List<UserProfile>> staffMembers() async => [
-    ...storedProfiles.where((p) => p.role == UserRole.staff),
-  ];
+  Future<List<UserProfile>> staffMembers({String? shopId}) async {
+    var staff = storedProfiles.where((p) => p.role == UserRole.staff);
+    if (shopId != null) {
+      staff = staff.where((p) => p.shopId == shopId);
+    }
+    return [...staff];
+  }
 
   @override
   Future<UserProfile> createStaffProfile({
@@ -50,7 +54,9 @@ final class FakeStaffRepository implements StaffRepository {
     String? displayName,
   }) async {
     if (storedProfiles.any(
-      (p) => p.email.toLowerCase() == identity.email.toLowerCase(),
+      (p) =>
+          p.email.toLowerCase() == identity.email.toLowerCase() &&
+          p.shopId == shopId,
     )) {
       throw const DuplicateStaffEmailFailure();
     }

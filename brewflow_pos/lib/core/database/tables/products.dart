@@ -101,6 +101,12 @@ class Products extends Table {
   /// offline.
   TextColumn get imagePath => text().nullable()();
 
+  /// Cloud object path (Supabase Storage) of the product image; NULL when the
+  /// image is only local or absent. Stored as a path/metadata reference so the
+  /// device never holds raw bytes in the database — other devices pull the
+  /// object from cloud storage and cache it locally under [Products.imagePath].
+  TextColumn get cloudImagePath => text().nullable()();
+
   /// Soft switch to hide a product from the POS without deleting it.
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 

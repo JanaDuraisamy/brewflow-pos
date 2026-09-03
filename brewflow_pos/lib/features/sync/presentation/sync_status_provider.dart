@@ -222,6 +222,9 @@ final class SyncStatusController extends Notifier<SyncStatusSnapshot> {
       await ref
           .read(syncEngineProvider)
           .runCycle(deviceId: deviceId, shopId: shopId);
+      // Pulled cloud_image_paths + queued uploads/deletes are drained here.
+      // Fire-and-forget so sync status is never gated on image I/O.
+      unawaited(drainProductImages(ref));
       invalidateDomainProviders(ref);
       _lastSyncAt = DateTime.now().toUtc();
       _lastError = null;

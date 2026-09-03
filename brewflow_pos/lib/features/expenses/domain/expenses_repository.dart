@@ -54,9 +54,10 @@ abstract interface class ExpensesRepository {
     DateTime? fromUtc,
     DateTime? toUtc,
     ExpenseStatusFilter status,
+    List<String>? shopIds,
   });
 
-  Future<Expense?> expenseById(String id);
+  Future<Expense?> expenseById(String id, {List<String>? shopIds});
 
   Future<Expense> createExpense({
     required String name,
@@ -95,5 +96,5 @@ abstract interface class ExpensesRepository {
   /// Total amount still owed by the shop: the sum of active NOT_PAID
   /// expenses in paise. Zero when everything is settled. Settlement history
   /// does not exist yet, so every NOT_PAID expense is payable in full.
-  Future<int> payablePaise();
+  Future<int> payablePaise({List<String>? shopIds});
 }

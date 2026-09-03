@@ -47,8 +47,29 @@ final class DriftExpensesRepository implements ExpensesRepository {
     DateTime? fromUtc,
     DateTime? toUtc,
     ExpenseStatusFilter status = ExpenseStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     try {
+      if (shopIds != null && shopIds.isNotEmpty) {
+        final allRows = <db.Expense>[];
+        for (final id in shopIds) {
+          final rows = await _expenses.query(
+            search: search ?? '',
+            category: category?.dbValue,
+            paymentMethod: paymentMethod?.dbValue,
+            fromUtc: fromUtc,
+            toUtc: toUtc,
+            active: switch (status) {
+              ExpenseStatusFilter.all => null,
+              ExpenseStatusFilter.active => true,
+              ExpenseStatusFilter.inactive => false,
+            },
+            shopId: id,
+          );
+          allRows.addAll(rows);
+        }
+        return allRows.map(_expenseFromRow).toList();
+      }
       final rows = await _expenses.query(
         search: search ?? '',
         category: category?.dbValue,
@@ -68,8 +89,15 @@ final class DriftExpensesRepository implements ExpensesRepository {
   }
 
   @override
-  Future<Expense?> expenseById(String id) async {
+  Future<Expense?> expenseById(String id, {List<String>? shopIds}) async {
     try {
+      if (shopIds != null && shopIds.isNotEmpty) {
+        for (final sid in shopIds) {
+          final row = await _expenses.byId(id, shopId: sid);
+          if (row != null) return _expenseFromRow(row);
+        }
+        return null;
+      }
       final row = await _expenses.byId(id);
       return row == null ? null : _expenseFromRow(row);
     } on Exception catch (error, stackTrace) {
@@ -282,8 +310,15 @@ final class DriftExpensesRepository implements ExpensesRepository {
   }
 
   @override
-  Future<int> payablePaise() async {
+  Future<int> payablePaise({List<String>? shopIds}) async {
     try {
+      if (shopIds != null && shopIds.isNotEmpty) {
+        int total = 0;
+        for (final id in shopIds) {
+          total += await _expenses.payablePaise(shopId: id);
+        }
+        return total;
+      }
       return await _expenses.payablePaise();
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load payable total', error, stackTrace);

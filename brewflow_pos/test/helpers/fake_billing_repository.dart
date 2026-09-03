@@ -98,6 +98,7 @@ final class FakeBillingRepository implements BillingRepository {
         stockQuantity: product.stockQuantity - line.quantity,
         updatedAt: now,
       );
+      final offerDiscount = line.appliedOffer?.discountPaise ?? 0;
       items.add(
         SaleItem(
           id: 'item-${items.length + 1}',
@@ -110,11 +111,22 @@ final class FakeBillingRepository implements BillingRepository {
           unitPricePaise: line.unitPricePaise,
           quantity: line.quantity,
           lineTotalPaise: lineTotal,
+          offerDiscountPaise: offerDiscount,
+          appliedOfferId: line.appliedOffer?.offerId,
+          appliedOfferName: line.appliedOffer?.offerName,
+          appliedOfferType: line.appliedOffer?.offerType,
         ),
       );
     }
 
-    final total = Money.sumPaise(items.map((i) => i.lineTotalPaise));
+    final subtotal = Money.sumPaise(items.map((i) => i.lineTotalPaise));
+    final totalOfferDiscount = items.fold(
+      0,
+      (sum, item) => sum + item.offerDiscountPaise,
+    );
+    final total = subtotal == null
+        ? null
+        : (subtotal - totalOfferDiscount).clamp(0, subtotal);
     if (total == null) {
       throw const UnexpectedBillingFailure(
         'Sale total exceeds the safe ceiling.',
@@ -123,8 +135,9 @@ final class FakeBillingRepository implements BillingRepository {
     final sale = Sale(
       id: 'sale-${storedSales.length + 1}',
       receiptNumber: 'BF-${receiptsIssued.toString().padLeft(6, '0')}',
-      subtotalPaise: total,
+      subtotalPaise: subtotal!,
       totalPaise: total,
+      offerDiscountPaise: totalOfferDiscount,
       paymentStatus: paymentStatus,
       paymentMethod: paymentStatus == PaymentStatus.notPaid
           ? null
@@ -146,6 +159,10 @@ final class FakeBillingRepository implements BillingRepository {
           unitPricePaise: item.unitPricePaise,
           quantity: item.quantity,
           lineTotalPaise: item.lineTotalPaise,
+          offerDiscountPaise: item.offerDiscountPaise,
+          appliedOfferId: item.appliedOfferId,
+          appliedOfferName: item.appliedOfferName,
+          appliedOfferType: item.appliedOfferType,
         ),
     ];
     storedSales.add(sale);

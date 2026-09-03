@@ -13,7 +13,9 @@ import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,8 +26,10 @@ import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
 
 void main() {
@@ -94,6 +98,8 @@ void main() {
           settingsRepositoryProvider.overrideWithValue(
             FakeSettingsRepository(),
           ),
+          offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ],
       );
       addTearDown(container.dispose);
@@ -370,6 +376,8 @@ void main() {
           settingsRepositoryProvider.overrideWithValue(
             FakeSettingsRepository(),
           ),
+          offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ],
       );
       addTearDown(container.dispose);
@@ -433,6 +441,8 @@ void main() {
           settingsRepositoryProvider.overrideWithValue(
             FakeSettingsRepository(),
           ),
+          offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ],
       );
       addTearDown(container.dispose);

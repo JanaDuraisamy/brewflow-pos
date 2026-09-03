@@ -21,6 +21,10 @@ abstract final class AppRoutes {
   /// Owner-only staff management (pushed page, not a shell branch).
   static const String staff = '/staff';
 
+  /// Owner-only storage monitoring + monthly cleanup (pushed page).
+  static const String storageCleanup = '/storage';
+  static const String storageCleanupReview = '/storage/review';
+
   // Application shell destinations
   static const String dashboard = '/dashboard';
   static const String inventory = '/inventory';

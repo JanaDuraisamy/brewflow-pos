@@ -133,6 +133,7 @@ final class Product {
     this.costPricePaise,
     required this.stockQuantity,
     this.imagePath,
+    this.cloudImagePath,
     this.stockUnit = StockUnit.count,
     this.lowStockMode = LowStockMode.useDefault,
     this.lowStockThreshold,
@@ -165,6 +166,11 @@ final class Product {
   /// Local path (relative to the app documents directory) of the product
   /// image; null when no image is set.
   final String? imagePath;
+
+  /// Cloud object path (Supabase Storage) of the product image; null when the
+  /// image is only local or absent. Other devices download from this path and
+  /// cache locally under [imagePath].
+  final String? cloudImagePath;
 
   /// Unit the stock is counted in.
   final StockUnit stockUnit;
@@ -207,6 +213,7 @@ final class Product {
     int? costPricePaise,
     int? stockQuantity,
     Object? imagePath = _unset,
+    Object? cloudImagePath = _unset,
     StockUnit? stockUnit,
     LowStockMode? lowStockMode,
     int? lowStockThreshold,
@@ -226,6 +233,9 @@ final class Product {
     imagePath: identical(imagePath, _unset)
         ? this.imagePath
         : imagePath as String?,
+    cloudImagePath: identical(cloudImagePath, _unset)
+        ? this.cloudImagePath
+        : cloudImagePath as String?,
     stockUnit: stockUnit ?? this.stockUnit,
     lowStockMode: lowStockMode ?? this.lowStockMode,
     lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,

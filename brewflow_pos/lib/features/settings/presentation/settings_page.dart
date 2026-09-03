@@ -463,6 +463,8 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
                       const SizedBox(height: AppSpacing.lg),
                       const _StaffAccessCard(),
                       const SizedBox(height: AppSpacing.lg),
+                      const _StorageAccessCard(),
+                      const SizedBox(height: AppSpacing.lg),
                       const _AboutCard(),
                       const SizedBox(height: AppSpacing.lg),
                     ],
@@ -661,6 +663,8 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
                     const _MobilePrinterSection(),
                     const SizedBox(height: AppSpacing.xl),
                     const _MobileStaffAccessCard(),
+                    const SizedBox(height: AppSpacing.xl),
+                    const _MobileStorageAccessCard(),
                     const SizedBox(height: AppSpacing.xl),
                     const _MobileAboutCard(),
                   ],
@@ -1153,6 +1157,59 @@ final class _StaffAccessCard extends ConsumerWidget {
           context.go(AppRoutes.staff);
         },
       ),
+    );
+  }
+}
+
+/// Owner-only entry into the Storage Monitoring + Monthly Cleanup screen. Like
+/// [/staff] it is keyed to the owner-only permission so hiding alone is never
+/// the guard — the route and the page enforce the same boundary.
+final class _StorageAccessCard extends ConsumerWidget {
+  const _StorageAccessCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canManage = ref.watch(canProvider(Permission.manageStaff));
+    if (!canManage) {
+      return const SizedBox.shrink();
+    }
+    return SectionCard(
+      title: 'Storage & Cleanup',
+      subtitle: 'Monitor cloud storage and reclaim orphaned images.',
+      child: _SettingRow(
+        icon: Icons.storage_outlined,
+        label: 'Cloud Storage',
+        value: 'Usage, orphan files and monthly cleanup',
+        onTap: () {
+          context.go(AppRoutes.storageCleanup);
+        },
+      ),
+    );
+  }
+}
+
+/// Phone-only owner entry into the storage cleanup screen.
+final class _MobileStorageAccessCard extends ConsumerWidget {
+  const _MobileStorageAccessCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canManage = ref.watch(canProvider(Permission.manageStaff));
+    if (!canManage) {
+      return const SizedBox.shrink();
+    }
+    return _MobileSection(
+      label: 'Storage & Cleanup',
+      children: [
+        _SettingRow(
+          icon: Icons.storage_outlined,
+          label: 'Cloud Storage',
+          value: 'Monitor and reclaim orphaned images',
+          onTap: () {
+            context.go(AppRoutes.storageCleanup);
+          },
+        ),
+      ],
     );
   }
 }

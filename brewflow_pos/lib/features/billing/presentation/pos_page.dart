@@ -439,7 +439,7 @@ final class _NarrowLayoutState extends State<_NarrowLayout> {
 
   @override
   Widget build(BuildContext context) {
-    final total = widget.cart.chargedTotalPaise;
+    final total = widget.cart.chargedTotalAfterOffersPaise;
     final phone = MediaQuery.sizeOf(context).width < AppBreakpoints.compact;
     return Column(
       children: [
@@ -1116,7 +1116,8 @@ final class _CartPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final subtotal = cart.subtotalPaise;
-    final total = cart.chargedTotalPaise;
+    final total = cart.chargedTotalAfterOffersPaise;
+    final offerDiscount = cart.totalOfferDiscountPaise;
     final hasMemberPrices =
         membershipEnabled &&
         cart.lines.any((line) => line.memberPricePaise != null);
@@ -1244,6 +1245,13 @@ final class _CartPanel extends StatelessWidget {
                             ? '—'
                             : Money.formatPaise(subtotal),
                       ),
+                      if (offerDiscount > 0) ...[
+                        const SizedBox(height: AppSpacing.xs),
+                        _SummaryRow(
+                          label: 'Offer Discount',
+                          amount: '-${Money.formatPaise(offerDiscount)}',
+                        ),
+                      ],
                       const SizedBox(height: AppSpacing.xs),
                       _SummaryRow(
                         label: 'Total',

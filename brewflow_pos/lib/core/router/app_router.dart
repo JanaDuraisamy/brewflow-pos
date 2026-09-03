@@ -36,6 +36,9 @@ import 'package:brewflow_pos/features/purchases/presentation/suppliers_page.dart
 import 'package:brewflow_pos/features/offers/presentation/offers_page.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_page.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_page.dart';
+import 'package:brewflow_pos/features/storage_cleanup/domain/storage_cleanup_models.dart';
+import 'package:brewflow_pos/features/storage_cleanup/presentation/owner_storage_usage_page.dart';
+import 'package:brewflow_pos/features/storage_cleanup/presentation/storage_cleanup_review_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -88,6 +91,20 @@ GoRouter buildAppRouter({
         path: AppRoutes.staff,
         name: 'staff',
         builder: (context, state) => const StaffPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.storageCleanup,
+        name: 'storage_cleanup',
+        builder: (context, state) => const OwnerStorageUsagePage(),
+      ),
+      GoRoute(
+        path: AppRoutes.storageCleanupReview,
+        name: 'storage_cleanup_review',
+        builder: (context, state) => StorageCleanupReviewPage(
+          report: state.extra is StorageUsageReport
+              ? state.extra! as StorageUsageReport
+              : null,
+        ),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
@@ -356,8 +373,12 @@ FutureOr<String?> _authorizationRedirect(
       return null;
     }
     // /staff lives outside the shell branch list but is still a guarded,
-    // owner-only destination.
-    if (!AppRoutes.isProtected(location) && location != AppRoutes.staff) {
+    // owner-only destination. /storage is the same kind: a pushed, owner-only
+    // screen (storage monitoring + monthly cleanup).
+    final isStorage = location.startsWith(AppRoutes.storageCleanup);
+    if (!AppRoutes.isProtected(location) &&
+        location != AppRoutes.staff &&
+        !isStorage) {
       return AppRoutes.dashboard;
     }
     final container = ProviderScope.containerOf(context, listen: false);
@@ -375,6 +396,12 @@ FutureOr<String?> _authorizationRedirect(
       return null;
     }
     final profile = profileAsync.value!;
+    // Storage monitoring/cleanup is strictly owner-only: staff are always
+    // denied regardless of any permission, since the operation requires an
+    // OWNER at the server boundary too.
+    if (location.startsWith(AppRoutes.storageCleanup) && !profile.isOwner) {
+      return AppRoutes.noAccess;
+    }
     final authorization = RoleBasedAuthorization(
       role: profile.role,
       grantedPermissions: profile.permissions,
@@ -411,5 +438,8 @@ Permission? _requiredPermissionFor(String location) {
   if (location == AppRoutes.offers) return Permission.offers;
   if (location == AppRoutes.settings) return Permission.settings;
   if (location == AppRoutes.staff) return Permission.manageStaff;
+  if (location.startsWith(AppRoutes.storageCleanup)) {
+    return Permission.manageStaff;
+  }
   return null;
 }

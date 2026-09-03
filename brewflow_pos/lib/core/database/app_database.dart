@@ -28,6 +28,9 @@ import 'tables/sync_state.dart';
 import 'tables/staff_permissions.dart';
 import 'tables/stock_movements.dart';
 import 'tables/suppliers.dart';
+import 'tables/product_image_sync.dart';
+import 'tables/storage_cleanup_notification.dart';
+import 'tables/storage_cleanup_state.dart';
 import 'tables/users.dart';
 
 part 'app_database.g.dart';
@@ -75,6 +78,9 @@ part 'app_database.g.dart';
     PurchaseItems,
     PurchaseSequences,
     Offers,
+    ProductImageSync,
+    StorageCleanupNotification,
+    StorageCleanupState,
   ],
 )
 class AppDatabase extends _$AppDatabase {

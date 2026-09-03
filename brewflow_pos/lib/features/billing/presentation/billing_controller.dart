@@ -12,9 +12,12 @@ import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
+import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
+import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -129,6 +132,18 @@ final posCustomersProvider =
       PosCustomersController.new,
     );
 
+/// Active offers for the current business (scoped by shopId).
+final posOffersProvider = FutureProvider<List<Offer>>((ref) async {
+  final repo = ref.watch(offersRepositoryProvider);
+  final businessSwitcher = ref.watch(businessSwitcherProvider.notifier);
+  final business = ref.watch(businessSwitcherProvider);
+  if (business == BusinessContext.all) {
+    return repo.allOffers();
+  }
+  final shopId = await businessSwitcher.shopIdFor(business);
+  return repo.offersForShop(shopId);
+});
+
 final class PosCustomersController extends AsyncNotifier<List<Customer>> {
   static const String tag = 'Billing';
 
@@ -193,12 +208,85 @@ final class CartController extends Notifier<Cart> {
     final existing = state.lineFor(line.keyId);
     if (existing == null) {
       state = state.withAdded(line);
+      _recalculateOffers();
       return;
     }
     if (existing.quantity >= existing.maxQuantity) {
       throw InsufficientStockFailure(line.productName);
     }
     state = state.withLineQuantity(line.keyId, existing.quantity + 1);
+    _recalculateOffers();
+  }
+
+  /// Recalculates applicable offers for all cart lines.
+  void _recalculateOffers() {
+    final offersAsync = ref.read(posOffersProvider);
+    offersAsync.whenData((offers) {
+      final activeOffers = offers.where((o) => o.isCurrentlyActive).toList();
+      if (activeOffers.isEmpty) {
+        // Clear all offers
+        final updatedLines = state.lines.map((l) => l.clearOffer()).toList();
+        state = Cart.fromLines(
+          updatedLines,
+          selectedCustomerId: state.selectedCustomerId,
+          memberPricing: state.memberPricing,
+        );
+        return;
+      }
+
+      final updatedLines = <CartLine>[];
+      // Combo offers span multiple lines, so they are evaluated once for
+      // the whole cart, then merged per line with the line-level offers.
+      final contexts = <CartLineContext>[];
+      for (final line in state.lines) {
+        contexts.add(
+          CartLineContext(
+            productId: line.productId,
+            variantId: line.variantId,
+            quantity: line.quantity,
+            unitPricePaise: line.unitPricePaise,
+            memberPricePaise: line.memberPricePaise,
+            memberPricing: state.memberPricing,
+          ),
+        );
+      }
+      final comboOffers = activeOffers
+          .where((o) => o.type == OfferType.combo)
+          .toList();
+      final lineOffers = activeOffers
+          .where((o) => o.type != OfferType.combo)
+          .toList();
+      final comboByLine = calculateComboLineOffers(
+        lines: contexts,
+        comboOffers: comboOffers,
+      );
+      for (var i = 0; i < state.lines.length; i++) {
+        final line = state.lines[i];
+        final calculations = calculateLineOffers(
+          line: contexts[i],
+          activeOffers: lineOffers,
+        );
+        calculations.addAll(comboByLine[i] ?? const []);
+        final best = selectBestOffer(calculations);
+        if (best != null) {
+          final appliedOffer = AppliedOffer(
+            offerId: best.offerId,
+            offerName: best.offerName,
+            offerType: best.offerType,
+            discountPaise: best.discountPaise,
+            appliedQuantity: best.appliedQuantity,
+          );
+          updatedLines.add(line.copyWith(appliedOffer: appliedOffer));
+        } else {
+          updatedLines.add(line.clearOffer());
+        }
+      }
+      state = Cart.fromLines(
+        updatedLines,
+        selectedCustomerId: state.selectedCustomerId,
+        memberPricing: state.memberPricing,
+      );
+    });
   }
 
   /// Adds one more unit of an existing line (by its stock-entity key);
@@ -212,6 +300,7 @@ final class CartController extends Notifier<Cart> {
       throw InsufficientStockFailure(line.productName);
     }
     state = state.withLineQuantity(keyId, line.quantity + 1);
+    _recalculateOffers();
   }
 
   /// Removes one unit; the line disappears when it would drop to zero.
@@ -220,9 +309,11 @@ final class CartController extends Notifier<Cart> {
     if (line == null) return;
     if (line.quantity == 1) {
       state = state.without(keyId);
+      _recalculateOffers();
       return;
     }
     state = state.withLineQuantity(keyId, line.quantity - 1);
+    _recalculateOffers();
   }
 
   /// Sets an exact quantity, within [1, stock cap]. Throws
@@ -238,13 +329,20 @@ final class CartController extends Notifier<Cart> {
       throw InsufficientStockFailure(line.productName);
     }
     state = state.withLineQuantity(keyId, quantity);
+    _recalculateOffers();
   }
 
   /// Removes a line by its stock-entity key; a no-op when not in the cart.
-  void remove(String keyId) => state = state.without(keyId);
+  void remove(String keyId) {
+    state = state.without(keyId);
+    _recalculateOffers();
+  }
 
   /// Restores a previously removed line (undo).
-  void restoreLine(CartLine line) => state = state.withAdded(line);
+  void restoreLine(CartLine line) {
+    state = state.withAdded(line);
+    _recalculateOffers();
+  }
 
   /// Empties the cart (and with it any selected customer).
   void clear() => state = Cart.empty;
@@ -252,7 +350,10 @@ final class CartController extends Notifier<Cart> {
   /// Replaces the entire cart with [bill]'s snapshot (a resumed held bill),
   /// including its selected customer and member-pricing switch. The UI
   /// confirms before calling when the current cart is not empty.
-  void restore(HeldBill bill) => state = bill.toCart();
+  void restore(HeldBill bill) {
+    state = bill.toCart();
+    _recalculateOffers();
+  }
 
   /// Links the current sale to [customerId] (null returns it to a walk-in)
   /// and recalculates member pricing: an active member customer pays member
@@ -265,6 +366,7 @@ final class CartController extends Notifier<Cart> {
   Future<void> selectCustomer(String? customerId) async {
     if (!_membershipEnabled()) {
       state = state.withCustomer(customerId).withMemberPricing(false);
+      _recalculateOffers();
       return;
     }
     var memberPricing = state.memberPricing;
@@ -282,6 +384,7 @@ final class CartController extends Notifier<Cart> {
       }
     }
     state = state.withCustomer(customerId).withMemberPricing(memberPricing);
+    _recalculateOffers();
   }
 
   /// Toggles member pricing for this cart. Membership pricing is a global
@@ -290,6 +393,7 @@ final class CartController extends Notifier<Cart> {
   void toggleMemberPricing() {
     if (!_membershipEnabled()) return;
     state = state.withMemberPricing(!state.memberPricing);
+    _recalculateOffers();
   }
 
   /// Completes the sale with [paymentStatus] and, for PAID sales,

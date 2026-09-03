@@ -50,3 +50,6 @@ app.*.map.json
 .env
 .env.*
 !.env.example
+
+# Generated test output
+test_output.json

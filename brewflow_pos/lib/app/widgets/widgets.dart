@@ -11,6 +11,7 @@ export 'app_buttons.dart';
 export 'app_card.dart';
 export 'app_navigation.dart';
 export 'brand_mark.dart';
+export 'connectivity_banner.dart';
 export 'context_actions.dart';
 export 'filter_chip.dart';
 export 'filter_sheet.dart';

@@ -46,7 +46,7 @@ void main() {
       settingsRepositoryProvider.overrideWithValue(
         settings ?? FakeSettingsRepository(),
       ),
-      if (staff != null) staffRepositoryProvider.overrideWithValue(staff),
+      staffRepositoryProvider.overrideWithValue(staff ?? FakeStaffRepository()),
       connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
     ],
     child: const MaterialApp(home: Scaffold(body: DashboardPage())),
@@ -96,7 +96,7 @@ void main() {
       find.text('No dues right now — everyone is settled'),
       findsOneWidget,
     );
-    expect(find.text('Not signed in'), findsOneWidget);
+    expect(find.text('Connecting…'), findsOneWidget);
 
     final amounts = RegExp(r'\d[\d,]*\.\d{2}');
     final currencies = RegExp(r'[₹$€£]');

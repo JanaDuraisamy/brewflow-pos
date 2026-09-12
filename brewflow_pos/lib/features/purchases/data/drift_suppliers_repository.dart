@@ -1,12 +1,15 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/suppliers_dao.dart';
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
 import 'package:brewflow_pos/features/purchases/domain/suppliers_repository.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Drift Suppliers Repository
@@ -35,9 +38,13 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   DriftSuppliersRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
+    ConnectivityService? connectivityService,
+    SupabaseClient? supabaseClient,
   }) : _database = database,
        _suppliers = SuppliersDao(database),
-       _outbox = outboxCoordinator;
+       _outbox = outboxCoordinator,
+       _connectivity = connectivityService,
+       _supabase = supabaseClient;
 
   static const String tag = 'Suppliers';
 
@@ -46,6 +53,29 @@ final class DriftSuppliersRepository implements SuppliersRepository {
 
   /// Null when sync is not wired (tests / signed-out legacy flows).
   final SyncOutboxCoordinator? _outbox;
+  final ConnectivityService? _connectivity;
+  final SupabaseClient? _supabase;
+
+  Future<void> _requireOnline() async {
+    if (_connectivity != null)
+      await OnlineGuard(_connectivity!).requireOnline();
+  }
+
+  Future<void> _pushSupplierToCloud(db.Supplier row) async {
+    final c = _supabase;
+    if (c == null) return;
+    await c.from('suppliers').upsert({
+      'id': row.id,
+      'shop_id': row.shopId,
+      'name': row.name,
+      'phone': row.phone,
+      'email': row.email,
+      'address': row.address,
+      'notes': row.notes,
+      'is_active': row.isActive,
+      'client_created_at': row.createdAt.toIso8601String(),
+    }, onConflict: 'id');
+  }
 
   @override
   Future<List<Supplier>> suppliers({
@@ -106,6 +136,7 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       throw const DuplicateSupplierPhoneFailure();
     }
     try {
+      if (_connectivity != null) await _requireOnline();
       final resolvedShopId = await resolveWritableShopId(_database, shopId);
       Future<Supplier> doCreate() async {
         final row = await _suppliers.insert(
@@ -122,6 +153,21 @@ final class DriftSuppliersRepository implements SuppliersRepository {
         return _supplierFromRow(row);
       }
 
+      if (_supabase != null) {
+        final supplier = await doCreate();
+        final row = await _suppliers.byId(supplier.id);
+        if (row != null) {
+          try {
+            await _pushSupplierToCloud(row);
+          } catch (e) {
+            if (e.toString().contains('SocketException'))
+              throw const OfflineException();
+            rethrow;
+          }
+        }
+        return supplier;
+      }
+
       final coordinator = _outbox;
       return coordinator == null
           ? doCreate()
@@ -131,6 +177,8 @@ final class DriftSuppliersRepository implements SuppliersRepository {
                 _supplierAppend(supplier, context),
               ],
             );
+    } on OfflineException catch (e) {
+      throw UnexpectedSuppliersFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to create supplier', error, stackTrace);
     }
@@ -156,6 +204,40 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       throw const DuplicateSupplierPhoneFailure();
     }
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('suppliers')
+              .update({
+                'name': normalizedName,
+                'phone': normalizedPhone,
+                'email': normalizedEmail,
+                'address': normalizedAddress,
+                'notes': normalizedNotes,
+                'is_active': isActive,
+              })
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _suppliers.update(
+          id,
+          db.SuppliersCompanion(
+            name: Value(normalizedName),
+            phone: Value(normalizedPhone),
+            email: Value(normalizedEmail),
+            address: Value(normalizedAddress),
+            notes: Value(normalizedNotes),
+            isActive: Value(isActive),
+          ),
+        );
+        final row = await _suppliers.byId(id);
+        if (row != null) await _pushSupplierToCloud(row);
+        return;
+      }
       await _upsertWithSnapshot(
         id: id,
         write: () => _suppliers.update(
@@ -170,6 +252,8 @@ final class DriftSuppliersRepository implements SuppliersRepository {
           ),
         ),
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedSuppliersFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update supplier', error, stackTrace);
     }
@@ -178,10 +262,29 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   @override
   Future<void> setSupplierActive(String id, bool isActive) async {
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('suppliers')
+              .update({'is_active': isActive})
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _suppliers.updateActive(id, isActive);
+        final row = await _suppliers.byId(id);
+        if (row != null) await _pushSupplierToCloud(row);
+        return;
+      }
       await _upsertWithSnapshot(
         id: id,
         write: () => _suppliers.updateActive(id, isActive),
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedSuppliersFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update supplier', error, stackTrace);
     }
@@ -190,12 +293,29 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   @override
   Future<SupplierDeleteResult> deleteSupplier(String id) async {
     try {
+      if (_connectivity != null) await _requireOnline();
       final existing = await _suppliers.byId(id);
       if (existing == null) {
         throw UnexpectedSuppliersFailure('Supplier not found.');
       }
       final hasPurchases = await _suppliers.countPurchases(id) > 0;
       if (hasPurchases) {
+        if (_supabase != null) {
+          try {
+            await _supabase!
+                .from('suppliers')
+                .update({'is_active': false})
+                .eq('id', id);
+          } catch (e) {
+            if (e.toString().contains('SocketException'))
+              throw const OfflineException();
+            rethrow;
+          }
+          await _suppliers.updateActive(id, false);
+          final row = await _suppliers.byId(id);
+          if (row != null) await _pushSupplierToCloud(row);
+          return SupplierDeleteResult.deactivated;
+        }
         // Purchase history must stay readable — degrade to a safe soft
         // deactivation rather than a hard delete that FK-restrict rejects.
         await _upsertWithSnapshot(
@@ -203,6 +323,22 @@ final class DriftSuppliersRepository implements SuppliersRepository {
           write: () => _suppliers.updateActive(id, false),
         );
         return SupplierDeleteResult.deactivated;
+      }
+      if (_supabase != null) {
+        try {
+          await _supabase!.from('suppliers').delete().eq('id', id);
+          await _supabase!.from('master_deletions').upsert({
+            'entity': 'SUPPLIER',
+            'id': id,
+            'shop_id': existing.shopId,
+          }, onConflict: 'entity,id');
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _suppliers.deleteById(id);
+        return SupplierDeleteResult.deleted;
       }
       final coordinator = _outbox;
       Future<void> deleteNow() => _suppliers.deleteById(id);
@@ -222,6 +358,8 @@ final class DriftSuppliersRepository implements SuppliersRepository {
         );
       }
       return SupplierDeleteResult.deleted;
+    } on OfflineException catch (e) {
+      throw UnexpectedSuppliersFailure(e.message);
     } on SuppliersFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {

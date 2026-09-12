@@ -334,28 +334,105 @@ final class AppMigrations {
           'DROP TABLE purchase_sequences_backup',
         );
 
-        // Migrate the 10 tables that had shopId with default '000...' to nullable
-        // and backfill the default to Cafe. This fixes FK failures for legacy
-        // inserts without shopId (now nullable) and ensures existing business
-        // data is correctly scoped to Cafe.
+        // Scope the 9 legacy business tables to a shop. These tables never had
+        // shop_id before v17 (frozen v16 snapshot has no such column), so each
+        // must be recreated with shop_id as a genuinely NEW column: newColumns
+        // tells the migrator not to copy it from the old table (which would
+        // crash with "no such column"), and columnTransformer assigns every
+        // existing row to the Cafe shop. The unique name/sku constraints also
+        // change to (shop_id, name)/(shop_id, sku) here, which TableMigration
+        // re-applies while preserving all existing data.
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.categories));
+        await m.alterTable(
+          TableMigration(
+            schema.categories,
+            newColumns: [schema.categories.shopId],
+            columnTransformer: {
+              schema.categories.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.customers));
+        await m.alterTable(
+          TableMigration(
+            schema.customers,
+            newColumns: [schema.customers.shopId],
+            columnTransformer: {
+              schema.customers.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.customerPayments));
+        await m.alterTable(
+          TableMigration(
+            schema.customerPayments,
+            newColumns: [schema.customerPayments.shopId],
+            columnTransformer: {
+              schema.customerPayments.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.expenses));
+        await m.alterTable(
+          TableMigration(
+            schema.expenses,
+            newColumns: [schema.expenses.shopId],
+            columnTransformer: {
+              schema.expenses.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.products));
+        await m.alterTable(
+          TableMigration(
+            schema.products,
+            newColumns: [schema.products.shopId],
+            columnTransformer: {
+              schema.products.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.productVariants));
+        await m.alterTable(
+          TableMigration(
+            schema.productVariants,
+            newColumns: [schema.productVariants.shopId],
+            columnTransformer: {
+              schema.productVariants.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.sales));
+        await m.alterTable(
+          TableMigration(
+            schema.sales,
+            newColumns: [schema.sales.shopId],
+            columnTransformer: {schema.sales.shopId: Constant<String>(cafeId)},
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.saleItems));
+        await m.alterTable(
+          TableMigration(
+            schema.saleItems,
+            newColumns: [schema.saleItems.shopId],
+            columnTransformer: {
+              schema.saleItems.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
         // ignore: experimental_member_use
-        await m.alterTable(TableMigration(schema.suppliers));
+        await m.alterTable(
+          TableMigration(
+            schema.suppliers,
+            newColumns: [schema.suppliers.shopId],
+            columnTransformer: {
+              schema.suppliers.shopId: Constant<String>(cafeId),
+            },
+          ),
+        );
+        // offers already carried shop_id since v16 (created with the legacy
+        // '000...' default), so its TableMigration copies the existing column;
+        // no newColumns/transformer needed here.
         // ignore: experimental_member_use
         await m.alterTable(TableMigration(schema.offers));
         await m.database.customStatement(
@@ -404,6 +481,20 @@ final class AppMigrations {
           'CREATE INDEX IF NOT EXISTS idx_product_image_sync_status'
           ' ON product_image_sync (status, created_at)',
         );
+        // Offer bookkeeping on receipts — the sale-level and line-level
+        // discount columns shipped with the same schema bump but were never
+        // added here, so a v17 -> v18 upgrade left every sale read crashing on
+        // the missing NOT NULL offer_discount_paise. offer_discount_paise has a
+        // DEFAULT 0 so pre-existing rows keep their exact totals; the applied
+        // offer fields are nullable (no offer was applied before this schema).
+        await m.addColumn(schema.sales, schema.sales.offerDiscountPaise);
+        await m.addColumn(
+          schema.saleItems,
+          schema.saleItems.offerDiscountPaise,
+        );
+        await m.addColumn(schema.saleItems, schema.saleItems.appliedOfferId);
+        await m.addColumn(schema.saleItems, schema.saleItems.appliedOfferName);
+        await m.addColumn(schema.saleItems, schema.saleItems.appliedOfferType);
       },
       from18To19: (m, schema) async {
         // Storage monitoring + monthly cleanup — purely additive. Two new local

@@ -32,6 +32,9 @@ final class FakeAuthRepository implements AuthRepository {
   /// Number of times the state stream was listened to.
   int listenCount = 0;
 
+  /// Number of [recoverSession] calls.
+  int recoverSessionCalls = 0;
+
   late final StreamController<AuthUser?> _controller;
 
   @override
@@ -73,5 +76,10 @@ final class FakeAuthRepository implements AuthRepository {
     signOutCalls += 1;
     user = null;
     _controller.add(null);
+  }
+
+  @override
+  Future<void> recoverSession() async {
+    recoverSessionCalls += 1;
   }
 }

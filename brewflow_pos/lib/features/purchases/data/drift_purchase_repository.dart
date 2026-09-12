@@ -3,9 +3,12 @@ import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/purchase_items_dao.dart';
 import 'package:brewflow_pos/core/database/daos/purchases_dao.dart';
 import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
+import 'package:brewflow_pos/features/purchases/data/purchases_cloud_gateway.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_repository.dart';
 import 'package:drift/drift.dart';
@@ -35,11 +38,16 @@ import 'package:brewflow_pos/core/database/shop_resolver.dart';
 /// ---------------------------------------------------------------------------
 
 final class DriftPurchaseRepository implements PurchaseRepository {
-  DriftPurchaseRepository(db.AppDatabase database)
-    : _database = database,
-      _purchases = PurchasesDao(database),
-      _items = PurchaseItemsDao(database),
-      _movements = StockMovementsDao(database);
+  DriftPurchaseRepository(
+    db.AppDatabase database, {
+    ConnectivityService? connectivityService,
+    PurchasesCloudGateway? cloudGateway,
+  }) : _database = database,
+       _purchases = PurchasesDao(database),
+       _items = PurchaseItemsDao(database),
+       _movements = StockMovementsDao(database),
+       _connectivity = connectivityService,
+       _cloud = cloudGateway;
 
   static const String tag = 'Purchases';
 
@@ -50,6 +58,8 @@ final class DriftPurchaseRepository implements PurchaseRepository {
   final PurchasesDao _purchases;
   final PurchaseItemsDao _items;
   final StockMovementsDao _movements;
+  final ConnectivityService? _connectivity;
+  final PurchasesCloudGateway? _cloud;
 
   @override
   Future<Purchase> receivePurchase({
@@ -60,6 +70,171 @@ final class DriftPurchaseRepository implements PurchaseRepository {
   }) async {
     if (lines.isEmpty) {
       throw const EmptyPurchaseFailure();
+    }
+    if (_connectivity != null) {
+      try {
+        await OnlineGuard(_connectivity!).requireOnline();
+      } on OfflineException catch (e) {
+        throw UnexpectedPurchasesFailure(e.message);
+      }
+    }
+    // Cloud-authoritative path when gateway wired
+    if (_cloud != null) {
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
+      final rpcLines = [
+        for (final line in lines)
+          {
+            'product_id': line.productId,
+            'variant_id': line.variantId,
+            'quantity': line.quantity,
+            'unit_cost_paise': line.unitCostPaise,
+          },
+      ];
+      Map<String, dynamic> res;
+      try {
+        res = await _cloud!.receivePurchaseAtomic(
+          shopId: resolvedShopId,
+          supplierId: supplierId,
+          notes: notes,
+          lines: rpcLines,
+        );
+      } catch (e) {
+        final msg = e.toString();
+        if (msg.contains('EMPTY_PURCHASE')) throw const EmptyPurchaseFailure();
+        if (msg.contains('INVALID_QUANTITY'))
+          throw const InvalidPurchaseQuantityFailure();
+        if (msg.contains('INVALID_COST'))
+          throw const InvalidPurchaseCostFailure();
+        if (msg.contains('UNKNOWN_PRODUCT'))
+          throw UnknownProductFailure(lines.first.productId);
+        if (msg.contains('INACTIVE_PRODUCT'))
+          throw InactiveProductFailure('Product is deactivated');
+        if (msg.contains('UNKNOWN_SUPPLIER'))
+          throw const UnknownSupplierFailure();
+        if (msg.contains('INACTIVE_SUPPLIER'))
+          throw const InactiveSupplierFailure();
+        if (msg.contains('FORBIDDEN'))
+          throw const UnexpectedPurchasesFailure(
+            'Access denied for this shop.',
+          );
+        if (msg.contains('SocketException') ||
+            msg.contains('Failed host lookup')) {
+          throw const UnexpectedPurchasesFailure(
+            'Internet connection required. Please check your connection and try again.',
+          );
+        }
+        rethrow;
+      }
+      final purchaseId = res['id'] as String;
+      final purchaseNumber = res['purchase_number'] as String;
+      final createdAt = res['created_at'] != null
+          ? DateTime.parse(res['created_at'] as String).toUtc()
+          : DateTime.now().toUtc();
+      final subtotal = res['subtotal'] as int? ?? 0;
+
+      // Mirror locally for cache
+      final purchase = Purchase(
+        id: purchaseId,
+        supplierId: supplierId,
+        purchaseNumber: purchaseNumber,
+        subtotalPaise: subtotal,
+        totalPaise: subtotal,
+        notes: notes,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+
+      await _database.transaction(() async {
+        // Increase stock locally to match server
+        for (final line in lines) {
+          if (line.variantId != null) {
+            await _database.customStatement(
+              'UPDATE product_variants SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
+              [line.quantity, createdAt.toIso8601String(), line.variantId],
+            );
+          } else {
+            await _database.customStatement(
+              'UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
+              [line.quantity, createdAt.toIso8601String(), line.productId],
+            );
+          }
+        }
+
+        await _database
+            .into(_database.purchases)
+            .insert(
+              db.PurchasesCompanion.insert(
+                id: Value(purchaseId),
+                shopId: Value(resolvedShopId),
+                supplierId: Value(supplierId),
+                purchaseNumber: purchaseNumber,
+                subtotalPaise: subtotal,
+                totalPaise: subtotal,
+                notes: Value(notes),
+                createdAt: Value(createdAt),
+                updatedAt: Value(createdAt),
+              ),
+            );
+
+        for (final line in lines) {
+          final row = await (_database.select(
+            _database.products,
+          )..where((t) => t.id.equals(line.productId))).getSingleOrNull();
+          final variantRow = line.variantId != null
+              ? await (_database.select(
+                  _database.productVariants,
+                )..where((t) => t.id.equals(line.variantId!))).getSingleOrNull()
+              : null;
+          final pName = row?.name ?? 'Product';
+          final pSku = variantRow?.sku ?? row?.sku;
+          final vName = variantRow?.name;
+          final itemId = const Uuid().v4();
+          final lineTotal = line.unitCostPaise * line.quantity;
+          await _database
+              .into(_database.purchaseItems)
+              .insert(
+                db.PurchaseItemsCompanion.insert(
+                  id: Value(itemId),
+                  shopId: Value(resolvedShopId),
+                  purchaseId: purchaseId,
+                  productId: line.productId,
+                  variantId: Value(line.variantId),
+                  productName: pName,
+                  variantName: Value(vName),
+                  sku: Value(pSku),
+                  unitCostPaise: line.unitCostPaise,
+                  quantity: line.quantity,
+                  lineTotalPaise: lineTotal,
+                ),
+              );
+          // Stock movement already inserted server-side; mirror locally
+          final before = variantRow != null
+              ? (variantRow.stockQuantity - line.quantity)
+              : ((row?.stockQuantity ?? 0) - line.quantity);
+          final after = variantRow != null
+              ? variantRow.stockQuantity
+              : (row?.stockQuantity ?? 0);
+          await _database
+              .into(_database.stockMovements)
+              .insert(
+                db.StockMovementsCompanion.insert(
+                  shopId: Value(resolvedShopId),
+                  productId: line.productId,
+                  variantId: Value(line.variantId),
+                  movementType: StockMovementType.purchase.dbValue,
+                  quantity: line.quantity,
+                  stockBefore: before < 0 ? 0 : before,
+                  stockAfter: after,
+                  referenceType: Value(StockMovementType.purchase.dbValue),
+                  referenceId: Value(purchaseId),
+                  createdAt: Value(createdAt),
+                  updatedAt: Value(createdAt),
+                ),
+              );
+        }
+      });
+
+      return purchase;
     }
     try {
       return await _database.transaction(() async {

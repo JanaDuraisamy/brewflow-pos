@@ -3,11 +3,13 @@ import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_stock_movement_repository.dart';
+import 'package:brewflow_pos/features/inventory/data/stock_adjustment_cloud_gateway.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_repository.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
 import '../../staff/presentation/staff_controller.dart';
@@ -37,11 +39,27 @@ import '../../staff/presentation/staff_controller.dart';
 /// invalidates these providers so history refreshes after a sale.
 /// ---------------------------------------------------------------------------
 
+/// Cloud-authoritative stock adjustment gateway; null when signed out or no
+/// Supabase client is available (falls back to the local-only path).
+final stockAdjustmentCloudGatewayProvider =
+    Provider<StockAdjustmentCloudGateway?>((ref) {
+      try {
+        final client = Supabase.instance.client;
+        return SupabaseStockAdjustmentGateway(client);
+      } catch (_) {
+        return null;
+      }
+    });
+
 /// Owns the single stock-movement repository for the application scope.
 final stockMovementRepositoryProvider = Provider<StockMovementRepository>((
   ref,
 ) {
-  return DriftStockMovementRepository(ref.watch(appDatabaseProvider));
+  return DriftStockMovementRepository(
+    ref.watch(appDatabaseProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    cloudGateway: ref.watch(stockAdjustmentCloudGatewayProvider),
+  );
 });
 
 /// Movement history for one product, newest first; product-level movements

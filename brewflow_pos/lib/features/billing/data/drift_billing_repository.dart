@@ -3,8 +3,11 @@ import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/sale_items_dao.dart';
 import 'package:brewflow_pos/core/database/daos/sales_dao.dart';
 import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
+import 'package:brewflow_pos/features/billing/data/billing_cloud_gateway.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
@@ -45,11 +48,15 @@ final class DriftBillingRepository implements BillingRepository {
   DriftBillingRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
+    ConnectivityService? connectivityService,
+    BillingCloudGateway? cloudGateway,
   }) : _database = database,
        _sales = SalesDao(database),
        _saleItems = SaleItemsDao(database),
        _movements = StockMovementsDao(database),
-       _outbox = outboxCoordinator;
+       _outbox = outboxCoordinator,
+       _connectivity = connectivityService,
+       _cloud = cloudGateway;
 
   static const String tag = 'Billing';
 
@@ -61,6 +68,8 @@ final class DriftBillingRepository implements BillingRepository {
   final SaleItemsDao _saleItems;
   final StockMovementsDao _movements;
   final SyncOutboxCoordinator? _outbox;
+  final ConnectivityService? _connectivity;
+  final BillingCloudGateway? _cloud;
 
   @override
   Future<CompletedSale> completeSale({
@@ -79,8 +88,28 @@ final class DriftBillingRepository implements BillingRepository {
     if (paymentStatus == PaymentStatus.paid && paymentMethod == null) {
       throw const InvalidPaymentFailure();
     }
+    // Online-only guard: reject when internet is unavailable before any mutation.
+    if (_connectivity != null) {
+      try {
+        await OnlineGuard(_connectivity!).requireOnline();
+      } on OfflineException catch (e) {
+        throw UnexpectedBillingFailure(e.message);
+      }
+    }
     try {
       final resolvedShopId = await resolveWritableShopId(_database, shopId);
+
+      // Cloud-authoritative path when gateway is wired.
+      if (_cloud != null) {
+        return await _completeSaleViaCloud(
+          lines: lines,
+          paymentStatus: paymentStatus,
+          paymentMethod: paymentMethod,
+          customerId: customerId,
+          shopId: resolvedShopId,
+        );
+      }
+
       if (_outbox == null) {
         return await _database.transaction(
           () => _checkoutCore(
@@ -192,6 +221,8 @@ final class DriftBillingRepository implements BillingRepository {
       );
     } on BillingFailure {
       rethrow;
+    } on OfflineException catch (e) {
+      throw UnexpectedBillingFailure(e.message);
     } on Exception catch (error, stackTrace) {
       AppLog.error(
         'Failed to complete sale',
@@ -200,6 +231,310 @@ final class DriftBillingRepository implements BillingRepository {
         stackTrace: stackTrace,
       );
       throw const UnexpectedBillingFailure();
+    }
+  }
+
+  Future<CompletedSale> _completeSaleViaCloud({
+    required List<CartLine> lines,
+    required PaymentStatus paymentStatus,
+    PaymentMethod? paymentMethod,
+    String? customerId,
+    required String shopId,
+  }) async {
+    final cloud = _cloud!;
+    // BFDIAG (temporary): the exact shop_id this sale is sent under — the
+    // value is_shop_member() must accept for the sale to commit.
+    AppLog.info('BFDIAG saleShop=$shopId', tag: tag);
+    // Compute money totals as in _checkoutCore to send to RPC
+    final subtotal = Money.sumPaise(
+      lines.map((l) => Money.multiplyPaise(l.unitPricePaise, l.quantity)!),
+    );
+    if (subtotal == null) {
+      throw const UnexpectedBillingFailure(
+        'Sale total exceeds the safe ceiling.',
+      );
+    }
+    final totalOfferDiscount = lines.fold(
+      0,
+      (sum, line) => sum + (line.appliedOffer?.discountPaise ?? 0),
+    );
+    final totalPaise = (subtotal - totalOfferDiscount).clamp(0, subtotal);
+
+    final rpcLines = [
+      for (final line in lines)
+        {
+          'product_id': line.productId,
+          'variant_id': line.variantId,
+          'product_name': line.productName,
+          'variant_name': line.variantName,
+          'sku': line.sku,
+          'unit_price_paise': line.unitPricePaise,
+          'quantity': line.quantity,
+          'line_total_paise': Money.multiplyPaise(
+            line.unitPricePaise,
+            line.quantity,
+          )!,
+          'offer_discount_paise': line.appliedOffer?.discountPaise ?? 0,
+          'applied_offer_id': line.appliedOffer?.offerId,
+          'applied_offer_name': line.appliedOffer?.offerName,
+          'applied_offer_type': line.appliedOffer?.offerType.wire,
+        },
+    ];
+
+    Map<String, dynamic> result;
+    try {
+      result = await cloud.createSaleAtomic(
+        shopId: shopId,
+        customerId: customerId,
+        subtotalPaise: subtotal,
+        totalPaise: totalPaise,
+        offerDiscountPaise: totalOfferDiscount,
+        paymentMethod: paymentStatus == PaymentStatus.notPaid
+            ? null
+            : paymentMethod!.dbValue,
+        paymentStatus: paymentStatus.dbValue,
+        lines: rpcLines,
+      );
+    } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('INSUFFICIENT_STOCK')) {
+        final name = msg.split(':').length > 1
+            ? msg.split(':')[1].trim()
+            : 'Product';
+        throw InsufficientStockFailure(name, msg);
+      }
+      if (msg.contains('UNAVAILABLE_PRODUCT')) {
+        final name = msg.split(':').length > 1
+            ? msg.split(':')[1].trim()
+            : 'Product';
+        throw UnavailableProductFailure(name);
+      }
+      if (msg.contains('MISSING_CUSTOMER'))
+        throw const MissingCustomerForCreditSaleFailure();
+      if (msg.contains('INVALID_PAYMENT')) throw const InvalidPaymentFailure();
+      if (msg.contains('EMPTY_CART')) throw const EmptyCartFailure();
+      if (msg.contains('CUSTOMER_NOT_FOUND'))
+        throw const CustomerNotFoundFailure();
+      if (msg.contains('INACTIVE_CUSTOMER'))
+        throw const InactiveCustomerFailure();
+      if (msg.contains('FORBIDDEN'))
+        throw const UnexpectedBillingFailure('Access denied for this shop.');
+      if (msg.contains('SocketException') ||
+          msg.contains('Failed host lookup') ||
+          msg.contains('Network is unreachable')) {
+        throw const UnexpectedBillingFailure(
+          'Internet connection required. Please check your connection and try again.',
+        );
+      }
+      rethrow;
+    }
+
+    final saleId = result['id'] as String;
+    final receiptNumber = result['receipt_number'] as String;
+    final createdAt = result['created_at'] != null
+        ? DateTime.parse(result['created_at'] as String).toUtc()
+        : DateTime.now().toUtc();
+
+    // Mirror to local Drift cache so existing UI (which reads Drift) stays consistent.
+    final sale = Sale(
+      id: saleId,
+      receiptNumber: receiptNumber,
+      subtotalPaise: subtotal,
+      totalPaise: totalPaise,
+      offerDiscountPaise: totalOfferDiscount,
+      paymentStatus: paymentStatus,
+      paymentMethod: paymentStatus == PaymentStatus.notPaid
+          ? null
+          : paymentMethod,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+      customerId: customerId,
+    );
+
+    final saleItems = <SaleItem>[];
+    final movementsToInsert = <db.StockMovementsCompanion>[];
+
+    // Item ids are preallocated so the local cache failure path below can
+    // still present the completed bill to the UI.
+    final itemIds = [for (var _ in lines) const Uuid().v4()];
+
+    try {
+      await _database.transaction(() async {
+        // Update stock locally to match server deduction (tracked only)
+        for (final line in lines) {
+          final isTracked = await _isTracked(line.productId);
+          if (!isTracked) continue;
+          if (line.variantId != null) {
+            await _database.customStatement(
+              'UPDATE product_variants SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+              [line.quantity, createdAt.toIso8601String(), line.variantId],
+            );
+          } else {
+            await _database.customStatement(
+              'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+              [line.quantity, createdAt.toIso8601String(), line.productId],
+            );
+          }
+          // Create local movement entry mirroring server (best-effort stockBefore/After)
+          final stockBefore = await _localStockBefore(line);
+          movementsToInsert.add(
+            db.StockMovementsCompanion.insert(
+              shopId: Value(shopId),
+              productId: line.productId,
+              variantId: Value(line.variantId),
+              movementType: StockMovementType.sale.dbValue,
+              quantity: -line.quantity,
+              stockBefore: stockBefore,
+              stockAfter: stockBefore - line.quantity,
+              referenceType: Value(StockMovementType.sale.dbValue),
+              referenceId: Value(saleId),
+              createdAt: Value(createdAt),
+              updatedAt: Value(createdAt),
+            ),
+          );
+        }
+
+        await _database
+            .into(_database.sales)
+            .insert(
+              db.SalesCompanion.insert(
+                id: Value(saleId),
+                shopId: Value(shopId),
+                receiptNumber: receiptNumber,
+                customerId: Value(customerId),
+                subtotalPaise: subtotal,
+                totalPaise: totalPaise,
+                offerDiscountPaise: Value(totalOfferDiscount),
+                paymentMethod: Value(
+                  paymentStatus == PaymentStatus.notPaid
+                      ? null
+                      : paymentMethod!.dbValue,
+                ),
+                paymentStatus: Value(paymentStatus.dbValue),
+                createdAt: Value(createdAt),
+                updatedAt: Value(createdAt),
+              ),
+            );
+
+        for (var i = 0; i < lines.length; i++) {
+          final line = lines[i];
+          final itemId = itemIds[i];
+          await _database
+              .into(_database.saleItems)
+              .insert(
+                db.SaleItemsCompanion.insert(
+                  id: Value(itemId),
+                  shopId: Value(shopId),
+                  saleId: saleId,
+                  productId: line.productId,
+                  variantId: Value(line.variantId),
+                  productName: line.productName,
+                  variantName: Value(line.variantName),
+                  sku: Value(line.sku),
+                  unitPricePaise: line.unitPricePaise,
+                  quantity: line.quantity,
+                  lineTotalPaise: Money.multiplyPaise(
+                    line.unitPricePaise,
+                    line.quantity,
+                  )!,
+                  offerDiscountPaise: Value(
+                    line.appliedOffer?.discountPaise ?? 0,
+                  ),
+                  appliedOfferId: Value(line.appliedOffer?.offerId),
+                  appliedOfferName: Value(line.appliedOffer?.offerName),
+                  appliedOfferType: Value(line.appliedOffer?.offerType.wire),
+                ),
+              );
+          saleItems.add(
+            SaleItem(
+              id: itemId,
+              saleId: saleId,
+              productId: line.productId,
+              productName: line.productName,
+              unitPricePaise: line.unitPricePaise,
+              quantity: line.quantity,
+              lineTotalPaise: Money.multiplyPaise(
+                line.unitPricePaise,
+                line.quantity,
+              )!,
+              offerDiscountPaise: line.appliedOffer?.discountPaise ?? 0,
+              sku: line.sku,
+              variantId: line.variantId,
+              variantName: line.variantName,
+              appliedOfferId: line.appliedOffer?.offerId,
+              appliedOfferName: line.appliedOffer?.offerName,
+              appliedOfferType: line.appliedOffer?.offerType,
+            ),
+          );
+        }
+
+        if (movementsToInsert.isNotEmpty) {
+          await _movements.insertAll(movementsToInsert);
+        }
+      });
+    } on Exception catch (error, stackTrace) {
+      // The cloud sale is already committed; the transaction rolled back
+      // cleanly, so nothing partial was cached. A local cache failure must
+      // never surface as a failed sale — a retry would duplicate the sale
+      // server-side. Instead log and present the completed bill from the
+      // server result; the next sync reconciles the cache.
+      AppLog.warning(
+        'Cloud sale $saleId committed but local cache mirror failed; sync will reconcile',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        saleItems.add(
+          SaleItem(
+            id: itemIds[i],
+            saleId: saleId,
+            productId: line.productId,
+            productName: line.productName,
+            unitPricePaise: line.unitPricePaise,
+            quantity: line.quantity,
+            lineTotalPaise: Money.multiplyPaise(
+              line.unitPricePaise,
+              line.quantity,
+            )!,
+            offerDiscountPaise: line.appliedOffer?.discountPaise ?? 0,
+            sku: line.sku,
+            variantId: line.variantId,
+            variantName: line.variantName,
+            appliedOfferId: line.appliedOffer?.offerId,
+            appliedOfferName: line.appliedOffer?.offerName,
+            appliedOfferType: line.appliedOffer?.offerType,
+          ),
+        );
+      }
+    }
+
+    return CompletedSale(sale: sale, items: saleItems);
+  }
+
+  Future<bool> _isTracked(String productId) async {
+    final row = await (_database.select(
+      _database.products,
+    )..where((t) => t.id.equals(productId))).getSingleOrNull();
+    if (row == null) return false;
+    return row.stockUnit != StockUnit.none.dbValue;
+  }
+
+  Future<int> _localStockBefore(CartLine line) async {
+    // After deduction above, stock = before - qty, so before = after + qty
+    if (line.variantId != null) {
+      final row = await (_database.select(
+        _database.productVariants,
+      )..where((t) => t.id.equals(line.variantId!))).getSingleOrNull();
+      final after = row?.stockQuantity ?? 0;
+      return after + line.quantity;
+    } else {
+      final row = await (_database.select(
+        _database.products,
+      )..where((t) => t.id.equals(line.productId))).getSingleOrNull();
+      final after = row?.stockQuantity ?? 0;
+      return after + line.quantity;
     }
   }
 
@@ -609,6 +944,13 @@ final class DriftBillingRepository implements BillingRepository {
 
   @override
   Future<void> voidSale(String saleId) async {
+    if (_connectivity != null) {
+      try {
+        await OnlineGuard(_connectivity!).requireOnline();
+      } on OfflineException catch (e) {
+        throw UnexpectedBillingFailure(e.message);
+      }
+    }
     Future<void> write() async {
       final saleRow = await _sales.byId(saleId);
       if (saleRow == null) {
@@ -662,6 +1004,32 @@ final class DriftBillingRepository implements BillingRepository {
     }
 
     try {
+      // Cloud-authoritative void when gateway wired
+      if (_cloud != null) {
+        try {
+          await _cloud!.voidSaleAtomic(saleId);
+        } catch (e) {
+          final msg = e.toString();
+          if (msg.contains('ALREADY_VOIDED'))
+            throw const SaleAlreadyVoidedFailure();
+          if (msg.contains('SALE_NOT_FOUND')) throw const SaleNotFoundFailure();
+          if (msg.contains('FORBIDDEN'))
+            throw const UnexpectedBillingFailure(
+              'Access denied for this shop.',
+            );
+          if (msg.contains('SocketException') ||
+              msg.contains('Failed host lookup')) {
+            throw const UnexpectedBillingFailure(
+              'Internet connection required. Please check your connection and try again.',
+            );
+          }
+          rethrow;
+        }
+        // Mirror locally for cache
+        await _database.transaction(write);
+        return;
+      }
+
       final outbox = _outbox;
       if (outbox == null) {
         await _database.transaction(write);
@@ -725,6 +1093,8 @@ final class DriftBillingRepository implements BillingRepository {
       );
     } on BillingFailure {
       rethrow;
+    } on OfflineException catch (e) {
+      throw UnexpectedBillingFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to void sale', error, stackTrace);
     }

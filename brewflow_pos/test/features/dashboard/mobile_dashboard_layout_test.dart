@@ -8,6 +8,7 @@ import 'package:brewflow_pos/features/dashboard/presentation/dashboard_page.dart
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,7 @@ import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -42,6 +44,7 @@ void main() {
       ),
       settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
       connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
+      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
     ],
     child: const BrewFlowApp(),
   );

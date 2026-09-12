@@ -5,6 +5,7 @@ import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
 import 'package:brewflow_pos/features/purchases/domain/suppliers_repository.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
 import '../../staff/presentation/staff_controller.dart';
@@ -27,9 +28,17 @@ import '../../staff/presentation/staff_controller.dart';
 /// outbox coordinator binds supplier writes to the durable sync queue
 /// atomically (no-op when no session is active).
 final suppliersRepositoryProvider = Provider<SuppliersRepository>((ref) {
+  SupabaseClient? client;
+  try {
+    client = Supabase.instance.client;
+  } catch (_) {
+    client = null;
+  }
   return DriftSuppliersRepository(
     ref.watch(appDatabaseProvider),
     outboxCoordinator: ref.watch(syncOutboxCoordinatorProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    supabaseClient: client,
   );
 });
 

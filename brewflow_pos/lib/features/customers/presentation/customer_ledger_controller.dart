@@ -7,6 +7,7 @@ import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controlle
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
 import '../../sync/presentation/sync_controller.dart';
@@ -30,9 +31,17 @@ import '../../sync/presentation/sync_controller.dart';
 final customerLedgerRepositoryProvider = Provider<CustomerLedgerRepository>((
   ref,
 ) {
+  SupabaseClient? client;
+  try {
+    client = Supabase.instance.client;
+  } catch (_) {
+    client = null;
+  }
   return DriftCustomerLedgerRepository(
     ref.watch(appDatabaseProvider),
     outboxCoordinator: ref.watch(syncOutboxCoordinatorProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    supabaseClient: client,
   );
 });
 

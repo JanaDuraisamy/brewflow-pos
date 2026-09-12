@@ -7,6 +7,7 @@ import 'package:brewflow_pos/features/customers/domain/customer_ledger_repositor
 import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
 import '../../staff/presentation/staff_controller.dart';
@@ -29,9 +30,17 @@ import '../../staff/presentation/staff_controller.dart';
 /// outbox coordinator binds customer writes to the durable sync queue
 /// atomically (no-op when no session is active).
 final customersRepositoryProvider = Provider<CustomersRepository>((ref) {
+  SupabaseClient? client;
+  try {
+    client = Supabase.instance.client;
+  } catch (_) {
+    client = null;
+  }
   return DriftCustomersRepository(
     ref.watch(appDatabaseProvider),
     outboxCoordinator: ref.watch(syncOutboxCoordinatorProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    supabaseClient: client,
   );
 });
 

@@ -230,13 +230,23 @@ void main() {
         expect(sale.read(db.sales.totalPaise), 24000);
         expect(sale.read(db.sales.paymentMethod), 'CASH');
 
-        final item = await (db.select(
-          db.saleItems,
-        )..where((t) => t.id.equals('si1'))).getSingle();
-        expect(item.quantity, 2);
-        expect(item.unitPricePaise, 12000);
-        expect(item.variantId, isNull);
-        expect(item.variantName, isNull);
+        // The current sale_items row type requires offer columns (v18); the
+        // migrated table only has the v8 columns, so read the preserved
+        // columns explicitly.
+        final item =
+            await (db.selectOnly(db.saleItems)
+                  ..addColumns([
+                    db.saleItems.quantity,
+                    db.saleItems.unitPricePaise,
+                    db.saleItems.variantId,
+                    db.saleItems.variantName,
+                  ])
+                  ..where(db.saleItems.id.equals('si1')))
+                .getSingle();
+        expect(item.read(db.saleItems.quantity), 2);
+        expect(item.read(db.saleItems.unitPricePaise), 12000);
+        expect(item.read(db.saleItems.variantId), isNull);
+        expect(item.read(db.saleItems.variantName), isNull);
 
         final supplier = await (db.select(
           db.suppliers,
@@ -398,12 +408,22 @@ void main() {
               lineTotalPaise: 28000,
             ),
           );
-      final line = await (db.select(
+      // The current sale_items row type requires offer columns (v18); the
+      // migrated table only has the v8 columns, so read the preserved
+      // columns explicitly.
+      final line = await (db.selectOnly(
         db.saleItems,
-      )..where((t) => t.id.equals('si2'))).getSingle();
-      expect(line.variantId, 'v1');
-      expect(line.variantName, '250 ml');
-      expect(line.unitPricePaise, 14000);
+      )
+            ..addColumns([
+              db.saleItems.variantId,
+              db.saleItems.variantName,
+              db.saleItems.unitPricePaise,
+            ])
+            ..where(db.saleItems.id.equals('si2')))
+          .getSingle();
+      expect(line.read(db.saleItems.variantId), 'v1');
+      expect(line.read(db.saleItems.variantName), '250 ml');
+      expect(line.read(db.saleItems.unitPricePaise), 14000);
 
       await db.close();
       schema.close();

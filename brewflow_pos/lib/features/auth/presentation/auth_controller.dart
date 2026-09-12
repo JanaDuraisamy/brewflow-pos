@@ -91,8 +91,10 @@ final class AuthController extends Notifier<AuthState> {
     final repository = ref.watch(authRepositoryProvider);
 
     // Single subscription for the whole app; cancelled on scope disposal.
-    // Stream errors are absorbed into a safe error state so a broken auth
-    // stream can never surface as an unhandled exception.
+    // Stream errors are absorbed: a transient connectivity failure during a
+    // token refresh must never look like a sign-out, so an authenticated
+    // session is preserved. Only when the session is genuinely gone does the
+    // state fall back to a safe error.
     final subscription = repository.authStateChanges.listen(
       _applyAuthUser,
       onError: (Object error, StackTrace stackTrace) {
@@ -102,7 +104,12 @@ final class AuthController extends Notifier<AuthState> {
           error: error,
           stackTrace: stackTrace,
         );
-        state = AuthState.error(const UnexpectedAuthFailure());
+        final user = repository.currentUser;
+        if (user != null) {
+          _applyAuthUser(user);
+        } else {
+          state = AuthState.error(const UnexpectedAuthFailure());
+        }
       },
     );
     ref.onDispose(subscription.cancel);

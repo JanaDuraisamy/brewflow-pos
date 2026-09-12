@@ -1,6 +1,8 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/customers/data/customer_ledger_dao.dart';
 import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
@@ -8,6 +10,7 @@ import 'package:brewflow_pos/features/customers/domain/customer_ledger_repositor
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 /// ---------------------------------------------------------------------------
@@ -40,15 +43,26 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
   DriftCustomerLedgerRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
+    ConnectivityService? connectivityService,
+    SupabaseClient? supabaseClient,
   }) : _dao = CustomerLedgerDao(database),
        _database = database,
-       _outbox = outboxCoordinator;
+       _outbox = outboxCoordinator,
+       _connectivity = connectivityService,
+       _supabase = supabaseClient;
 
   static const String tag = 'Ledger';
 
   final CustomerLedgerDao _dao;
   final db.AppDatabase _database;
   final SyncOutboxCoordinator? _outbox;
+  final ConnectivityService? _connectivity;
+  final SupabaseClient? _supabase;
+
+  Future<void> _requireOnline() async {
+    if (_connectivity != null)
+      await OnlineGuard(_connectivity!).requireOnline();
+  }
 
   @override
   Future<CustomerLedgerSummary> summary(String customerId) async {
@@ -120,8 +134,107 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
     if (amountPaise <= 0) {
       throw const InvalidPaymentAmountFailure();
     }
+    if (_connectivity != null) {
+      try {
+        await _requireOnline();
+      } catch (e) {
+        throw UnexpectedLedgerFailure(
+          'Internet connection required. Please check your connection and try again.',
+        );
+      }
+    }
     final normalizedNote = _optionalText(note);
     final resolvedShopId = await resolveWritableShopId(_database, shopId);
+    if (_supabase != null) {
+      try {
+        final res = await _supabase!.rpc<dynamic>(
+          'record_customer_payment_atomic',
+          params: {
+            'p_shop_id': resolvedShopId,
+            'p_customer_id': customerId,
+            'p_sale_id': saleId,
+            'p_amount_paise': amountPaise,
+            'p_payment_method': paymentMethod.dbValue,
+            'p_note': normalizedNote,
+          },
+        );
+        final map = res is Map<String, dynamic>
+            ? res
+            : Map<String, dynamic>.from(res as Map);
+        final paymentId = map['id'] as String;
+        final paidAt = map['paid_at'] != null
+            ? DateTime.parse(map['paid_at'] as String).toUtc()
+            : DateTime.now().toUtc();
+        // Mirror locally for cache (upsert)
+        final now = DateTime.now().toUtc();
+        await _database.transaction(() async {
+          // Ensure sale exists locally for FK, if not, skip (cache may be stale)
+          final sale = await _dao.saleById(saleId);
+          if (sale != null) {
+            // Update sale status if fully paid (check via RPC remaining)
+            final remaining = map['remaining'] as int? ?? 0;
+            if (remaining == 0 && sale.paymentStatus != 'PAID') {
+              await (_database.update(
+                _database.sales,
+              )..where((t) => t.id.equals(saleId))).write(
+                db.SalesCompanion(
+                  paymentStatus: const Value('PAID'),
+                  updatedAt: Value(now),
+                ),
+              );
+            }
+          }
+          await _database
+              .into(_database.customerPayments)
+              .insertOnConflictUpdate(
+                db.CustomerPaymentsCompanion.insert(
+                  id: Value(paymentId),
+                  shopId: Value(resolvedShopId),
+                  customerId: customerId,
+                  saleId: Value(saleId),
+                  amountPaise: amountPaise,
+                  paymentMethod: paymentMethod.dbValue,
+                  note: Value(normalizedNote),
+                  paidAt: paidAt,
+                  reversed: const Value(false),
+                  reversedAt: const Value(null),
+                  createdAt: Value(paidAt),
+                  updatedAt: Value(now),
+                ),
+              );
+        });
+        return CustomerPayment(
+          id: paymentId,
+          customerId: customerId,
+          saleId: saleId,
+          amountPaise: amountPaise,
+          paymentMethod: paymentMethod,
+          note: normalizedNote,
+          paidAt: paidAt,
+          reversed: false,
+          reversedAt: null,
+          createdAt: paidAt,
+          updatedAt: now,
+        );
+      } catch (e) {
+        final msg = e.toString();
+        if (msg.contains('SocketException') ||
+            msg.contains('Failed host lookup'))
+          throw UnexpectedLedgerFailure(
+            'Internet connection required. Please check your connection and try again.',
+          );
+        if (msg.contains('INVALID_AMOUNT'))
+          throw const InvalidPaymentAmountFailure();
+        if (msg.contains('CUSTOMER_NOT_FOUND'))
+          throw const CustomerNotFoundFailure();
+        if (msg.contains('SALE_NOT_FOUND')) throw const SaleNotFoundFailure();
+        if (msg.contains('PAYMENT_EXCEEDS_DUE'))
+          throw const PaymentExceedsDueFailure();
+        if (msg.contains('FORBIDDEN'))
+          throw UnexpectedLedgerFailure('Access denied for this shop.');
+        rethrow;
+      }
+    }
     try {
       final payment = await (_outbox == null
           ? _database.transaction(

@@ -26,6 +26,7 @@ import 'package:brewflow_pos/features/purchases/presentation/purchases_page.dart
 import 'package:brewflow_pos/features/purchases/presentation/suppliers_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_page.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,6 +40,7 @@ import '../helpers/fake_inventory_repository.dart';
 import '../helpers/fake_orders_repository.dart';
 import '../helpers/fake_purchases_repository.dart';
 import '../helpers/fake_settings_repository.dart';
+import '../helpers/fake_staff_repository.dart';
 import '../helpers/fake_suppliers_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
@@ -190,6 +192,7 @@ void main() {
           connectivityServiceProvider.overrideWithValue(
             fakeConnectivityService(),
           ),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ], size: const Size(800, 2800));
 
         expect(find.text('Dashboard'), findsOneWidget);

@@ -10,14 +10,17 @@ import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_auth_repository.dart';
+import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Reports Freshness After Mutations (Phase 10 Step 9)
@@ -42,9 +45,13 @@ void main() {
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWithValue(database),
+        authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
         offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
-        authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
+        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        connectivityServiceProvider.overrideWithValue(
+          fakeConnectivityServiceOnline(),
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -55,6 +62,9 @@ void main() {
   });
 
   Future<void> seedCategory() async {
+    await database
+        .into(database.shops)
+        .insert(db.ShopsCompanion.insert(id: Value('shop-1'), name: 'Cafe'));
     await database
         .into(database.categories)
         .insert(db.CategoriesCompanion.insert(id: Value('c1'), name: 'Coffee'));
@@ -69,6 +79,7 @@ void main() {
             id: Value('p1'),
             categoryId: 'c1',
             name: 'Filter Coffee',
+            shopId: const Value('shop-1'),
             sellingPricePaise: 15000,
             costPricePaise: Value(costPricePaise),
             stockQuantity: Value(stock),

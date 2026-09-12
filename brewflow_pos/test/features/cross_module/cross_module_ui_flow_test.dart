@@ -9,6 +9,7 @@ import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dar
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_detail_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_form_page.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +18,8 @@ import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 
 import '../../helpers/fake_auth_repository.dart';
+import '../../helpers/fake_connectivity_service.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -60,6 +63,10 @@ void main() {
     overrides: [
       appDatabaseProvider.overrideWithValue(database),
       authRepositoryProvider.overrideWithValue(fakeAuth),
+      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      connectivityServiceProvider.overrideWithValue(
+        fakeConnectivityServiceOnline(),
+      ),
     ],
     child: const BrewFlowApp(),
   );

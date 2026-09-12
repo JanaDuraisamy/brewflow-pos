@@ -354,8 +354,10 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     try {
       final cafeId = await switcher.shopIdFor(BusinessContext.cafe);
       labels[cafeId] = BusinessContext.cafe.label;
-      final ftId = await switcher.shopIdFor(BusinessContext.foodTruck);
-      if (ftId != cafeId) labels[ftId] = BusinessContext.foodTruck.label;
+      final ftId = await switcher.existingFoodTruckShopId();
+      if (ftId != null && ftId != cafeId) {
+        labels[ftId] = BusinessContext.foodTruck.label;
+      }
     } catch (_) {}
     return labels;
   }

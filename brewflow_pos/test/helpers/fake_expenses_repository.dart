@@ -63,7 +63,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     return true;
   }
 
-@override
+  @override
   Future<List<Expense>> expenses({
     String? search,
     ExpenseCategory? category,
@@ -93,7 +93,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
               toUtc: toUtc,
               active: active,
             ))
-            expense,
+              expense,
         ]..sort((a, b) {
           final byDate = b.expenseDate.compareTo(a.expenseDate);
           return byDate != 0 ? byDate : b.createdAt.compareTo(a.createdAt);

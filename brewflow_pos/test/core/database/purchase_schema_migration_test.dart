@@ -160,11 +160,20 @@ void main() {
       expect(sale.read(db.sales.totalPaise), 24000);
       expect(sale.read(db.sales.paymentMethod), 'CASH');
 
-      final item = await (db.select(
+      // The current sale_items row type requires offer columns (v18); the
+      // migrated table only has the v7 columns, so read the preserved
+      // columns explicitly.
+      final item = await (db.selectOnly(
         db.saleItems,
-      )..where((t) => t.id.equals('si1'))).getSingle();
-      expect(item.quantity, 2);
-      expect(item.unitPricePaise, 12000);
+      )
+            ..addColumns([
+              db.saleItems.quantity,
+              db.saleItems.unitPricePaise,
+            ])
+            ..where(db.saleItems.id.equals('si1')))
+          .getSingle();
+      expect(item.read(db.saleItems.quantity), 2);
+      expect(item.read(db.saleItems.unitPricePaise), 12000);
 
       final movement = await (db.select(
         db.stockMovements,

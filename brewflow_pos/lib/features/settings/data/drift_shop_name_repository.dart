@@ -1,9 +1,12 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/settings/domain/shop_name_repository.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 /// ---------------------------------------------------------------------------
@@ -21,12 +24,24 @@ import 'package:uuid/uuid.dart';
 /// ---------------------------------------------------------------------------
 
 final class DriftShopNameRepository implements ShopNameRepository {
-  DriftShopNameRepository(this._database, [this._outbox]);
+  DriftShopNameRepository(
+    this._database, [
+    this._outbox,
+    this._connectivity,
+    this._supabase,
+  ]);
 
   static const String tag = 'ShopName';
 
   final db.AppDatabase _database;
   final SyncOutboxCoordinator? _outbox;
+  final ConnectivityService? _connectivity;
+  final SupabaseClient? _supabase;
+
+  Future<void> _requireOnline() async {
+    if (_connectivity != null)
+      await OnlineGuard(_connectivity!).requireOnline();
+  }
 
   @override
   Future<String?> currentName() async {
@@ -68,6 +83,16 @@ final class DriftShopNameRepository implements ShopNameRepository {
       createdAt = now;
     }
 
+    if (_connectivity != null || _supabase != null) {
+      try {
+        await _requireOnline();
+      } catch (e) {
+        throw Exception(
+          'Internet connection required. Please check your connection and try again.',
+        );
+      }
+    }
+
     Future<void> write() => _database.transaction(() async {
       if (row == null) {
         await _database
@@ -88,6 +113,24 @@ final class DriftShopNameRepository implements ShopNameRepository {
         );
       }
     });
+
+    if (_supabase != null) {
+      try {
+        await _supabase!.from('shops').upsert({
+          'id': shopRowId,
+          'name': trimmed,
+        }, onConflict: 'id');
+      } catch (e) {
+        if (e.toString().contains('SocketException'))
+          throw Exception(
+            'Internet connection required. Please check your connection and try again.',
+          );
+        rethrow;
+      }
+      await write();
+      // Also update preferences cache via AppStorage if needed (kept for UI)
+      return;
+    }
 
     final outbox = _outbox;
     if (outbox == null) {

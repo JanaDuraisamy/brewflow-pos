@@ -5,11 +5,13 @@ import 'package:brewflow_pos/core/identity/device_identity.dart'
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart'
     show ConnectivitySnapshot, ConnectivityStatus;
+import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart' as auth;
 import 'package:brewflow_pos/features/inventory/data/image_sync_coordinator.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/data/cloud_shop_resolver.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/data/device_registration_coordinator.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_invalidation.dart';
@@ -266,12 +268,32 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
     _connectivitySub = service.snapshots.listen((snapshot) {
       if (snapshot.status == ConnectivityStatus.online &&
           state.phase == SyncSessionPhase.active) {
-        // Back online: retry a pending cloud registration AND immediately
-        // drain whatever the outbox accumulated while offline.
+        // Back online: refresh the auth session promptly (best-effort — the
+        // SDK also auto-refreshes on its own timer), retry a pending cloud
+        // registration AND immediately drain whatever the outbox accumulated
+        // while offline.
+        unawaited(_recoverAuthSession());
         _scheduleEnsure();
         _scheduleFastCycle();
       }
     });
+  }
+
+  /// Best-effort auth session refresh after a connectivity loss. A transient
+  /// offline stretch can leave the access token stale; recovering when the
+  /// network returns means the next guarded write never trips a refresh in
+  /// the middle of an operation. Never throws.
+  Future<void> _recoverAuthSession() async {
+    try {
+      await ref.read(authRepositoryProvider).recoverSession();
+    } catch (error, stackTrace) {
+      AppLog.warning(
+        'Auth session recovery skipped (will retry)',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   /// Connectivity-restore fast cycle (separate debounce from the
@@ -384,9 +406,11 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
     final resolver = ref.read(cloudShopResolverProvider);
     final staffRepository = ref.read(staffRepositoryProvider);
     String authoritativeShopId = profile.shopId!;
+    String? cloudProfileShopId;
     try {
       final cloudProfile = await resolver.fetchProfile(authUser.id);
       if (cloudProfile != null && cloudProfile.isActive) {
+        cloudProfileShopId = cloudProfile.shopId;
         if (cloudProfile.shopId != authoritativeShopId) {
           final cloudShopPresent = await resolver.shopExists(
             cloudProfile.shopId,
@@ -425,6 +449,15 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
 
     final shopId = authoritativeShopId;
     final userId = authUser.id;
+    // Identity trace: pins the exact runtime identity on the wire so a
+    // FORBIDDEN cloud write can be matched to the shop_id actually in use —
+    // the persisted primary (user_profiles.shop_id) vs the authoritative shop
+    // this session resolved and will push.
+    AppLog.info(
+      'Identity trace: user=$userId localShop=${profile.shopId} '
+      'authoritativeShop=$shopId cloudProfileShop=$cloudProfileShopId',
+      tag: tag,
+    );
     if (state.phase == SyncSessionPhase.preparing) return;
     state = SyncSessionState(
       phase: SyncSessionPhase.preparing,
@@ -461,6 +494,39 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
       );
       if (!identityOk) {
         AppLog.warning('Cloud identity push pending retry', tag: tag);
+      }
+
+      // F3b: if this device previously created a second business, make sure
+      // its cloud OWNER membership exists too — every cloud-authoritative
+      // Food Truck write (billing, purchases) is gated on is_shop_member().
+      await _pushSecondaryShopIdentity(
+        resolver,
+        authUser: authUser,
+        primaryShopId: shopId,
+      );
+
+      // BFDIAG (temporary): live authorization snapshot against the EXACT
+      // gate the cloud writes enforce — pins the user, the shop ids in use,
+      // the push result and whether this device's Cafe/Food Truck memberships
+      // actually resolve for is_shop_member(). Diagnostics are best-effort
+      // and must never break the ensured session path.
+      try {
+        final ftShopId = await AppStorage.preferences.readString(
+          BusinessSwitcherController.foodTruckShopIdKey,
+        );
+        final memberShop = await resolver.isShopMember(authoritativeShopId);
+        final memberFt = (ftShopId != null && ftShopId.isNotEmpty)
+            ? await resolver.isShopMember(ftShopId)
+            : null;
+        AppLog.info(
+          'BFDIAG user=$userId ctx=${ref.read(businessSwitcherProvider).name} '
+          'profileShop=${profile.shopId} authoritative=$shopId '
+          'cloudProfileShop=$cloudProfileShopId ftShop=$ftShopId '
+          'pushPrimary=$identityOk memberShop=$memberShop memberFT=$memberFt',
+          tag: tag,
+        );
+      } catch (_) {
+        // Diagnostics only — never fail the session flow.
       }
     } catch (error, stackTrace) {
       AppLog.error(
@@ -549,6 +615,48 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
     } catch (_) {
       _watchConnectivityWhilePending();
       return false;
+    }
+  }
+
+  /// F3b: ensures the cloud OWNER membership for the device's Food Truck
+  /// business (when that business was ever created here). The shop id lives in
+  /// SharedPreferences, so this never creates the business itself — it only
+  /// registers an existing second business. Failures are retried by the same
+  /// connectivity watcher.
+  Future<void> _pushSecondaryShopIdentity(
+    CloudShopResolver resolver, {
+    required auth.AuthUser authUser,
+    required String primaryShopId,
+  }) async {
+    try {
+      final foodTruckShopId = await AppStorage.preferences.readString(
+        BusinessSwitcherController.foodTruckShopIdKey,
+      );
+      if (foodTruckShopId == null ||
+          foodTruckShopId.isEmpty ||
+          foodTruckShopId == primaryShopId) {
+        return;
+      }
+      final ok = await resolver.pushIdentity(
+        shopId: foodTruckShopId,
+        shopName: BusinessContext.foodTruck.label,
+        authUserId: authUser.id,
+        email: authUser.email,
+      );
+      if (!ok) {
+        AppLog.warning(
+          'Food Truck cloud identity push pending retry: shop $foodTruckShopId',
+          tag: tag,
+        );
+        _watchConnectivityWhilePending();
+      }
+    } catch (error, stackTrace) {
+      AppLog.warning(
+        'Food Truck identity resolution skipped (retry on connectivity)',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 

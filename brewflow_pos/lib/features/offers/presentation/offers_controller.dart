@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/features/offers/data/drift_offers_repository.dart';
@@ -8,9 +9,17 @@ import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart'
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 
 final offersRepositoryProvider = Provider<OffersRepository>((ref) {
+  SupabaseClient? client;
+  try {
+    client = Supabase.instance.client;
+  } catch (_) {
+    client = null;
+  }
   return DriftOffersRepository(
     ref.watch(appDatabaseProvider),
     outbox: ref.watch(syncOutboxCoordinatorProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    supabaseClient: client,
   );
 });
 
@@ -23,9 +32,15 @@ final offersProvider = FutureProvider<List<Offer>>((ref) async {
   if (business == BusinessContext.all) {
     return repo.allOffers();
   }
-  final shopId = await ref
-      .read(businessSwitcherProvider.notifier)
-      .shopIdFor(business);
+  final switcher = ref.read(businessSwitcherProvider.notifier);
+  // Reads must never mint a Food Truck shop: with no persisted Food Truck id
+  // there are simply no offers to show yet.
+  if (business == BusinessContext.foodTruck) {
+    final ftId = await switcher.existingFoodTruckShopId();
+    if (ftId == null) return <Offer>[];
+    return repo.offersForShop(ftId);
+  }
+  final shopId = await switcher.shopIdFor(business);
   return repo.offersForShop(shopId);
 });
 

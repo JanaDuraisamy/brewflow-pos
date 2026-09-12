@@ -116,7 +116,7 @@ void main() {
       ) async {
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetDevicePixelRatio);
-        tester.view.physicalSize = Size(width, 800);
+        tester.view.physicalSize = Size(width, 1200);
         addTearDown(tester.view.resetPhysicalSize);
 
         await pumpAuthenticated(tester);

@@ -1,6 +1,8 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
+import 'package:brewflow_pos/features/purchases/data/purchases_cloud_gateway.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
@@ -38,9 +40,22 @@ import '../../staff/presentation/staff_controller.dart';
 /// (purchases, products, movement history, dashboard) on success only.
 /// ---------------------------------------------------------------------------
 
+final purchasesCloudGatewayProvider = Provider<PurchasesCloudGateway?>((ref) {
+  try {
+    final client = Supabase.instance.client;
+    return SupabasePurchasesGateway(client);
+  } catch (_) {
+    return null;
+  }
+});
+
 /// Owns the single purchase repository for the application scope.
 final purchasesRepositoryProvider = Provider<PurchaseRepository>((ref) {
-  return DriftPurchaseRepository(ref.watch(appDatabaseProvider));
+  return DriftPurchaseRepository(
+    ref.watch(appDatabaseProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    cloudGateway: ref.watch(purchasesCloudGatewayProvider),
+  );
 });
 
 /// One purchase-history row: the persisted header plus the supplier display

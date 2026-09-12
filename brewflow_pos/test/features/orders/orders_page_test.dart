@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:brewflow_pos/app/app.dart';
+import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
 import 'package:brewflow_pos/core/utils/dates.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
@@ -16,6 +17,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/order_detail_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_page.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,9 +25,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_billing_repository.dart';
+import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -47,6 +51,8 @@ void main() {
       customerLedgerRepositoryProvider.overrideWithValue(
         FakeCustomerLedgerRepository(),
       ),
+      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
     ],
     child: const BrewFlowApp(),
   );

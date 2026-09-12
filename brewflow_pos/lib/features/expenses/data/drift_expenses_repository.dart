@@ -5,9 +5,13 @@ import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Drift Expenses Repository
@@ -29,15 +33,26 @@ final class DriftExpensesRepository implements ExpensesRepository {
   DriftExpensesRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
+    ConnectivityService? connectivityService,
+    SupabaseClient? supabaseClient,
   }) : _database = database,
        _expenses = ExpensesDao(database),
-       _outbox = outboxCoordinator;
+       _outbox = outboxCoordinator,
+       _connectivity = connectivityService,
+       _supabase = supabaseClient;
 
   static const String tag = 'Expenses';
 
   final db.AppDatabase _database;
   final ExpensesDao _expenses;
   final SyncOutboxCoordinator? _outbox;
+  final ConnectivityService? _connectivity;
+  final SupabaseClient? _supabase;
+
+  Future<void> _requireOnline() async {
+    if (_connectivity != null)
+      await OnlineGuard(_connectivity!).requireOnline();
+  }
 
   @override
   Future<List<Expense>> expenses({
@@ -121,7 +136,49 @@ final class DriftExpensesRepository implements ExpensesRepository {
     final normalizedPaise = _nonNegativePaise(amountPaise);
     final normalizedNote = _optionalText(note);
     try {
+      if (_connectivity != null) await _requireOnline();
       final resolvedShopId = await resolveWritableShopId(_database, shopId);
+      if (_supabase != null) {
+        final id = const Uuid().v4();
+        final now = DateTime.now().toUtc();
+        try {
+          await _supabase!.from('expenses').upsert({
+            'id': id,
+            'shop_id': resolvedShopId,
+            'name': normalizedName,
+            'amount_paise': normalizedPaise,
+            'category': category.dbValue,
+            'payment_method': paymentMethod.dbValue,
+            'payment_status': paymentStatus.dbValue,
+            'expense_date': expenseDate.toIso8601String(),
+            'note': normalizedNote,
+            'is_active': isActive,
+            'client_created_at': now.toIso8601String(),
+          }, onConflict: 'id');
+        } catch (e) {
+          if (e.toString().contains('SocketException') ||
+              e.toString().contains('Failed host lookup'))
+            throw const OfflineException();
+          rethrow;
+        }
+        final row = await _expenses.insert(
+          db.ExpensesCompanion.insert(
+            id: Value(id),
+            shopId: Value(resolvedShopId),
+            name: normalizedName,
+            amountPaise: normalizedPaise,
+            category: category.dbValue,
+            paymentMethod: paymentMethod.dbValue,
+            paymentStatus: Value(paymentStatus.dbValue),
+            expenseDate: expenseDate,
+            note: Value(normalizedNote),
+            isActive: Value(isActive),
+            createdAt: Value(now),
+            updatedAt: Value(now),
+          ),
+        );
+        return _expenseFromRow(row);
+      }
       final result = await (_outbox == null
           ? _insertExpense(
               shopId: resolvedShopId,
@@ -167,6 +224,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
               ],
             ));
       return _expenseFromRow(result);
+    } on OfflineException catch (e) {
+      throw UnexpectedExpensesFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to create expense', error, stackTrace);
     }
@@ -212,6 +271,42 @@ final class DriftExpensesRepository implements ExpensesRepository {
     final normalizedPaise = _nonNegativePaise(amountPaise);
     final normalizedNote = _optionalText(note);
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('expenses')
+              .update({
+                'name': normalizedName,
+                'amount_paise': normalizedPaise,
+                'category': category.dbValue,
+                'payment_method': paymentMethod.dbValue,
+                'payment_status': paymentStatus.dbValue,
+                'expense_date': expenseDate.toIso8601String(),
+                'note': normalizedNote,
+                'is_active': isActive,
+              })
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _expenses.update(
+          id,
+          db.ExpensesCompanion(
+            name: Value(normalizedName),
+            amountPaise: Value(normalizedPaise),
+            category: Value(category.dbValue),
+            paymentMethod: Value(paymentMethod.dbValue),
+            paymentStatus: Value(paymentStatus.dbValue),
+            expenseDate: Value(expenseDate),
+            note: Value(normalizedNote),
+            isActive: Value(isActive),
+          ),
+        );
+        return;
+      }
       if (_outbox == null) {
         await _expenses.update(
           id,
@@ -266,6 +361,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
           },
         );
       }
+    } on OfflineException catch (e) {
+      throw UnexpectedExpensesFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update expense', error, stackTrace);
     }
@@ -274,6 +371,21 @@ final class DriftExpensesRepository implements ExpensesRepository {
   @override
   Future<void> setExpenseActive(String id, bool isActive) async {
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('expenses')
+              .update({'is_active': isActive})
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _expenses.updateActive(id, isActive);
+        return;
+      }
       if (_outbox == null) {
         await _expenses.updateActive(id, isActive);
       } else {
@@ -304,6 +416,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
           },
         );
       }
+    } on OfflineException catch (e) {
+      throw UnexpectedExpensesFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update expense activity', error, stackTrace);
     }
@@ -328,9 +442,26 @@ final class DriftExpensesRepository implements ExpensesRepository {
   @override
   Future<void> deleteExpense(String id) async {
     try {
+      if (_connectivity != null) await _requireOnline();
       final existing = await _expenses.byId(id);
       if (existing == null) {
         throw const MissingExpenseFailure();
+      }
+      if (_supabase != null) {
+        try {
+          await _supabase!.from('expenses').delete().eq('id', id);
+          await _supabase!.from('master_deletions').upsert({
+            'entity': 'EXPENSE',
+            'id': id,
+            'shop_id': existing.shopId,
+          }, onConflict: 'entity,id');
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _expenses.deleteById(id);
+        return;
       }
       Future<void> deleteNow() => _expenses.deleteById(id);
       if (_outbox == null) {
@@ -349,6 +480,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
           ),
         ],
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedExpensesFailure(e.message);
     } on ExpensesFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {

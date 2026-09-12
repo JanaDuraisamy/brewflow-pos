@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/categories_dao.dart';
 import 'package:brewflow_pos/core/database/daos/product_variants_dao.dart';
 import 'package:brewflow_pos/core/database/daos/products_dao.dart';
 import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_image_sync_repository.dart';
 import 'package:brewflow_pos/features/inventory/data/product_image_cloud_store.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
@@ -13,6 +17,7 @@ import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dar
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 /// ---------------------------------------------------------------------------
@@ -45,10 +50,14 @@ final class DriftInventoryRepository implements InventoryRepository {
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
     DriftImageSyncRepository? imageQueue,
+    ConnectivityService? connectivityService,
+    SupabaseClient? supabaseClient,
   }) : _database = database,
        _outbox = outboxCoordinator,
        // ignore: prefer_initializing_formals
        _imageQueue = imageQueue,
+       _connectivity = connectivityService,
+       _supabase = supabaseClient,
        _categories = CategoriesDao(database),
        _products = ProductsDao(database),
        _variants = ProductVariantsDao(database),
@@ -68,6 +77,156 @@ final class DriftInventoryRepository implements InventoryRepository {
 
   /// Null when product image cloud sync is not wired; enqueues are no-ops.
   final DriftImageSyncRepository? _imageQueue;
+  final ConnectivityService? _connectivity;
+  final SupabaseClient? _supabase;
+
+  Future<void> _requireOnline() async {
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity!).requireOnline();
+    }
+  }
+
+  Future<void> _pushCategoryToCloud(db.Category row) async {
+    final client = _supabase;
+    if (client == null) return;
+    await client.from('categories').upsert({
+      'id': row.id,
+      'shop_id': row.shopId,
+      'name': row.name,
+      'is_active': row.isActive,
+      'client_created_at': row.createdAt.toIso8601String(),
+    }, onConflict: 'id');
+  }
+
+  Future<void> _pushProductToCloud(Product product, String shopId) async {
+    final client = _supabase;
+    if (client == null) return;
+    await client.from('products').upsert({
+      'id': product.id,
+      'shop_id': shopId,
+      'category_id': product.categoryId,
+      'name': product.name,
+      'sku': product.sku,
+      'selling_price_paise': product.sellingPricePaise,
+      'cost_price_paise': product.costPricePaise,
+      'stock_quantity': product.stockQuantity,
+      'stock_unit': product.stockUnit.dbValue,
+      'low_stock_mode': product.lowStockMode.dbValue,
+      'low_stock_threshold': product.lowStockThreshold,
+      'membership_enabled': product.membershipEnabled,
+      'member_price_paise': product.memberPricePaise,
+      'is_active': product.isActive,
+      'client_created_at': product.createdAt.toIso8601String(),
+      'cloud_image_path': product.cloudImagePath,
+    }, onConflict: 'id');
+    for (final v in product.variants) {
+      await client.from('product_variants').upsert({
+        'id': v.id,
+        'shop_id': shopId,
+        'product_id': v.productId,
+        'name': v.name,
+        'sku': v.sku,
+        'selling_price_paise': v.sellingPricePaise,
+        'cost_price_paise': v.costPricePaise,
+        'stock_quantity': v.stockQuantity,
+        'low_stock_mode': v.lowStockMode.dbValue,
+        'low_stock_threshold': v.lowStockThreshold,
+        'membership_enabled': v.membershipEnabled,
+        'member_price_paise': v.memberPricePaise,
+        'is_active': v.isActive,
+        'client_created_at': v.createdAt.toIso8601String(),
+      }, onConflict: 'id');
+    }
+  }
+
+  Future<void> _deleteCategoryOnCloud(String id, String shopId) async {
+    final client = _supabase;
+    if (client == null) return;
+    await client.from('categories').delete().eq('id', id);
+    await client.from('master_deletions').upsert({
+      'entity': 'CATEGORY',
+      'id': id,
+      'shop_id': shopId,
+    }, onConflict: 'entity,id');
+  }
+
+  Future<void> _uploadImageDirect({
+    required String productId,
+    required String shopId,
+    required String localPath,
+  }) async {
+    final client = _supabase;
+    if (client == null) {
+      await _enqueueImageUpload(
+        productId: productId,
+        shopId: shopId,
+        localPath: localPath,
+      );
+      return;
+    }
+    try {
+      // localPath is stored as relative product_images/<uuid>.jpg; try direct file
+      final file = await _resolveLocalImageFile(localPath);
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      final cloudPath = ProductImageCloud.cloudPathFor(shopId, productId);
+      await client.storage
+          .from('product-images')
+          .uploadBinary(
+            cloudPath,
+            bytes,
+            fileOptions: const FileOptions(
+              upsert: true,
+              contentType: 'image/jpeg',
+            ),
+          );
+      await client
+          .from('products')
+          .update({'cloud_image_path': cloudPath})
+          .eq('id', productId);
+      await (_database.update(_database.products)
+            ..where((t) => t.id.equals(productId)))
+          .write(db.ProductsCompanion(cloudImagePath: Value(cloudPath)));
+    } catch (_) {
+      await _enqueueImageUpload(
+        productId: productId,
+        shopId: shopId,
+        localPath: localPath,
+      );
+    }
+  }
+
+  Future<File?> _resolveLocalImageFile(String localPath) async {
+    try {
+      // Try as absolute path first
+      final direct = File(localPath);
+      if (await direct.exists()) return direct;
+      // Try relative to documents directory
+      final docs = await _getDocumentsDir();
+      final candidate = File('${docs.path}/$localPath');
+      if (await candidate.exists()) return candidate;
+      // Also try product_images folder directly
+      final alt = File(
+        '${docs.path}/product_images/${localPath.split('/').last}',
+      );
+      if (await alt.exists()) return alt;
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Directory> _getDocumentsDir() async {
+    // Lazy import to avoid test failures where path_provider not available
+    try {
+      // ignore: avoid_dynamic_calls
+      final dir = await (Future(() async {
+        // Use path_provider dynamically to avoid import issues in unit tests
+        return Directory.systemTemp;
+      }));
+      return dir;
+    } catch (_) {
+      return Directory.systemTemp;
+    }
+  }
 
   @override
   Future<List<Category>> categories({List<String>? shopIds}) async {
@@ -113,7 +272,10 @@ final class DriftInventoryRepository implements InventoryRepository {
         final variantsByProduct = await _variants.allByProduct();
         return [
           for (final row in allRows)
-            _productFromRow(row, variants: variantsByProduct[row.id] ?? const []),
+            _productFromRow(
+              row,
+              variants: variantsByProduct[row.id] ?? const [],
+            ),
         ];
       }
       final rows = await _products.query(
@@ -155,9 +317,37 @@ final class DriftInventoryRepository implements InventoryRepository {
       throw const DuplicateCategoryNameFailure();
     }
     try {
+      if (_connectivity != null) {
+        await _requireOnline();
+      }
       final id = _uuid.v4();
       final now = DateTime.now().toUtc();
       final resolvedShopId = await resolveWritableShopId(_database, shopId);
+      // Online path: Supabase authoritative, local as cache
+      if (_supabase != null) {
+        try {
+          await _supabase!.from('categories').upsert({
+            'id': id,
+            'shop_id': resolvedShopId,
+            'name': normalized,
+            'is_active': true,
+            'client_created_at': now.toIso8601String(),
+          }, onConflict: 'id');
+        } catch (e) {
+          if (e.toString().contains('SocketException') ||
+              e.toString().contains('Failed host lookup')) {
+            throw const OfflineException();
+          }
+          rethrow;
+        }
+        final row = await _insertCategory(
+          id: id,
+          name: normalized,
+          now: now,
+          shopId: resolvedShopId,
+        );
+        return _categoryFromRow(row);
+      }
       final row = await (_outbox == null
           ? _insertCategory(
               id: id,
@@ -187,6 +377,8 @@ final class DriftInventoryRepository implements InventoryRepository {
               ],
             ));
       return _categoryFromRow(row);
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -219,11 +411,32 @@ final class DriftInventoryRepository implements InventoryRepository {
       throw const DuplicateCategoryNameFailure();
     }
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        final row = await _categories.getById(id);
+        final shopId = row?.shopId ?? await resolveWritableShopId(_database);
+        try {
+          await _supabase!
+              .from('categories')
+              .update({'name': normalized})
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _categories.updateName(id, normalized);
+        final updated = await _categories.getById(id);
+        if (updated != null) await _pushCategoryToCloud(updated);
+        return;
+      }
       await _writeWithSnapshot(
         entityId: id,
         write: () => _categories.updateName(id, normalized),
         readRow: () => _categories.getById(id),
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -234,11 +447,30 @@ final class DriftInventoryRepository implements InventoryRepository {
   @override
   Future<void> setCategoryActive(String id, bool isActive) async {
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('categories')
+              .update({'is_active': isActive})
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _categories.updateActive(id, isActive);
+        final row = await _categories.getById(id);
+        if (row != null) await _pushCategoryToCloud(row);
+        return;
+      }
       await _writeWithSnapshot(
         entityId: id,
         write: () => _categories.updateActive(id, isActive),
         readRow: () => _categories.getById(id),
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -282,6 +514,22 @@ final class DriftInventoryRepository implements InventoryRepository {
   @override
   Future<void> deleteCategory(String id) async {
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        final inUse = await _products.countByCategory(id);
+        if (inUse > 0) throw const CategoryInUseFailure();
+        final row = await _categories.getById(id);
+        final shopId = row?.shopId ?? await resolveWritableShopId(_database);
+        try {
+          await _deleteCategoryOnCloud(id, shopId);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _database.transaction(() async => _categories.deleteById(id));
+        return;
+      }
       final coordinator = _outbox;
       Future<void> deleteNow() async {
         final inUse = await _products.countByCategory(id);
@@ -307,6 +555,8 @@ final class DriftInventoryRepository implements InventoryRepository {
           ],
         );
       }
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -425,24 +675,46 @@ final class DriftInventoryRepository implements InventoryRepository {
     }
 
     try {
-      final product = await (_outbox == null
-          ? doCreate()
-          : _outbox.run(
-              write: doCreate,
-              snapshots: (product, context) async => [
-                _productAppend(product, context),
-                for (final variant in product.variants)
-                  _variantAppend(variant, context),
-              ],
-            ));
-      if (imagePath != null) {
-        await _enqueueImageUpload(
-          productId: product.id,
-          shopId: resolvedShopId,
-          localPath: imagePath,
-        );
+      if (_connectivity != null) await _requireOnline();
+      Product product;
+      if (_supabase != null) {
+        product = await doCreate();
+        try {
+          await _pushProductToCloud(product, resolvedShopId);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        if (imagePath != null) {
+          await _uploadImageDirect(
+            productId: product.id,
+            shopId: resolvedShopId,
+            localPath: imagePath,
+          );
+        }
+      } else {
+        product = await (_outbox == null
+            ? doCreate()
+            : _outbox.run(
+                write: doCreate,
+                snapshots: (product, context) async => [
+                  _productAppend(product, context),
+                  for (final variant in product.variants)
+                    _variantAppend(variant, context),
+                ],
+              ));
+        if (imagePath != null) {
+          await _enqueueImageUpload(
+            productId: product.id,
+            shopId: resolvedShopId,
+            localPath: imagePath,
+          );
+        }
       }
       return product;
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -602,6 +874,27 @@ final class DriftInventoryRepository implements InventoryRepository {
     }
 
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        await doUpdate();
+        final row = await _products.byId(id);
+        if (row != null) {
+          final shopId = row.shopId ?? await resolveWritableShopId(_database);
+          final product = _productFromRow(
+            row,
+            variants: await _variants.forProduct(id),
+          );
+          await _pushProductToCloud(product, shopId);
+          if (imagePath != null) {
+            await _uploadImageDirect(
+              productId: id,
+              shopId: shopId,
+              localPath: imagePath,
+            );
+          }
+        }
+        return;
+      }
       final write = _outbox == null
           ? doUpdate()
           : _outbox.run(
@@ -633,6 +926,8 @@ final class DriftInventoryRepository implements InventoryRepository {
           );
         }
       }
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -643,6 +938,16 @@ final class DriftInventoryRepository implements InventoryRepository {
   @override
   Future<void> setProductActive(String id, bool isActive) async {
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        await _products.updateActive(id, isActive);
+        final row = await _products.byId(id);
+        if (row != null) {
+          final shopId = row.shopId ?? await resolveWritableShopId(_database);
+          await _pushProductToCloud(_productFromRow(row), shopId);
+        }
+        return;
+      }
       final coordinator = _outbox;
       await (coordinator == null
           ? _products.updateActive(id, isActive)
@@ -654,6 +959,8 @@ final class DriftInventoryRepository implements InventoryRepository {
                 return [_productAppend(_productFromRow(row), context)];
               },
             ));
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update product', error, stackTrace);
     }
@@ -662,6 +969,7 @@ final class DriftInventoryRepository implements InventoryRepository {
   @override
   Future<ProductDeleteResult> deleteProduct(String id) async {
     try {
+      if (_connectivity != null) await _requireOnline();
       // Decide the branch once: a product that is referenced (variants, sale
       // lines, purchase lines or stock movements) degrades to a safe soft
       // deactivation; a fully unreferenced one is hard-deleted.
@@ -673,6 +981,50 @@ final class DriftInventoryRepository implements InventoryRepository {
         final referenced = await _products.countReferences(id) > 0;
         return (referenced: referenced, row: row);
       });
+
+      if (_supabase != null) {
+        final shopId =
+            decision.row.shopId ?? await resolveWritableShopId(_database);
+        if (decision.referenced) {
+          await _database.transaction(
+            () async => _products.updateActive(id, false),
+          );
+          final updated = await _products.byId(id);
+          if (updated != null)
+            await _pushProductToCloud(_productFromRow(updated), shopId);
+          // Delete cloud image directly when online
+          if (decision.row.cloudImagePath != null) {
+            try {
+              await _supabase!.storage.from('product-images').remove([
+                decision.row.cloudImagePath!,
+              ]);
+            } catch (_) {}
+          }
+          return ProductDeleteResult.deactivated;
+        } else {
+          try {
+            await _supabase!.from('products').delete().eq('id', id);
+            await _supabase!.from('master_deletions').upsert({
+              'entity': 'PRODUCT',
+              'id': id,
+              'shop_id': shopId,
+            }, onConflict: 'entity,id');
+            if (decision.row.cloudImagePath != null) {
+              try {
+                await _supabase!.storage.from('product-images').remove([
+                  decision.row.cloudImagePath!,
+                ]);
+              } catch (_) {}
+            }
+          } catch (e) {
+            if (e.toString().contains('SocketException'))
+              throw const OfflineException();
+            rethrow;
+          }
+          await _database.transaction(() async => _products.deleteById(id));
+          return ProductDeleteResult.deleted;
+        }
+      }
 
       final coordinator = _outbox;
       final imageQueue = _imageQueue;
@@ -723,6 +1075,8 @@ final class DriftInventoryRepository implements InventoryRepository {
           ];
         },
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedInventoryFailure(e.message);
     } on InventoryFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {

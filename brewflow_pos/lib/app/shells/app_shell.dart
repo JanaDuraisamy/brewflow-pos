@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/app/widgets/widgets.dart';
+import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
@@ -8,8 +9,8 @@ import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher_widget.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
-import 'package:brewflow_pos/features/sync/presentation/sync_status_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -172,6 +173,7 @@ final class AppShell extends ConsumerWidget {
               top: false,
               child: Column(
                 children: [
+                  const ConnectivityBanner(),
                   Expanded(child: navigationShell),
                   SafeArea(
                     top: false,
@@ -189,55 +191,70 @@ final class AppShell extends ConsumerWidget {
         final extended = constraints.maxWidth >= _extendedSidebarBreakpoint;
         return Scaffold(
           body: SafeArea(
-            child: Row(
+            child: Column(
               children: [
-                AppSidebar(
-                  items: items,
-                  selectedIndex: selected.clamp(0, items.length - 1),
-                  extended: extended,
-                  // Active business identity from Settings — the sidebar
-                  // always names the shop being operated, never a hardcoded
-                  // brand.
-                  shopName: ref.watch(shopSettingsProvider).value?.shopName,
-                  onDestinationSelected: goTo,
-                  footer: Column(
-                    mainAxisSize: MainAxisSize.min,
+                const ConnectivityBanner(),
+                Expanded(
+                  child: Row(
                     children: [
-                      // Owner-only business switcher in the extended sidebar.
-                      if (!filterActive && extended) ...[
-                        const Padding(
-                          padding: EdgeInsets.only(
-                            bottom: AppSpacing.sm,
-                            left: AppSpacing.xs,
-                            right: AppSpacing.xs,
-                          ),
-                          child: BusinessSwitcher(compact: true),
-                        ),
-                      ],
-                      if (extended)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SyncStatusDot(onDark: true),
-                              const SizedBox(width: 6),
-                              Text(
-                                _syncLabel(ref),
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(color: Colors.white54),
+                      AppSidebar(
+                        items: items,
+                        selectedIndex: selected.clamp(0, items.length - 1),
+                        extended: extended,
+                        // Active business identity from Settings — the sidebar
+                        // always names the shop being operated, never a hardcoded
+                        // brand.
+                        shopName: ref
+                            .watch(shopSettingsProvider)
+                            .value
+                            ?.shopName,
+                        onDestinationSelected: goTo,
+                        footer: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Owner-only business switcher in the extended sidebar.
+                            if (!filterActive && extended) ...[
+                              const Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: AppSpacing.sm,
+                                  left: AppSpacing.xs,
+                                  right: AppSpacing.xs,
+                                ),
+                                child: BusinessSwitcher(compact: true),
                               ),
                             ],
-                          ),
+                            if (extended)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  bottom: AppSpacing.sm,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SyncStatusDot(onDark: true),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      _syncLabel(ref),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(color: Colors.white54),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (!extended)
+                              const Center(child: SyncStatusDot(onDark: true)),
+                            if (!extended)
+                              const SizedBox(height: AppSpacing.sm),
+                            const _SidebarLogout(),
+                          ],
                         ),
-                      if (!extended)
-                        const Center(child: SyncStatusDot(onDark: true)),
-                      if (!extended) const SizedBox(height: AppSpacing.sm),
-                      const _SidebarLogout(),
+                      ),
+                      Expanded(child: navigationShell),
                     ],
                   ),
                 ),
-                Expanded(child: navigationShell),
               ],
             ),
           ),
@@ -294,6 +311,9 @@ final class _MobileAppBar extends ConsumerWidget
       automaticallyImplyLeading: false,
       elevation: 0,
       scrolledUnderElevation: 0,
+      // Match [preferredSize] so the business switcher below the shop name
+      // always has the vertical room it needs on phone widths (no clipping).
+      toolbarHeight: showSwitcher ? 112 : kToolbarHeight,
       backgroundColor: appColors.background,
       surfaceTintColor: Colors.transparent,
       titleSpacing: AppSpacing.lg,
@@ -332,7 +352,7 @@ final class _MobileAppBar extends ConsumerWidget
                   const SizedBox(height: AppSpacing.xs),
                   const Align(
                     alignment: Alignment.centerLeft,
-                    child: BusinessSwitcher(compact: true),
+                    child: BusinessSwitcher(compact: true, dropdown: true),
                   ),
                 ],
               ],
@@ -368,10 +388,7 @@ Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('Sign out'),
-      content: const Text(
-        'Are you sure you want to sign out? '
-        'Any unsynced data will remain on this device.',
-      ),
+      content: const Text('Are you sure you want to sign out?'),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
@@ -390,22 +407,10 @@ Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
 }
 
 String _syncLabel(WidgetRef ref) {
-  final status = ref.read(syncStatusProvider);
-  if (status.isSyncing) return 'Syncing…';
-  switch (status.level) {
-    case SyncStatusLevel.synced:
-      return 'Synced';
-    case SyncStatusLevel.pending:
-      return '${status.pendingCount} pending';
-    case SyncStatusLevel.offline:
-      return 'Offline';
-    case SyncStatusLevel.unconfirmed:
-      return 'Connecting…';
-    case SyncStatusLevel.idle:
-      return '';
-    case SyncStatusLevel.syncing:
-      return 'Syncing…';
-    case SyncStatusLevel.error:
-      return 'Sync failed';
-  }
+  final connectivity = ref.read(connectivityServiceProvider);
+  return switch (connectivity.status) {
+    ConnectivityStatus.online => 'Online',
+    ConnectivityStatus.disconnected => 'Offline',
+    ConnectivityStatus.unknown => 'Connecting…',
+  };
 }

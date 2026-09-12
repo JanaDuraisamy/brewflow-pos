@@ -55,7 +55,9 @@ final class UnexpectedAuthFailure extends AuthFailure {
 /// Implementations wrap a concrete provider (Supabase). The stream emits the
 /// current user whenever authentication state changes (including the initial
 /// persisted session), with `null` meaning signed out; identical states are
-/// deduplicated.
+/// deduplicated. Implementations MUST NOT surface transient provider failures
+/// (e.g. a lost network connection during a token refresh) as a sign-out —
+/// the session survives connectivity loss and recovers on its own.
 abstract interface class AuthRepository {
   /// The currently authenticated user, or `null` when signed out.
   AuthUser? get currentUser;
@@ -74,4 +76,9 @@ abstract interface class AuthRepository {
 
   /// Signs out the current session.
   Future<void> signOut();
+
+  /// Best-effort recovery of a stale session (e.g. when connectivity returns
+  /// after the access token was unable to refresh). Never throws; callers may
+  /// invoke it when the network is known to be available again.
+  Future<void> recoverSession();
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:brewflow_pos/core/storage/app_storage.dart';
+import 'package:brewflow_pos/features/staff/domain/staff_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 
 /// ---------------------------------------------------------------------------
@@ -37,7 +38,11 @@ final businessSwitcherProvider =
 
 final class BusinessSwitcherController extends Notifier<BusinessContext> {
   static const String _prefsKey = 'business_switcher_context';
-  static const String _foodTruckShopIdKey = 'business_food_truck_shop_id';
+
+  /// SharedPreferences key holding the lazily-created Food Truck shop id.
+  /// Also read by the sync session so a device that created the second
+  /// business can push its cloud identity + OWNER membership.
+  static const String foodTruckShopIdKey = 'business_food_truck_shop_id';
 
   @override
   BusinessContext build() {
@@ -59,44 +64,75 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
     await AppStorage.preferences.writeString(_prefsKey, next.name);
   }
 
-  /// Resolves the `shopId` for [context]. CAFE reuses the existing single
-  /// shop row; FOOD TRUCK lazily creates a second shop row (second business)
-  /// and persists its id. ALL is read-only and must never be used as a write
+  /// Resolves the `shopId` for [context].
+  ///
+  /// CAFE resolves to the shop bound to the locally provisioned profile
+  /// (the authoritative shop the sync identity pushes and mints memberships
+  /// for), falling back to the existing single shop row when no profile is
+  /// resolved yet. This prevents a stale legacy `shops` row — an auto-created
+  /// orphan left over from an earlier single-shop boot — from becoming the
+  /// Cafe write target.
+  ///
+  /// FOOD TRUCK lazily creates the second shop row (second business) and
+  /// persists its id. ALL is read-only and must never be used as a write
   /// target — use [requireWritableShopId] for writes.
   Future<String> shopIdFor(BusinessContext context) async {
     if (context == BusinessContext.all) {
       throw StateError('BusinessContext.all is not a writable target');
     }
     final repo = ref.read(staffRepositoryProvider);
-    final cafeShop = await repo.ensureShop();
     if (context == BusinessContext.cafe) {
-      return cafeShop.id;
+      return _cafeShopId(repo);
     }
-    final stored = await AppStorage.preferences.readString(_foodTruckShopIdKey);
+    final stored = await AppStorage.preferences.readString(foodTruckShopIdKey);
     if (stored != null && stored.isNotEmpty) {
       final existing = await repo.ensureShopWithId(stored);
       return existing.id;
     }
     final created = await repo.ensureShopWithId(_newId(), name: 'Food Truck');
-    await AppStorage.preferences.writeString(_foodTruckShopIdKey, created.id);
+    await AppStorage.preferences.writeString(foodTruckShopIdKey, created.id);
     return created.id;
   }
 
-  /// Shop ids for reads. All returns both (Cafe + Food Truck if it exists).
+  Future<String> _cafeShopId(StaffRepository repo) async {
+    // Authoritative shop: the one the signed-in profile is bound to. Reading
+    // `.value` is safe — null while loading/error, so fresh single-shop
+    // installs and tests without a resolved profile keep the legacy path.
+    final profileShopId = ref.read(userProfileProvider).value?.shopId;
+    if (profileShopId != null && profileShopId.isNotEmpty) {
+      final shop = await repo.ensureShopWithId(profileShopId);
+      return shop.id;
+    }
+    return (await repo.ensureShop()).id;
+  }
+
+  /// Persisted Food Truck shop id, if one was created before. Read-only —
+  /// never creates a row. Clears (returns null) when Storage is unavailable,
+  /// so reads fail closed instead of minting new Food Truck ids.
+  Future<String?> existingFoodTruckShopId() async {
+    try {
+      final stored = await AppStorage.preferences.readString(
+        foodTruckShopIdKey,
+      );
+      if (stored == null || stored.isEmpty) return null;
+      return stored;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Shop ids for reads. All returns both (Cafe + Food Truck if one exists).
+  /// Reads must never create Food Truck rows — only a persisted id is used.
   Future<List<String>> shopIdsForRead(BusinessContext context) async {
     final cafeId = await shopIdFor(BusinessContext.cafe);
     if (context == BusinessContext.cafe) return [cafeId];
     if (context == BusinessContext.foodTruck) {
-      final ftId = await shopIdFor(BusinessContext.foodTruck);
-      return [ftId];
+      final ftId = await existingFoodTruckShopId();
+      return ftId == null ? <String>[] : [ftId];
     }
     // All
-    try {
-      final ftId = await shopIdFor(BusinessContext.foodTruck);
-      // Food Truck shop was lazily created above; if it was just created it
-      // will be empty. Include it for completeness.
-      if (ftId != cafeId) return [cafeId, ftId];
-    } catch (_) {}
+    final ftId = await existingFoodTruckShopId();
+    if (ftId != null && ftId != cafeId) return [cafeId, ftId];
     return [cafeId];
   }
 

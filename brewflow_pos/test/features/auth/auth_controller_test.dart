@@ -117,6 +117,21 @@ void main() {
       expect(read().status, AuthStatus.error);
       expect(read().failure, isA<UnexpectedAuthFailure>());
     });
+
+    test('a transient stream error retains an authenticated session', () async {
+      // Session is live in the repository (e.g. a token refresh tripped a
+      // transient connectivity failure) — the controller must NOT translate
+      // that into a sign-out.
+      fake.user = const AuthUser(id: 'u1', email: 'a@b.com');
+      read();
+      expect(read().status, AuthStatus.authenticated);
+
+      fake.emitError(StateError('stream failed'));
+      await flush();
+
+      expect(read().status, AuthStatus.authenticated);
+      expect(read().userEmail, 'a@b.com');
+    });
   });
 
   group('sign-in', () {

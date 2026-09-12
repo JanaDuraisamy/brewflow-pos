@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/settings/presentation/settings_controller.
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
 
@@ -33,10 +34,18 @@ import '../../../app/providers.dart';
 /// coordinator binds master-data writes to the durable sync queue atomically
 /// (no-op when no session is active).
 final inventoryRepositoryProvider = Provider<InventoryRepository>((ref) {
+  SupabaseClient? client;
+  try {
+    client = Supabase.instance.client;
+  } catch (_) {
+    client = null;
+  }
   return DriftInventoryRepository(
     ref.watch(appDatabaseProvider),
     outboxCoordinator: ref.watch(syncOutboxCoordinatorProvider),
     imageQueue: DriftImageSyncRepository(ref.watch(appDatabaseProvider)),
+    connectivityService: ref.watch(connectivityServiceProvider),
+    supabaseClient: client,
   );
 });
 

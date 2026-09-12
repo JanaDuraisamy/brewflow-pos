@@ -35,6 +35,12 @@ final class SupabaseStaffProvisioning implements StaffProvisioningService {
 
   @override
   Future<AuthUser> createStaffAuthUser(StaffCreateInput input) async {
+    // BFDIAG (temporary): the shop_id and auth identity the create-staff
+    // boundary will authorize against.
+    AppLog.info(
+      'BFDIAG createStaff shopId=${input.shopId ?? 'null'} email=${input.email}',
+      tag: tag,
+    );
     try {
       final response = await _functions.invoke(
         'create-staff',
@@ -51,6 +57,12 @@ final class SupabaseStaffProvisioning implements StaffProvisioningService {
       }
       return AuthUser(id: data['id'] as String, email: data['email'] as String);
     } on FunctionsHttpException catch (error) {
+      // BFDIAG (temporary): surface the exact function response so a
+      // FORBIDDEN can be matched against the caller's memberships.
+      AppLog.info(
+        'BFDIAG createStaff http status=${error.status} details=${error.details}',
+        tag: tag,
+      );
       // The function answered with a typed error — report the exact cause.
       throw _mapFunctionError(error.status, error.details);
     } on FunctionsRelayException catch (error) {

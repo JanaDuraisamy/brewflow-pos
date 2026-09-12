@@ -4,16 +4,21 @@ import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_orders_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 void main() {
   late FakeOrdersRepository repository;
 
   ProviderContainer buildContainer() => ProviderContainer(
-    overrides: [ordersRepositoryProvider.overrideWithValue(repository)],
+    overrides: [
+      ordersRepositoryProvider.overrideWithValue(repository),
+      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+    ],
   );
 
   OrderSummary summary(

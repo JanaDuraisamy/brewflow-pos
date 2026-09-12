@@ -87,11 +87,16 @@ class CloudShopResolver {
     }
   }
 
-  /// Pushes a new shop and owner profile to the cloud. Idempotent: re-pushes
-  /// if the rows already exist (safe for concurrent first-boot races).
+  /// Pushes a shop, owner profile and — critically — the caller's OWNER
+  /// `user_shop_memberships` row to the cloud in ONE server-side call
+  /// (migration 0013 `bootstrap_owner_membership`). The membership row is what
+  /// every `is_shop_member(shop_id)`-gated RPC (checkout, void, purchases,
+  /// receipts) and the create-staff boundary authorize against; without it the
+  /// cloud rejects every OWNER write with FORBIDDEN. Idempotent: re-pushes are
+  /// safe (replays mint no duplicates), which keeps first-boot races safe.
   ///
-  /// Returns true when the cloud confirms the identity, false on network failure
-  /// (caller should fall back to local-only mode and retry later).
+  /// Returns true when the cloud confirms the identity, false on network
+  /// failure or rejection (caller should retry on connectivity).
   Future<bool> pushIdentity({
     required String shopId,
     required String shopName,
@@ -101,26 +106,21 @@ class CloudShopResolver {
     final client = _client;
     if (client == null) return false;
     try {
-      // Upsert shop (idempotent by primary key).
-      await client.from('shops').upsert({
-        'id': shopId,
-        'name': shopName,
-      }, onConflict: 'id');
-
-      // Upsert user profile (idempotent by primary key).
-      await client.from('user_profiles').upsert({
-        'auth_user_id': authUserId,
-        'email': email,
-        'role': 'OWNER',
-        'shop_id': shopId,
-        'is_active': true,
-      }, onConflict: 'auth_user_id');
-
-      AppLog.info(
-        'Cloud identity pushed: shop=$shopId user=$authUserId',
-        tag: tag,
+      final success = await client.rpc<bool>(
+        'bootstrap_owner_membership',
+        params: {
+          'p_shop_id': shopId,
+          'p_shop_name': shopName,
+          'p_email': email,
+        },
       );
-      return true;
+      if (success) {
+        AppLog.info(
+          'Cloud identity pushed: shop=$shopId user=$authUserId',
+          tag: tag,
+        );
+      }
+      return success;
     } catch (error) {
       AppLog.warning(
         'Cloud identity push failed (will retry on connectivity)',
@@ -152,6 +152,26 @@ class CloudShopResolver {
         error: error,
       );
       return false;
+    }
+  }
+
+  /// Live authorization probe (temporary diagnostics only).
+  ///
+  /// Calls the SAME SECURITY DEFINER gate that every cloud write enforces
+  /// (`is_shop_member()`), so the returned value is exactly what
+  /// create_sale_atomic / create-staff will see for [shopId]. Read-only.
+  /// Returns null when the probe could not reach the cloud.
+  Future<bool?> isShopMember(String shopId) async {
+    final client = _client;
+    if (client == null) return null;
+    try {
+      return await client.rpc<bool>(
+        'is_shop_member',
+        params: {'target_shop_id': shopId},
+      );
+    } catch (error) {
+      AppLog.warning('is_shop_member probe failed', tag: tag, error: error);
+      return null;
     }
   }
 }

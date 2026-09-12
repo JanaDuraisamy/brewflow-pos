@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
+import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
@@ -9,13 +10,17 @@ import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_auth_repository.dart';
+import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Reports & Dashboard Variant Support (Todo 11)
@@ -41,8 +46,13 @@ void main() {
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWithValue(database),
+        authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
         offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        connectivityServiceProvider.overrideWithValue(
+          fakeConnectivityServiceOnline(),
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -78,6 +88,11 @@ void main() {
   }
 
   Future<void> seedCategory() async {
+    await database
+        .into(database.shops)
+        .insert(
+          db.ShopsCompanion.insert(id: const Value('shop-1'), name: 'Cafe'),
+        );
     await database
         .into(database.categories)
         .insert(

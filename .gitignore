@@ -14,5 +14,8 @@ orders_test_log.txt
 .DS_Store
 Thumbs.db
 
+# Supabase CLI local state (project links, versions) — never commit
+**/supabase/.temp/
+
 # Nested Flutter/Dart build artifacts are already ignored by
 # brewflow_pos/.gitignore (build/, .dart_tool/, .idea/, etc.)

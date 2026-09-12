@@ -1,13 +1,16 @@
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/customers_dao.dart';
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
+import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/domain/whatsapp_verification.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_repository.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Drift Customers Repository
@@ -32,9 +35,13 @@ final class DriftCustomersRepository implements CustomersRepository {
   DriftCustomersRepository(
     db.AppDatabase database, {
     SyncOutboxCoordinator? outboxCoordinator,
+    ConnectivityService? connectivityService,
+    SupabaseClient? supabaseClient,
   }) : _database = database,
        _customers = CustomersDao(database),
-       _outbox = outboxCoordinator;
+       _outbox = outboxCoordinator,
+       _connectivity = connectivityService,
+       _supabase = supabaseClient;
 
   static const String tag = 'Customers';
 
@@ -43,6 +50,57 @@ final class DriftCustomersRepository implements CustomersRepository {
 
   /// Null when sync is not wired (tests / signed-out legacy flows).
   final SyncOutboxCoordinator? _outbox;
+  final ConnectivityService? _connectivity;
+  final SupabaseClient? _supabase;
+
+  Future<void> _requireOnline() async {
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity!).requireOnline();
+    }
+  }
+
+  Future<void> _pushCustomerToCloud(db.Customer row) async {
+    final client = _supabase;
+    if (client == null) return;
+    try {
+      await client.from('customers').upsert({
+        'id': row.id,
+        'shop_id': row.shopId,
+        'name': row.name,
+        'phone': row.phone,
+        'email': row.email,
+        'address': row.address,
+        'is_active': row.isActive,
+        'membership_active': row.membershipActive,
+        'membership_fee_paise': row.membershipFeePaise,
+        'whatsapp_status': row.whatsappStatus,
+        'client_created_at': row.createdAt.toIso8601String(),
+      }, onConflict: 'id');
+    } catch (e) {
+      if (e.toString().contains('SocketException') ||
+          e.toString().contains('Failed host lookup')) {
+        throw const OfflineException();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _deleteCustomerOnCloud(String id) async {
+    final client = _supabase;
+    if (client == null) return;
+    try {
+      await client.from('customers').delete().eq('id', id);
+      await client.from('master_deletions').upsert({
+        'entity': 'CUSTOMER',
+        'id': id,
+        'shop_id': await resolveWritableShopId(_database),
+      }, onConflict: 'entity,id');
+    } catch (e) {
+      if (e.toString().contains('SocketException'))
+        throw const OfflineException();
+      rethrow;
+    }
+  }
 
   @override
   Future<List<Customer>> customers({
@@ -81,7 +139,11 @@ final class DriftCustomersRepository implements CustomersRepository {
   Future<bool> phoneExists(String phone, {String? exceptId}) async {
     try {
       final shopId = await resolveWritableShopId(_database);
-      return await _customers.phoneExists(phone, exceptId: exceptId, shopId: shopId);
+      return await _customers.phoneExists(
+        phone,
+        exceptId: exceptId,
+        shopId: shopId,
+      );
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to check phone number', error, stackTrace);
     }
@@ -108,6 +170,7 @@ final class DriftCustomersRepository implements CustomersRepository {
       throw const DuplicatePhoneFailure();
     }
     try {
+      if (_connectivity != null) await _requireOnline();
       final resolvedShopId = await resolveWritableShopId(_database, shopId);
       Future<Customer> doCreate() async {
         final row = await _customers.insert(
@@ -126,6 +189,19 @@ final class DriftCustomersRepository implements CustomersRepository {
         return _customerFromRow(row);
       }
 
+      if (_supabase != null) {
+        final customer = await doCreate();
+        try {
+          final row = await _customers.byId(customer.id);
+          if (row != null) await _pushCustomerToCloud(row);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        return customer;
+      }
+
       final coordinator = _outbox;
       return coordinator == null
           ? doCreate()
@@ -135,6 +211,8 @@ final class DriftCustomersRepository implements CustomersRepository {
                 _customerAppend(customer, context),
               ],
             );
+    } on OfflineException catch (e) {
+      throw UnexpectedCustomersFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to create customer', error, stackTrace);
     }
@@ -161,6 +239,46 @@ final class DriftCustomersRepository implements CustomersRepository {
       throw const DuplicatePhoneFailure();
     }
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('customers')
+              .update({
+                'name': normalizedName,
+                'phone': normalizedPhone,
+                'email': normalizedEmail,
+                'address': normalizedAddress,
+                'is_active': isActive,
+                'membership_active': membershipActive,
+                'membership_fee_paise': membershipFeePaise,
+                'whatsapp_status': whatsappStatus?.dbValue,
+              })
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _customers.update(
+          id,
+          db.CustomersCompanion(
+            name: Value(normalizedName),
+            phone: Value(normalizedPhone),
+            email: Value(normalizedEmail),
+            address: Value(normalizedAddress),
+            isActive: Value(isActive),
+            membershipActive: Value(membershipActive),
+            membershipFeePaise: Value(membershipFeePaise),
+            whatsappStatus: whatsappStatus != null
+                ? Value(whatsappStatus.dbValue)
+                : const Value.absent(),
+          ),
+        );
+        final row = await _customers.byId(id);
+        if (row != null) await _pushCustomerToCloud(row);
+        return;
+      }
       await _upsertWithSnapshot(
         id: id,
         write: () => _customers.update(
@@ -179,6 +297,8 @@ final class DriftCustomersRepository implements CustomersRepository {
           ),
         ),
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedCustomersFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update customer', error, stackTrace);
     }
@@ -187,10 +307,29 @@ final class DriftCustomersRepository implements CustomersRepository {
   @override
   Future<void> setCustomerActive(String id, bool isActive) async {
     try {
+      if (_connectivity != null) await _requireOnline();
+      if (_supabase != null) {
+        try {
+          await _supabase!
+              .from('customers')
+              .update({'is_active': isActive})
+              .eq('id', id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _customers.updateActive(id, isActive);
+        final row = await _customers.byId(id);
+        if (row != null) await _pushCustomerToCloud(row);
+        return;
+      }
       await _upsertWithSnapshot(
         id: id,
         write: () => _customers.updateActive(id, isActive),
       );
+    } on OfflineException catch (e) {
+      throw UnexpectedCustomersFailure(e.message);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to update customer', error, stackTrace);
     }
@@ -199,19 +338,45 @@ final class DriftCustomersRepository implements CustomersRepository {
   @override
   Future<CustomerDeleteResult> deleteCustomer(String id) async {
     try {
+      if (_connectivity != null) await _requireOnline();
       final existing = await _customers.byId(id);
       if (existing == null) {
         throw UnexpectedCustomersFailure('Customer not found.');
       }
       final hasHistory = await _customers.countReferences(id) > 0;
       if (hasHistory) {
-        // Billed/ledger history must stay readable — degrade to a safe soft
-        // deactivation rather than a hard delete that FK-restrict rejects.
-        await _upsertWithSnapshot(
-          id: id,
-          write: () => _customers.updateActive(id, false),
-        );
+        if (_supabase != null) {
+          try {
+            await _supabase!
+                .from('customers')
+                .update({'is_active': false})
+                .eq('id', id);
+          } catch (e) {
+            if (e.toString().contains('SocketException'))
+              throw const OfflineException();
+            rethrow;
+          }
+          await _customers.updateActive(id, false);
+          final row = await _customers.byId(id);
+          if (row != null) await _pushCustomerToCloud(row);
+        } else {
+          await _upsertWithSnapshot(
+            id: id,
+            write: () => _customers.updateActive(id, false),
+          );
+        }
         return CustomerDeleteResult.deactivated;
+      }
+      if (_supabase != null) {
+        try {
+          await _deleteCustomerOnCloud(id);
+        } catch (e) {
+          if (e.toString().contains('SocketException'))
+            throw const OfflineException();
+          rethrow;
+        }
+        await _customers.deleteById(id);
+        return CustomerDeleteResult.deleted;
       }
       final coordinator = _outbox;
       Future<void> deleteNow() => _customers.deleteById(id);
@@ -231,6 +396,8 @@ final class DriftCustomersRepository implements CustomersRepository {
         );
       }
       return CustomerDeleteResult.deleted;
+    } on OfflineException catch (e) {
+      throw UnexpectedCustomersFailure(e.message);
     } on CustomersFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {

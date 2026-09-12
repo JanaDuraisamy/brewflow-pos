@@ -10,10 +10,10 @@ void main() {
     test('empty shops creates one Cafe', () async {
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      // Simulate fresh install at v17: onCreate creates all tables, shops empty.
-      // AppMigrations from16To17 will ensure one Cafe shop.
+      // Simulate fresh install at v19: onCreate creates all tables, shops empty.
+      // AppMigrations from16To17, from17To18, from18To19 ensure one Cafe shop.
       // For this test, verify that ensureShop via business_switcher creates Cafe.
-      expect(AppConstants.databaseSchemaVersion, 17);
+      expect(AppConstants.databaseSchemaVersion, 19);
       final shops = await db.select(db.shops).get();
       // Fresh memory DB has no shops yet; business layer would create Cafe.
       expect(shops, isEmpty);

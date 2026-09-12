@@ -96,7 +96,8 @@ final class DriftStaffRepository implements StaffRepository {
 
   @override
   Future<List<UserProfile>> staffMembers({String? shopId}) async {
-    final query = _database.select(_database.users)..where((t) => t.role.equals('STAFF'));
+    final query = _database.select(_database.users)
+      ..where((t) => t.role.equals('STAFF'));
     if (shopId != null) {
       query.where((t) => t.shopId.equals(shopId));
     }
@@ -111,7 +112,7 @@ final class DriftStaffRepository implements StaffRepository {
     return profiles;
   }
 
-@override
+  @override
   Future<UserProfile> createStaffProfile({
     required AuthUser identity,
     required String shopId,

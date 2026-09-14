@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/features/settings/data/preferences_settings_repository.dart';
@@ -314,6 +315,56 @@ final class LocalMasterDataApplier {
       );
       for (final row in rows) {
         if (skipped.contains(row.id)) continue;
+        // The local `customers.phone` column is globally UNIQUE while the
+        // cloud contract scopes phone uniqueness per shop
+        // (`ux_customers_shop_phone`). A cloud row can therefore collide with
+        // a different local UUID carrying the same phone (pre-merge duplicate
+        // or cross-device creation). `insertOnConflictUpdate` only resolves
+        // PK conflicts, so without handling the whole page aborts with
+        // SqliteException 2067 and the sync cycle never advances.
+        //
+        // Same-shop duplicates converge like categories: the incoming cloud
+        // row is canonical (last-writer-wins at the server boundary), so the
+        // stale local row keeps its identity/history but frees the phone.
+        // Cross-shop collisions cannot both be kept under the current local
+        // schema, so the incoming row is skipped (local preserved) and logged
+        // — a scoped-unique migration would remove this compromise.
+        final phone = row.phone?.trim();
+        if (phone != null && phone.isNotEmpty) {
+          final clash = await (_database.select(
+            _database.customers,
+          )..where((t) => t.phone.equals(phone))).getSingleOrNull();
+          if (clash != null && clash.id != row.id) {
+            final clashPending = await _pendingIds(MasterEntity.customer, [
+              clash.id,
+            ]);
+            if (clashPending.contains(clash.id)) {
+              // Pending-local-wins extends to the business key: never revert
+              // a local phone edit that has not pushed yet.
+              continue;
+            }
+            if (clash.shopId == row.shopId) {
+              await (_database.update(
+                _database.customers,
+              )..where((t) => t.id.equals(clash.id))).write(
+                db.CustomersCompanion(
+                  phone: const Value(null),
+                  updatedAt: Value(appliedAt),
+                ),
+              );
+              AppLog.info(
+                'Customer phone collision converged (same shop)',
+                tag: 'SyncEngine',
+              );
+            } else {
+              AppLog.info(
+                'Customer phone collision skipped (cross-shop, local kept)',
+                tag: 'SyncEngine',
+              );
+              continue;
+            }
+          }
+        }
         await _database
             .into(_database.customers)
             .insertOnConflictUpdate(
@@ -344,6 +395,62 @@ final class LocalMasterDataApplier {
       );
       for (final row in rows) {
         if (skipped.contains(row.id)) continue;
+        // The local UNIQUE(shop_id, receipt_number) is the sale's business
+        // key, but the cloud can legitimately hold the same receipt under a
+        // DIFFERENT uuid (multi-device offline sales, re-seeds). A plain PK
+        // upsert then aborts with SqliteException 2067 and the pull page
+        // retries forever. Converge instead: the incoming cloud row is
+        // canonical (server last-writer-wins) and the stale local duplicate
+        // is retired only after its history is repointed — never deleted
+        // silently. Pending local writes still win and just defer.
+        final clash =
+            await (_database.select(_database.sales)..where(
+                  (t) =>
+                      t.shopId.equals(row.shopId) &
+                      t.receiptNumber.equals(row.receiptNumber),
+                ))
+                .getSingleOrNull();
+        final hasClash = clash != null && clash.id != row.id;
+        if (hasClash && clash!.shopId != row.shopId) {
+          AppLog.info(
+            'Sale receipt collision skipped (cross-shop, local kept)',
+            tag: 'SyncEngine',
+          );
+          continue;
+        }
+        if (hasClash) {
+          // Pending item writes defer convergence entirely: those items are
+          // about to push, and dropping them would lose a local business
+          // change. The next cycle reconciles after the push lands.
+          final staleItemIds =
+              await (_database.select(_database.saleItems)
+                    ..where((t) => t.saleId.equals(clash!.id)))
+                  .get()
+                  .then((rows) => rows.map((r) => r.id).toList());
+          if (staleItemIds.isNotEmpty) {
+            final pendingItems = await _pendingIds(
+              MasterEntity.saleItem,
+              staleItemIds,
+            );
+            if (pendingItems.isNotEmpty) {
+              AppLog.info(
+                'Sale collision deferred (stale sale items pending)',
+                tag: 'SyncEngine',
+              );
+              continue;
+            }
+          }
+          // Free the business key (mirroring the category collision) so the
+          // canonical insert below can commit; the stale row is retired after
+          // the canonical exists, so repointing its history satisfies RESTRICT.
+          await (_database.update(
+            _database.sales,
+          )..where((t) => t.id.equals(clash!.id))).write(
+            db.SalesCompanion(
+              receiptNumber: Value('${row.receiptNumber}__dup__${clash!.id}'),
+            ),
+          );
+        }
         await _database
             .into(_database.sales)
             .insertOnConflictUpdate(
@@ -363,8 +470,79 @@ final class LocalMasterDataApplier {
                 updatedAt: Value(appliedAt),
               ),
             );
+        if (hasClash) {
+          await _convergeSaleCollision(
+            clashId: clash!.id,
+            canonicalId: row.id,
+            appliedAt: appliedAt,
+          );
+        }
       }
     });
+  }
+
+  /// Retires the stale local sale that shares the canonical cloud row's
+  /// business key (shop_id, receipt_number) under a different uuid.
+  ///
+  /// Runs AFTER the canonical sale row has been inserted (its business key was
+  /// already freed by the caller). The pulled cloud sale is canonical and its
+  /// own item rows arrive later in the same pull, so the stale snapshot items
+  /// are safe to drop (RESTRICT on sale_items would otherwise block the
+  /// delete). Customer payments and SALE stock movements are repointed so no
+  /// history is orphaned, and PENDING/FAILED outbox entries for the stale row
+  /// are retired so nothing retries a push that can never land.
+  Future<void> _convergeSaleCollision({
+    required String clashId,
+    required String canonicalId,
+    required DateTime appliedAt,
+  }) async {
+    final staleItemIds =
+        await (_database.select(_database.saleItems)
+              ..where((t) => t.saleId.equals(clashId)))
+            .get()
+            .then((rows) => rows.map((r) => r.id).toList());
+    // Payments and SALE stock movements follow the canonical sale.
+    await (_database.update(
+      _database.customerPayments,
+    )..where((t) => t.saleId.equals(clashId))).write(
+      db.CustomerPaymentsCompanion(
+        saleId: Value(canonicalId),
+        updatedAt: Value(appliedAt),
+      ),
+    );
+    await (_database.update(_database.stockMovements)
+          ..where((t) => t.referenceType.equals('SALE'))
+          ..where((t) => t.referenceId.equals(clashId)))
+        .write(db.StockMovementsCompanion(referenceId: Value(canonicalId)));
+    // The stale sale can never be pushed again: retire its outbox rows.
+    await (_database.update(_database.syncOutbox)
+          ..where((t) => t.entity.equals(MasterEntity.sale.wire))
+          ..where((t) => t.entityId.equals(clashId))
+          ..where(
+            (t) => t.status.equals('PENDING') | t.status.equals('FAILED'),
+          ))
+        .write(
+          const db.SyncOutboxCompanion(
+            status: Value('DONE'),
+            attemptCount: Value(0),
+            lastError: Value(null),
+            lastAttemptAt: Value(null),
+          ),
+        );
+    // Drop the stale snapshot items (their data re-arrives under the
+    // canonical id) so the RESTRICT FK lets the stale sale row be deleted.
+    if (staleItemIds.isNotEmpty) {
+      await (_database.delete(
+        _database.saleItems,
+      )..where((t) => t.id.isIn(staleItemIds))).go();
+    }
+    await (_database.delete(
+      _database.sales,
+    )..where((t) => t.id.equals(clashId))).go();
+    AppLog.info(
+      'Sale receipt collision converged clash=$clashId canonical=$canonicalId',
+      tag: 'SyncEngine',
+    );
   }
 
   Future<void> applySaleItemPage(
@@ -376,8 +554,73 @@ final class LocalMasterDataApplier {
         MasterEntity.saleItem,
         rows.map((r) => r.id),
       );
+      // Parent-order guard: sale_items reference sales with a RESTRICT FK, so
+      // a row whose parent sale is not applied yet would abort the WHOLE page
+      // (SqliteException 787) and pin the cycle at its old cursor forever.
+      // Pulled pages can genuinely surface such orphans on a fresh bootstrap
+      // (page windows, shop-scoped pull skew, re-seeds). Defer them instead:
+      // the page still commits, valid siblings still apply, and the row
+      // converges on a later cycle once its parent lands. The FK constraints
+      // themselves are intentionally left untouched.
+      final presentParents = <String>{};
+      if (rows.isNotEmpty) {
+        final parents = await (_database.select(
+          _database.sales,
+        )..where((t) => t.id.isIn(rows.map((r) => r.saleId)))).get();
+        presentParents.addAll([for (final p in parents) p.id]);
+      }
       for (final row in rows) {
         if (skipped.contains(row.id)) continue;
+        if (!presentParents.contains(row.saleId)) {
+          AppLog.info(
+            'Sale item ${row.id} deferred (parent sale ${row.saleId} not applied yet)',
+            tag: 'SyncEngine',
+          );
+          continue;
+        }
+        // Business-key convergence: the online checkout mirrors a cloud sale
+        // under client-side UUIDs while the server mints its own item UUIDs.
+        // Without this, the canonical row arriving here would be INSERTED
+        // (insertOnConflictUpdate matches only on the PK id) and the same
+        // logical item would live twice locally. The incoming cloud row is
+        // canonical; any local row sharing its (sale, product, variant) key
+        // under a different id is a stale snapshot and is retired first so
+        // the canonical insert lands exactly once. The PK upsert then keeps
+        // every later replay an in-place update.
+        final stale =
+            await (_database.select(_database.saleItems)..where(
+                  (t) =>
+                      t.saleId.equals(row.saleId) &
+                      t.productId.equals(row.productId) &
+                      (row.variantId == null
+                          ? t.variantId.isNull()
+                          : t.variantId.equals(row.variantId!)) &
+                      t.id.isNotIn([row.id]),
+                ))
+                .get();
+        final staleIds = stale.map((s) => s.id).toList();
+        if (staleIds.isNotEmpty) {
+          // Never drop an item that still has a PENDING outbox row: its push
+          // is about to land and deleting the row would leak the change.
+          final pendingStale = await _pendingIds(
+            MasterEntity.saleItem,
+            staleIds,
+          );
+          if (pendingStale.isNotEmpty) {
+            AppLog.info(
+              'Sale item collision deferred (stale item pending)',
+              tag: 'SyncEngine',
+            );
+            continue;
+          }
+          await (_database.delete(
+            _database.saleItems,
+          )..where((t) => t.id.isIn(staleIds))).go();
+          AppLog.info(
+            'Sale item business-key duplicate converged: ${staleIds.join(',')} -> ${row.id}',
+            tag: 'SyncEngine',
+          );
+        }
         await _database
             .into(_database.saleItems)
             .insertOnConflictUpdate(

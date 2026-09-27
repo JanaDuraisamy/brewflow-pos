@@ -108,7 +108,7 @@ class _AppViewState extends ConsumerState<_AppView>
 
     return _AutoBackupGate(
       child: MaterialApp.router(
-        title: 'BrewFlow POS',
+        title: 'JiggarTea Bill',
         debugShowCheckedModeBanner: false,
 
         themeMode: ref.watch(appThemeModeProvider),

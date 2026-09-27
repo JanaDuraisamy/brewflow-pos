@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/app/widgets/brand_mark.dart';
+import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
@@ -30,27 +31,35 @@ final class AppNavItem {
 
 /// Mobile bottom navigation bar — phone-optimized, Apple-inspired.
 ///
-/// On narrow phones (<600dp) the bar shows only the 5 most important
-/// destinations; the rest live in a clean “More” sheet. This keeps labels
+/// On narrow phones (<600dp) the bar shows only the [primaryIndices]
+/// destinations; the rest live in a clean "More" sheet. This keeps labels
 /// single-line at 411dp, avoids the 10-item wrap seen in the screenshots,
 /// and feels premium — light, spacious, 56dp height, 48dp touch targets.
+///
+/// The main-bar split is passed in (positions within [items]) rather than
+/// hardcoded, because the owner can organize it. It is a *grouping* choice
+/// only: anything not in [primaryIndices] still appears in the "More" sheet,
+/// so no destination can be lost.
 final class AppBottomNavigation extends StatelessWidget {
   const AppBottomNavigation({
     super.key,
     required this.items,
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.primaryIndices = defaultPrimaryIndices,
   });
 
   final List<AppNavItem> items;
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
 
-  // Phone primaries (in display order): Dashboard, Inventory, Customers.
-  // Billing/POS, Orders, Expenses, Purchases, Suppliers, Reports and Settings
-  // live behind "More", so the bar stays short on a phone and the cashier
-  // still reaches every module through the sheet.
-  static const List<int> _phonePrimary = [0, 1, 4];
+  /// Rendered positions of [items] that get a direct bar slot. Positions that
+  /// are out of range or duplicated are ignored.
+  final List<int> primaryIndices;
+
+  /// Fallback main bar (in display order): Dashboard, Inventory, Customers.
+  /// Used when a caller does not specify a split.
+  static const List<int> defaultPrimaryIndices = [0, 1, 4];
 
   @override
   Widget build(BuildContext context) {
@@ -62,33 +71,49 @@ final class AppBottomNavigation extends StatelessWidget {
         onDestinationSelected: onDestinationSelected,
       );
     }
-    // Phone: 4 primaries + More
-    final primaryIndices = _phonePrimary
-        .where((i) => i < items.length)
-        .toList();
-    final moreIndices = List<int>.generate(
-      items.length,
-      (i) => i,
-    ).where((i) => !primaryIndices.contains(i)).toList();
+    // Phone: the primary destinations + More. Out-of-range and duplicate
+    // positions are dropped, so a stale arrangement can never point the bar
+    // at a missing item.
+    final primary = <int>[];
+    for (final i in primaryIndices) {
+      if (i >= 0 && i < items.length && !primary.contains(i)) primary.add(i);
+    }
+    // A bar needs at least one real destination: if the arrangement somehow
+    // nominates none, keep the first one rather than rendering a lone "More".
+    if (primary.isEmpty && items.isNotEmpty) primary.add(0);
+    final primarySet = primary.toSet();
+    final moreIndices = [
+      for (var i = 0; i < items.length; i++)
+        if (!primarySet.contains(i)) i,
+    ];
+    // With no secondary destination there is nothing for "More" to open, so it
+    // is not rendered at all rather than opening an empty sheet.
+    final showMore = moreIndices.isNotEmpty;
     final isMoreSelected = moreIndices.contains(selectedIndex);
 
     final destinations = <NavigationDestination>[
-      for (final idx in primaryIndices)
+      for (final idx in primary)
         NavigationDestination(
           icon: Icon(items[idx].icon),
           selectedIcon: Icon(items[idx].selectedIcon),
-          label: _phoneLabel(items[idx].label),
+          label: items[idx].label,
         ),
-      NavigationDestination(
-        icon: const Icon(Icons.more_horiz_outlined),
-        selectedIcon: const Icon(Icons.more_horiz),
-        label: 'More',
-      ),
+      if (showMore)
+        NavigationDestination(
+          icon: const Icon(Icons.more_horiz_outlined),
+          selectedIcon: const Icon(Icons.more_horiz),
+          label: 'More',
+        ),
     ];
+    // NavigationBar requires at least two destinations; a single-destination
+    // navigation has nothing to choose between, so render nothing.
+    if (destinations.length < 2) {
+      return const SizedBox.shrink();
+    }
 
     int navSelected = 0;
-    for (var i = 0; i < primaryIndices.length; i++) {
-      if (primaryIndices[i] == selectedIndex) {
+    for (var i = 0; i < primary.length; i++) {
+      if (primary[i] == selectedIndex) {
         navSelected = i;
         break;
       }
@@ -99,20 +124,14 @@ final class AppBottomNavigation extends StatelessWidget {
       destinations: destinations,
       selectedIndex: navSelected,
       onDestinationSelected: (navIndex) {
-        if (navIndex < primaryIndices.length) {
-          onDestinationSelected(primaryIndices[navIndex]);
+        if (navIndex < primary.length) {
+          onDestinationSelected(primary[navIndex]);
         } else {
           _showMoreSheet(context, moreIndices, isMoreSelected);
         }
       },
       isMoreSelected: isMoreSelected,
     );
-  }
-
-  String _phoneLabel(String label) {
-    // Keep labels short so they never wrap at 410dp
-    const map = {'Dashboard': 'Home', 'Inventory': 'Stock'};
-    return map[label] ?? label;
   }
 
   void _showMoreSheet(
@@ -143,45 +162,64 @@ final class AppBottomNavigation extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              ...moreIndices.map((idx) {
-                final item = items[idx];
-                final selected = idx == selectedIndex;
-                return ListTile(
-                  leading: Icon(
-                    selected ? item.selectedIcon : item.icon,
-                    color: selected
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
+              // The owner can move up to four destinations into the bar, so the
+              // sheet can hold far more tiles than fit on a short phone. Keep it
+              // scrollable instead of letting the last rows overflow off-screen
+              // and become untappable.
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...moreIndices.map((idx) {
+                        final item = items[idx];
+                        final selected = idx == selectedIndex;
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            selected ? item.selectedIcon : item.icon,
+                            color: selected
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                          ),
+                          title: Text(
+                            item.label,
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(
+                                  fontWeight: selected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: selected
+                                      ? Theme.of(context).colorScheme.primary
+                                      : null,
+                                ),
+                          ),
+                          trailing: selected
+                              ? Icon(
+                                  Icons.check_rounded,
+                                  color: Theme.of(context).colorScheme.primary,
+                                  size: 20,
+                                )
+                              : null,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: AppBorderRadius.md,
+                          ),
+                          selected: selected,
+                          selectedTileColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.08),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            onDestinationSelected(idx);
+                          },
+                        );
+                      }),
+                    ],
                   ),
-                  title: Text(
-                    item.label,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                      color: selected
-                          ? Theme.of(context).colorScheme.primary
-                          : null,
-                    ),
-                  ),
-                  trailing: selected
-                      ? Icon(
-                          Icons.check_rounded,
-                          color: Theme.of(context).colorScheme.primary,
-                          size: 20,
-                        )
-                      : null,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: AppBorderRadius.md,
-                  ),
-                  selected: selected,
-                  selectedTileColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withValues(alpha: 0.08),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    onDestinationSelected(idx);
-                  },
-                );
-              }),
+                ),
+              ),
             ],
           ),
         ),
@@ -332,6 +370,7 @@ final class AppSidebar extends StatelessWidget {
     this.extended = true,
     this.showBrand = true,
     this.shopName,
+    this.appDisplayName,
     this.footer,
   });
 
@@ -352,10 +391,23 @@ final class AppSidebar extends StatelessWidget {
   /// Null/empty keeps the generic edition line. Never hardcoded anywhere.
   final String? shopName;
 
+  /// The platform display name from Settings (e.g. "JiggarTea Bill" or a renamed
+  /// wordmark). Falls back to [AppConstants.defaultAppDisplayName] when null,
+  /// empty or blank — mirroring the phone app bar so the wordmark is never
+  /// hardcoded on the tablet/desktop rail either.
+  final String? appDisplayName;
+
   final Widget? footer;
+
+  /// Resolves the platform wordmark exactly like the phone app bar: the
+  /// Settings display name when it has content, else the default brand.
+  String _displayName() => appDisplayName?.trim().isNotEmpty ?? false
+      ? appDisplayName!.trim()
+      : AppConstants.defaultAppDisplayName;
 
   @override
   Widget build(BuildContext context) {
+    final displayName = _displayName();
     return Container(
       width: extended ? extendedWidth : compactWidth,
       color: AppColors.primaryDark,
@@ -384,7 +436,7 @@ final class AppSidebar extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'BrewFlow',
+                            displayName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleMedium

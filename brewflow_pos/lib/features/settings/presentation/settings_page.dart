@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/app/navigation/navigation_config.dart';
 import 'package:brewflow_pos/app/widgets/app_buttons.dart';
 import 'package:brewflow_pos/app/widgets/app_card.dart';
 import 'package:brewflow_pos/app/widgets/page_header.dart';
@@ -94,6 +95,23 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
   );
   late ThemePreference _theme = widget.settings.theme;
   late bool _membership = widget.settings.membershipEnabled;
+
+  /// Owner navigation organization (order + phone main-bar split). Persisted
+  /// with the rest of [ShopSettings] by the single Save action.
+  late NavArrangement _arrangement = NavArrangement.fromSettings(
+    widget.settings,
+  );
+
+  /// Navigation organization is an OWNER-only preference: it shapes the app
+  /// chrome for the whole shop, and staff keep their permission-filtered view.
+  ///
+  /// [watch], not [read]: the profile resolves asynchronously, so reading it
+  /// once during the first build would observe the loading state (null) and
+  /// never rebuild once the owner is known — hiding the organizer from the
+  /// only role allowed to use it.
+  bool get _canCustomizeNavigation =>
+      ref.watch(userProfileProvider).value?.isOwner ?? false;
+
   bool _saving = false;
   bool _dirty = false;
 
@@ -216,6 +234,8 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
         lowStockThreshold: int.parse(_threshold.text.trim()),
         theme: _theme,
         membershipEnabled: _membership,
+        navigationOrder: _arrangement.order,
+        navigationPrimary: _arrangement.primary,
       );
       await ref.read(shopSettingsProvider.notifier).save(next);
       if (mounted) setState(() => _dirty = false);
@@ -229,6 +249,31 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
         setState(() => _saving = false);
       }
     }
+  }
+
+  /// Opens the navigation organizer and commits the result into page state.
+  ///
+  /// Only the ORDER and the main-bar/More grouping can change: every
+  /// destination stays in the list and stays reachable, and the canonical
+  /// labels are shown read-only.
+  Future<void> _editNavigation() async {
+    final next = await showModalBottomSheet<NavArrangement>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) =>
+          _NavigationArrangementSheet(arrangement: _arrangement),
+    );
+    if (next == null || !mounted) return;
+    setState(() {
+      _arrangement = next;
+      _dirty = true;
+    });
+  }
+
+  String get _navigationSummary {
+    final primary = _arrangement.primary.length;
+    return '$primary in main bar · ${_arrangement.order.length} features';
   }
 
   @override
@@ -453,6 +498,24 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
                         ),
                       ),
                       const SizedBox(height: AppSpacing.lg),
+                      // Owner-only navigation organization. Staff never see it:
+                      // their navigation stays permission-filtered and fixed.
+                      if (_canCustomizeNavigation) ...[
+                        SectionCard(
+                          title: 'Navigation',
+                          subtitle:
+                              'Reorder app features and choose which stay in '
+                              'the main bar. Every feature stays available '
+                              'either way.',
+                          child: _SettingRow(
+                            icon: Icons.view_sidebar_outlined,
+                            label: 'Organize navigation',
+                            value: _navigationSummary,
+                            onTap: _editNavigation,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.lg),
+                      ],
                       const BackupSectionCard(),
                       const SizedBox(height: AppSpacing.lg),
                       const SectionCard(
@@ -460,8 +523,6 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
                         subtitle: 'Receipt printing status and diagnostics.',
                         child: _PrinterRow(),
                       ),
-                      const SizedBox(height: AppSpacing.lg),
-                      const _StaffAccessCard(),
                       const SizedBox(height: AppSpacing.lg),
                       const _StorageAccessCard(),
                       const SizedBox(height: AppSpacing.lg),
@@ -658,11 +719,25 @@ final class _SettingsFormState extends ConsumerState<_SettingsForm> {
                       ],
                     ),
                     const SizedBox(height: AppSpacing.xl),
+                    // Owner-only navigation organization (see the tablet and
+                    // desktop section for the full explanation).
+                    if (_canCustomizeNavigation) ...[
+                      _MobileSection(
+                        label: 'Navigation',
+                        children: [
+                          _SettingRow(
+                            icon: Icons.view_sidebar_outlined,
+                            label: 'Organize navigation',
+                            value: _navigationSummary,
+                            onTap: _editNavigation,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.xl),
+                    ],
                     const MobileBackupSection(),
                     const SizedBox(height: AppSpacing.xl),
                     const _MobilePrinterSection(),
-                    const SizedBox(height: AppSpacing.xl),
-                    const _MobileStaffAccessCard(),
                     const SizedBox(height: AppSpacing.xl),
                     const _MobileStorageAccessCard(),
                     const SizedBox(height: AppSpacing.xl),
@@ -745,6 +820,186 @@ final class _SettingRow extends StatelessWidget {
               Icons.chevron_right,
               size: 20,
               color: context.appColors.textDisabled,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Owner-only navigation organizer.
+///
+/// Every destination is listed exactly once and can be either REORDERED or
+/// moved between the phone main bar and the "More" sheet. There is
+/// deliberately no hide/disable control: an arrangement reorganizes the
+/// navigation, it never removes a feature. Labels are the canonical feature
+/// names, shown read-only.
+final class _NavigationArrangementSheet extends StatefulWidget {
+  const _NavigationArrangementSheet({required this.arrangement});
+
+  final NavArrangement arrangement;
+
+  @override
+  State<_NavigationArrangementSheet> createState() =>
+      _NavigationArrangementSheetState();
+}
+
+final class _NavigationArrangementSheetState
+    extends State<_NavigationArrangementSheet> {
+  late NavArrangement _draft = widget.arrangement;
+
+  void _apply(NavArrangement next) => setState(() => _draft = next);
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final atLimit = _draft.primary.length >= maxPrimaryRoutes;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.md),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                0,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Organize navigation',
+                    style: textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: context.appColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'Reorder features and choose which stay in the main bar. '
+                    'Everything else stays available under More — no feature '
+                    'is ever removed.',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: context.appColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _draft.order.length,
+                itemBuilder: (context, index) {
+                  final route = _draft.order[index];
+                  final destination = NavArrangement.destinationFor(route);
+                  if (destination == null) return const SizedBox.shrink();
+                  final isPrimary = _draft.isPrimary(route);
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                      vertical: AppSpacing.xs,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          destination.icon,
+                          size: 20,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Text(
+                            destination.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.bodyLarge,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Move ${destination.label} up',
+                          onPressed: index == 0
+                              ? null
+                              : () => _apply(_draft.moveUp(route)),
+                          icon: const Icon(Icons.keyboard_arrow_up),
+                        ),
+                        IconButton(
+                          tooltip: 'Move ${destination.label} down',
+                          onPressed: index == _draft.order.length - 1
+                              ? null
+                              : () => _apply(_draft.moveDown(route)),
+                          icon: const Icon(Icons.keyboard_arrow_down),
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        // Explicit Main/More grouping, not an on/off switch:
+                        // both states keep the feature reachable.
+                        SegmentedButton<bool>(
+                          showSelectedIcon: false,
+                          segments: const [
+                            ButtonSegment<bool>(
+                              value: true,
+                              label: Text('Main'),
+                            ),
+                            ButtonSegment<bool>(
+                              value: false,
+                              label: Text('More'),
+                            ),
+                          ],
+                          selected: {isPrimary},
+                          onSelectionChanged: (selection) {
+                            final wantsMain = selection.first;
+                            if (wantsMain && atLimit) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'The main bar holds up to '
+                                    '$maxPrimaryRoutes features. Move one to '
+                                    'More first.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            _apply(
+                              _draft.setPrimary(route, isPrimary: wantsMain),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.sm,
+                AppSpacing.lg,
+                0,
+              ),
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: () => _apply(NavArrangement.defaults),
+                    child: const Text('Reset to default'),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(_draft),
+                    child: const Text('Apply'),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -943,7 +1198,7 @@ final class _MobileCurrencyRow extends StatelessWidget {
                 ),
                 SizedBox(height: AppSpacing.xs),
                 Text(
-                  'Indian Rupees (₹) — BrewFlow bills in paise precision.',
+                  'Indian Rupees (₹) — JiggarTea Bill bills in paise precision.',
                   style: textTheme.bodySmall?.copyWith(
                     color: context.appColors.textSecondary,
                   ),
@@ -998,32 +1253,6 @@ final class _MobilePrinterSection extends ConsumerWidget {
               ),
             ],
           ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Phone-only owner entry into Staff Management.
-final class _MobileStaffAccessCard extends ConsumerWidget {
-  const _MobileStaffAccessCard();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final canManage = ref.watch(canProvider(Permission.manageStaff));
-    if (!canManage) {
-      return const SizedBox.shrink();
-    }
-    return _MobileSection(
-      label: 'Staff & Permissions',
-      children: [
-        _SettingRow(
-          icon: Icons.group_outlined,
-          label: 'Staff Management',
-          value: 'Add staff and control their permissions',
-          onTap: () {
-            context.go(AppRoutes.staff);
-          },
         ),
       ],
     );
@@ -1134,33 +1363,6 @@ final class _PrinterRow extends ConsumerWidget {
   }
 }
 
-/// Owner-only entry into the dedicated Staff Management page. Visibility is
-/// driven by the single authorization source; the /staff route and the page
-/// itself enforce the same permission, so hiding alone is never the guard.
-final class _StaffAccessCard extends ConsumerWidget {
-  const _StaffAccessCard();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final canManage = ref.watch(canProvider(Permission.manageStaff));
-    if (!canManage) {
-      return const SizedBox.shrink();
-    }
-    return SectionCard(
-      title: 'Staff & Permissions',
-      subtitle: 'Team access to shop features.',
-      child: _SettingRow(
-        icon: Icons.group_outlined,
-        label: 'Staff Management',
-        value: 'Add staff and control their permissions',
-        onTap: () {
-          context.go(AppRoutes.staff);
-        },
-      ),
-    );
-  }
-}
-
 /// Owner-only entry into the Storage Monitoring + Monthly Cleanup screen. Like
 /// [/staff] it is keyed to the owner-only permission so hiding alone is never
 /// the guard — the route and the page enforce the same boundary.
@@ -1243,7 +1445,7 @@ final class _CurrencyRow extends StatelessWidget {
               ),
               SizedBox(height: AppSpacing.xs),
               Text(
-                'Indian Rupees (₹) — BrewFlow bills in paise precision. '
+                'Indian Rupees (₹) — JiggarTea Bill bills in paise precision. '
                 'Other currencies are not supported.',
                 style: textTheme.bodySmall?.copyWith(
                   color: context.appColors.textSecondary,

@@ -11,6 +11,8 @@ import 'migrations/migrations.dart';
 import 'tables/categories.dart';
 import 'tables/customer_payments.dart';
 import 'tables/customers.dart';
+import 'tables/daily_closings.dart';
+import 'tables/expense_payments.dart';
 import 'tables/expenses.dart';
 import 'tables/products.dart';
 import 'tables/product_variants.dart';
@@ -20,6 +22,10 @@ import 'tables/purchases.dart';
 import 'tables/offers.dart';
 import 'tables/sale_items.dart';
 import 'tables/sale_sequences.dart';
+import 'tables/staff_advances.dart';
+import 'tables/staff_attendance.dart';
+import 'tables/staff_daily_salaries.dart';
+import 'tables/staff_monthly_salaries.dart';
 import 'tables/sales.dart';
 import 'tables/devices.dart';
 import 'tables/shops.dart';
@@ -69,6 +75,7 @@ part 'app_database.g.dart';
     Customers,
     CustomerPayments,
     Expenses,
+    ExpensePayments,
     Sales,
     SaleItems,
     SaleSequences,
@@ -81,6 +88,11 @@ part 'app_database.g.dart';
     ProductImageSync,
     StorageCleanupNotification,
     StorageCleanupState,
+    StaffAttendance,
+    StaffAdvances,
+    StaffDailySalary,
+    StaffMonthlySalaries,
+    DailyClosings,
   ],
 )
 class AppDatabase extends _$AppDatabase {

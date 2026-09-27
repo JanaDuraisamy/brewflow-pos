@@ -175,7 +175,9 @@ final class AppTheme {
 
       chipTheme: ChipThemeData(
         backgroundColor: appColors.surfaceVariant,
-        selectedColor: appColors.softGreen,
+        selectedColor: isDark
+            ? appColors.softGreen
+            : appColors.selectedControlBackground,
         labelStyle: TextStyle(color: appColors.textPrimary),
         secondaryLabelStyle: TextStyle(color: appColors.textSecondary),
         side: BorderSide(color: appColors.divider),
@@ -199,12 +201,16 @@ final class AppTheme {
         style: ButtonStyle(
           foregroundColor: WidgetStateProperty.resolveWith(
             (states) => states.contains(WidgetState.selected)
-                ? scheme.onPrimaryContainer
+                ? isDark
+                      ? scheme.onPrimaryContainer
+                      : appColors.selectedControlForeground
                 : appColors.textSecondary,
           ),
           backgroundColor: WidgetStateProperty.resolveWith(
             (states) => states.contains(WidgetState.selected)
-                ? scheme.primaryContainer
+                ? isDark
+                      ? scheme.primaryContainer
+                      : appColors.selectedControlBackground
                 : appColors.surfaceVariant,
           ),
           side: WidgetStatePropertyAll(BorderSide(color: appColors.divider)),

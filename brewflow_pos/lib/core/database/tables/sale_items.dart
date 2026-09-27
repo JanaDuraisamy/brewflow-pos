@@ -78,8 +78,10 @@ class SaleItems extends Table {
   /// Applied offer name; NULL when no offer applied.
   TextColumn get appliedOfferName => text().nullable()();
 
-  /// Applied offer type; NULL when no offer applied.
+  /// Applied offer type; NULL when no offer applied. Mirrors the `offers`
+  /// type vocabulary (including QUANTITY_TIER) so a tier-priced line can be
+  /// snapshotted on the sale.
   TextColumn get appliedOfferType => text().nullable().customConstraint(
-    "CHECK (applied_offer_type IS NULL OR applied_offer_type IN ('PERCENTAGE','COMBO','BUY_X_GET_Y'))",
+    "CHECK (applied_offer_type IS NULL OR applied_offer_type IN ('PERCENTAGE','COMBO','BUY_X_GET_Y','QUANTITY_TIER'))",
   )();
 }

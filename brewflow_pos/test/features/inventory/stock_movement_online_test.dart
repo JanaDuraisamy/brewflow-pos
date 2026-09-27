@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_stock_movement_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
@@ -182,6 +184,36 @@ void main() {
       expect(call['reason'], 'OPENING');
       expect(call['note'], 'initial till');
     });
+
+    test(
+      'RPC timeout maps to a clean StockMovementFailure and writes nothing',
+      () async {
+        await seedProduct(id: 'p1', stock: 10);
+        // Regression for the QA RPC hang: the gateway surfaces a
+        // TimeoutException (bounded client wait) which must become a
+        // user-safe failure, never an unhandled error and never stock drift.
+        cloud.nextError = TimeoutException('simulated hang');
+
+        await expectLater(
+          repository.adjustStock(
+            productId: 'p1',
+            delta: 5,
+            reason: StockAdjustmentReason.correction,
+          ),
+          throwsA(
+            isA<StockMovementFailure>().having(
+              (e) => e.message,
+              'message',
+              contains('taking too long'),
+            ),
+          ),
+        );
+
+        expect(await productStock('p1'), 10);
+        expect(await repository.movementsFor('p1'), isEmpty);
+        expect(await outboxPendingCount(), 0);
+      },
+    );
 
     test(
       'server insufficient stock maps to a safe failure and writes nothing',

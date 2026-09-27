@@ -3,6 +3,7 @@ import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/purchases/data/drift_suppliers_repository.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
 import 'package:brewflow_pos/features/purchases/domain/suppliers_repository.dart';
+import 'package:brewflow_pos/features/purchases/presentation/purchase_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -229,6 +230,9 @@ final class SuppliersController extends AsyncNotifier<List<Supplier>> {
     try {
       await action();
       ref.invalidateSelf();
+      // Also invalidate the active suppliers list used by the purchase form
+      // picker so newly added suppliers appear immediately.
+      ref.invalidate(activeSuppliersProvider);
     } on SuppliersFailure {
       rethrow;
     } catch (error, stackTrace) {

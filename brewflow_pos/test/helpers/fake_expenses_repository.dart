@@ -3,6 +3,23 @@ import 'dart:async';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
+import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
+
+/// Accumulator while grouping unpaid expenses by payee key.
+final class _GroupedPayable {
+  _GroupedPayable({
+    required this.payeeKey,
+    required this.payeeName,
+    required this.oldestExpenseDate,
+  });
+
+  final String payeeKey;
+  final String payeeName;
+  int totalPaise = 0;
+  int paidPaise = 0;
+  int expenseCount = 0;
+  DateTime oldestExpenseDate;
+}
 
 /// In-memory [ExpensesRepository] for tests.
 ///
@@ -14,11 +31,17 @@ import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
 final class FakeExpensesRepository implements ExpensesRepository {
   final List<Expense> storedExpenses = [];
 
+  /// Append-only payments recorded against shop payables.
+  final List<ExpensePayment> storedPayablePayments = [];
+
   /// When set, every load and mutation throws this error instead of running.
   Object? loadError;
 
   /// When set, expense loads wait for this (loading-state tests).
   Completer<void>? loadGate;
+
+  /// When set, [payables] throws this error before running.
+  Object? payablesError;
 
   /// Number of [expenses] calls.
   int loadCalls = 0;
@@ -99,6 +122,12 @@ final class FakeExpensesRepository implements ExpensesRepository {
           return byDate != 0 ? byDate : b.createdAt.compareTo(a.createdAt);
         });
     return matching;
+  }
+
+  @override
+  Future<int> expensesCount({List<String>? shopIds}) async {
+    _throwIfLoadError();
+    return storedExpenses.length;
   }
 
   @override
@@ -198,6 +227,134 @@ final class FakeExpensesRepository implements ExpensesRepository {
   @override
   Future<int> payablePaise({List<String>? shopIds}) async {
     _throwIfLoadError();
+    // Net of payments, matching the Drift repository: a payment reduces what is
+    // owed, and the total is never negative.
+    final total = _unpaidTotal() - _paidTotal();
+    return total < 0 ? 0 : total;
+  }
+
+  @override
+  Future<List<Expense>> payables({List<String>? shopIds}) async {
+    _throwIfLoadError();
+    final error = payablesError;
+    if (error != null) {
+      throw error;
+    }
+    final due =
+        [
+          for (final expense in storedExpenses)
+            if (expense.isActive &&
+                expense.paymentStatus == ExpensePaymentStatus.notPaid)
+              expense,
+        ]..sort((a, b) {
+          final byDate = a.expenseDate.compareTo(b.expenseDate);
+          return byDate != 0 ? byDate : a.createdAt.compareTo(b.createdAt);
+        });
+    return due;
+  }
+
+  // ---- Shop payables ---------------------------------------------------------------
+
+  @override
+  Future<List<ShopPayable>> shopPayables({List<String>? shopIds}) async {
+    _throwIfLoadError();
+    final groups = <String, _GroupedPayable>{};
+    for (final expense in storedExpenses) {
+      if (!expense.isActive ||
+          expense.paymentStatus != ExpensePaymentStatus.notPaid) {
+        continue;
+      }
+      final key = PayeeKey.of(expense.name);
+      final group = groups.putIfAbsent(
+        key,
+        () => _GroupedPayable(
+          payeeKey: key,
+          payeeName: PayeeKey.display(expense.name),
+          oldestExpenseDate: expense.expenseDate,
+        ),
+      );
+      group.totalPaise += expense.amountPaise;
+      group.expenseCount += 1;
+      if (expense.expenseDate.isBefore(group.oldestExpenseDate)) {
+        group.oldestExpenseDate = expense.expenseDate;
+      }
+    }
+    for (final payment in storedPayablePayments) {
+      if (payment.reversed) continue;
+      final group = groups[payment.payeeKey];
+      if (group == null) continue;
+      group.paidPaise += payment.amountPaise;
+    }
+    final result =
+        [
+          for (final group in groups.values)
+            ShopPayable(
+              payeeKey: group.payeeKey,
+              payeeName: group.payeeName,
+              totalPaise: group.totalPaise,
+              paidPaise: group.paidPaise,
+              expenseCount: group.expenseCount,
+              oldestExpenseDate: group.oldestExpenseDate,
+              lastPaidAt: _lastPaidAt(group.payeeKey),
+            ),
+        ]..sort((a, b) {
+          final byRemaining = b.remainingPaise.compareTo(a.remainingPaise);
+          if (byRemaining != 0) return byRemaining;
+          return a.oldestExpenseDate.compareTo(b.oldestExpenseDate);
+        });
+    return result;
+  }
+
+  @override
+  Future<ExpensePayment> recordPayablePayment({
+    required String payeeName,
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    required DateTime paidAt,
+    String? note,
+    String? shopId,
+  }) async {
+    _throwIfLoadError();
+    if (amountPaise <= 0) throw const InvalidPayablePaymentFailure();
+    final displayName = PayeeKey.display(payeeName);
+    if (displayName.isEmpty) throw const PayableNotFoundFailure();
+    final payeeKey = PayeeKey.of(displayName);
+    final remaining = _unpaidTotalFor(payeeKey) - _paidTotalFor(payeeKey);
+    if (remaining <= 0) throw const PayableNotFoundFailure();
+    if (amountPaise > remaining) {
+      throw const PayablePaymentExceedsDueFailure();
+    }
+    final payment = ExpensePayment(
+      id: 'expense-payment-${storedPayablePayments.length + 1}',
+      payeeKey: payeeKey,
+      payeeName: displayName,
+      amountPaise: amountPaise,
+      paymentMethod: paymentMethod,
+      paidAt: paidAt.toUtc(),
+      note: _optionalText(note),
+      reversed: false,
+      reversedAt: null,
+      createdAt: DateTime.now().toUtc(),
+    );
+    storedPayablePayments.add(payment);
+    return payment;
+  }
+
+  @override
+  Future<List<ExpensePayment>> payablePayments({
+    String? payeeName,
+    List<String>? shopIds,
+  }) async {
+    _throwIfLoadError();
+    final key = payeeName == null ? null : PayeeKey.of(payeeName);
+    final matching = [
+      for (final payment in storedPayablePayments)
+        if (key == null || payment.payeeKey == key) payment,
+    ]..sort((a, b) => b.paidAt.compareTo(a.paidAt));
+    return matching;
+  }
+
+  int _unpaidTotal() {
     var total = 0;
     for (final expense in storedExpenses) {
       if (expense.isActive &&
@@ -206,6 +363,47 @@ final class FakeExpensesRepository implements ExpensesRepository {
       }
     }
     return total;
+  }
+
+  int _unpaidTotalFor(String payeeKey) {
+    var total = 0;
+    for (final expense in storedExpenses) {
+      if (expense.isActive &&
+          expense.paymentStatus == ExpensePaymentStatus.notPaid &&
+          PayeeKey.of(expense.name) == payeeKey) {
+        total += expense.amountPaise;
+      }
+    }
+    return total;
+  }
+
+  int _paidTotal() {
+    var total = 0;
+    for (final payment in storedPayablePayments) {
+      if (!payment.reversed) total += payment.amountPaise;
+    }
+    return total;
+  }
+
+  int _paidTotalFor(String payeeKey) {
+    var total = 0;
+    for (final payment in storedPayablePayments) {
+      if (!payment.reversed && payment.payeeKey == payeeKey) {
+        total += payment.amountPaise;
+      }
+    }
+    return total;
+  }
+
+  DateTime? _lastPaidAt(String payeeKey) {
+    DateTime? latest;
+    for (final payment in storedPayablePayments) {
+      if (payment.reversed || payment.payeeKey != payeeKey) continue;
+      if (latest == null || payment.paidAt.isAfter(latest)) {
+        latest = payment.paidAt;
+      }
+    }
+    return latest;
   }
 
   @override

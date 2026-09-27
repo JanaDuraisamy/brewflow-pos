@@ -120,6 +120,17 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
+  Future<void> recordOpeningDue({
+    required String customerId,
+    required int amountPaise,
+    String? shopId,
+  }) => inner.recordOpeningDue(
+    customerId: customerId,
+    amountPaise: amountPaise,
+    shopId: shopId,
+  );
+
+  @override
   Future<int> outstandingForCustomer(String customerId) =>
       inner.outstandingForCustomer(customerId);
 
@@ -129,6 +140,38 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
 
   @override
   Future<List<String>> customerIdsWithDue() => inner.customerIdsWithDue();
+
+  @override
+  Future<List<CustomerPayment>> collectCustomerPayment({
+    required String customerId,
+    required String paymentGroupId,
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    String? note,
+    String? shopId,
+  }) {
+    calls += 1;
+    return inner.collectCustomerPayment(
+      customerId: customerId,
+      paymentGroupId: paymentGroupId,
+      amountPaise: amountPaise,
+      paymentMethod: paymentMethod,
+      note: note,
+      shopId: shopId,
+    );
+  }
+
+  @override
+  Future<List<CustomerReceivable>> receivables({List<String>? shopIds}) {
+    calls += 1;
+    return inner.receivables(shopIds: shopIds);
+  }
+
+  @override
+  Future<List<CustomerOutstandingBalance>> outstandingAsOf({
+    required DateTime toUtc,
+    List<String>? shopIds,
+  }) => inner.outstandingAsOf(toUtc: toUtc, shopIds: shopIds);
 }
 
 void main() {
@@ -333,6 +376,104 @@ void main() {
         expect(cart().isEmpty, isTrue);
       },
     );
+  });
+
+  group('Frequently Sold default and ranking', () {
+    test('defaults the POS filter to the Frequently Sold category', () async {
+      product(id: 'p1', name: 'Filter Coffee');
+      await awaitUntil(() => container.read(posProductsProvider) is AsyncData);
+      expect(
+        container.read(posFilterProvider).categoryId,
+        kFrequentlySoldCategoryId,
+        reason: 'a fresh POS lands on Frequently Sold, not All categories',
+      );
+    });
+
+    test('ranks past best sellers first, then the rest of the shelf', () async {
+      product(id: 'p-coffee', name: 'Filter Coffee', stock: 50);
+      product(id: 'p-chai', name: 'Masala Chai', stock: 50);
+      product(id: 'p-cookie', name: 'Butter Cookie', stock: 50);
+
+      await billing.completeSale(
+        lines: [
+          const CartLine(
+            productId: 'p-chai',
+            productName: 'Masala Chai',
+            unitPricePaise: 12000,
+            quantity: 5,
+            maxQuantity: 99,
+          ),
+          const CartLine(
+            productId: 'p-cookie',
+            productName: 'Butter Cookie',
+            unitPricePaise: 5000,
+            quantity: 1,
+            maxQuantity: 99,
+          ),
+        ],
+        paymentMethod: PaymentMethod.cash,
+      );
+      await billing.completeSale(
+        lines: [
+          const CartLine(
+            productId: 'p-chai',
+            productName: 'Masala Chai',
+            unitPricePaise: 12000,
+            quantity: 2,
+            maxQuantity: 99,
+          ),
+        ],
+        paymentMethod: PaymentMethod.cash,
+      );
+
+      await awaitUntil(() => container.read(posProductsProvider) is AsyncData);
+      final ids = container
+          .read(posProductsProvider)
+          .requireValue
+          .map((p) => p.id)
+          .toList();
+      expect(
+        ids.first,
+        'p-chai',
+        reason: 'the highest historical seller leads the default shelf',
+      );
+      expect(
+        ids,
+        containsAll(['p-coffee', 'p-cookie']),
+        reason: 'the remaining shelf still lists every sellable product',
+      );
+    });
+
+    test('a checkout invalidates the ranking so the shelf re-sorts', () async {
+      product(id: 'p1', name: 'Filter Coffee');
+      product(id: 'p2', name: 'Green Tea');
+      await billing.completeSale(
+        lines: [
+          const CartLine(
+            productId: 'p2',
+            productName: 'Green Tea',
+            unitPricePaise: 8000,
+            quantity: 3,
+            maxQuantity: 9,
+          ),
+        ],
+        paymentMethod: PaymentMethod.cash,
+      );
+      await awaitUntil(() => container.read(posProductsProvider) is AsyncData);
+      expect(container.read(posProductsProvider).requireValue.first.id, 'p2');
+
+      // Sell five of p1 (add + four increments to the stock cap), overtaking
+      // the historical three of p2.
+      controller().add(product(id: 'p1', name: 'Filter Coffee'));
+      for (var i = 0; i < 4; i++) {
+        controller().increment('p1');
+      }
+      await controller().checkout(PaymentMethod.cash);
+      await awaitUntil(() {
+        final value = container.read(posProductsProvider).value;
+        return value != null && value.isNotEmpty && value.first.id == 'p1';
+      });
+    });
   });
 
   group('untracked products (stockUnit NONE)', () {

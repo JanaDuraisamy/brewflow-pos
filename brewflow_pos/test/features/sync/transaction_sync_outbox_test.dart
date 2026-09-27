@@ -644,4 +644,156 @@ void main() {
       },
     );
   });
+
+  // ========================================================================
+  // TEST 7 — EXPENSE PAYMENT outbox (shop payables)
+  // ========================================================================
+  group('TEST 7 — Payable-payment outbox', () {
+    // Expenses carry a real FK to shops, so the session's shop must exist as a
+    // row before an expense can be scoped to it.
+    setUp(() async {
+      await db
+          .into(db.shops)
+          .insert(
+            ShopsCompanion.insert(
+              id: const Value('shop-test'),
+              name: 'Test Shop',
+            ),
+          );
+    });
+
+    Future<void> seedUnpaidExpense(String name, int amountPaise) =>
+        expenses.createExpense(
+          name: name,
+          amountPaise: amountPaise,
+          category: ExpenseCategory.supplies,
+          paymentMethod: PaymentMethod.cash,
+          expenseDate: DateTime.utc(2026, 8, 10),
+          paymentStatus: ExpensePaymentStatus.notPaid,
+          shopId: 'shop-test',
+        );
+
+    test(
+      'recordPayablePayment enqueues SyncExpensePayment with correct fields',
+      () async {
+        await seedUnpaidExpense('Milk', 160000);
+
+        final payment = await expenses.recordPayablePayment(
+          payeeName: 'Milk',
+          amountPaise: 100000,
+          paymentMethod: PaymentMethod.upi,
+          paidAt: DateTime.utc(2026, 8, 12),
+          note: 'Part payment',
+          shopId: 'shop-test',
+        );
+
+        final results = await outboxPayloads('EXPENSE_PAYMENT');
+        expect(results, hasLength(1));
+
+        final r = results.first;
+        expect(r.entry.entity, 'EXPENSE_PAYMENT');
+        expect(r.entry.entityId, payment.id);
+        expect(r.entry.operation, 'UPSERT');
+        expect(r.entry.status, 'PENDING');
+
+        expect(r.payload['id'], payment.id);
+        expect(r.payload['shopId'], 'shop-test');
+        // The grouping key travels normalized; the display name keeps casing.
+        expect(r.payload['payeeKey'], 'milk');
+        expect(r.payload['payeeName'], 'Milk');
+        expect(r.payload['amountPaise'], 100000);
+        expect(r.payload['paymentMethod'], 'UPI');
+        expect(r.payload['note'], 'Part payment');
+        expect(r.payload['reversed'], false);
+        expect(r.payload['reversedAt'], isNull);
+        expect(DateTime.parse(r.payload['paidAt'] as String), isA<DateTime>());
+        // No balance is ever transmitted: the receiving device derives it.
+        expect(r.payload.containsKey('remainingPaise'), isFalse);
+        expect(r.payload.containsKey('totalPaise'), isFalse);
+      },
+    );
+
+    test('a payment normalizes the payee key it groups by', () async {
+      await seedUnpaidExpense('Milk', 160000);
+
+      await expenses.recordPayablePayment(
+        payeeName: '  mILk  ',
+        amountPaise: 5000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 12),
+        shopId: 'shop-test',
+      );
+
+      final results = await outboxPayloads('EXPENSE_PAYMENT');
+      expect(results.first.payload['payeeKey'], 'milk');
+      expect(results.first.payload['payeeName'], 'mILk');
+    });
+
+    test('each payment gets its own outbox entity id', () async {
+      await seedUnpaidExpense('Milk', 160000);
+
+      await expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 100000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 12),
+        shopId: 'shop-test',
+      );
+      await expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 60000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 13),
+        shopId: 'shop-test',
+      );
+
+      final results = await outboxPayloads('EXPENSE_PAYMENT');
+      expect(results, hasLength(2));
+      expect(
+        results.map((r) => r.entry.entityId).toSet().length,
+        2,
+        reason: 'two distinct payments must not collapse into one entry',
+      );
+    });
+
+    test(
+      'a rejected over-payment enqueues nothing and writes nothing',
+      () async {
+        await seedUnpaidExpense('Milk', 160000);
+        // 100000 already paid, so only 60000 is left to pay.
+        await db
+            .into(db.expensePayments)
+            .insert(
+              ExpensePaymentsCompanion.insert(
+                id: const Value('ep-existing'),
+                shopId: const Value('shop-test'),
+                payeeKey: 'milk',
+                payeeName: const Value('Milk'),
+                amountPaise: 100000,
+                paymentMethod: 'CASH',
+                paidAt: DateTime.utc(2026, 8, 11),
+              ),
+            );
+
+        await expectLater(
+          expenses.recordPayablePayment(
+            payeeName: 'Milk',
+            amountPaise: 70000,
+            paymentMethod: PaymentMethod.cash,
+            paidAt: DateTime.utc(2026, 8, 12),
+            shopId: 'shop-test',
+          ),
+          throwsA(isA<PayablePaymentExceedsDueFailure>()),
+        );
+
+        expect(await outboxPayloads('EXPENSE_PAYMENT'), isEmpty);
+        final rows = await db.select(db.expensePayments).get();
+        expect(
+          rows,
+          hasLength(1),
+          reason: 'only the pre-existing row survives',
+        );
+      },
+    );
+  });
 }

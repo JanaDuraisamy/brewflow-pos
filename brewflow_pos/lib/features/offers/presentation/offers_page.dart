@@ -13,6 +13,7 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
 import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 
 class OffersPage extends ConsumerWidget {
   const OffersPage({super.key});
@@ -21,6 +22,7 @@ class OffersPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final business = ref.watch(businessSwitcherProvider);
     final offersAsync = ref.watch(offersProvider);
+    final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Offers'),
@@ -67,7 +69,7 @@ class OffersPage extends ConsumerWidget {
               icon: Icons.local_offer_outlined,
               title: 'No offers yet',
               message:
-                  'Create a percentage, combo or Buy X Get Y offer for ${business.label}.',
+                  'Create a percentage, quantity tier, combo or Buy X Get Y offer for ${business.label}.',
             );
           }
           return ListView.separated(
@@ -94,10 +96,13 @@ class OffersPage extends ConsumerWidget {
                       onChanged: (_) =>
                           ref.read(offersControllerProvider).toggleActive(o),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => _confirmDelete(context, ref, o),
-                    ),
+                    // Deletion is owner-only; the controller enforces the same
+                    // boundary, so hiding the action is never the only guard.
+                    if (isOwner)
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _confirmDelete(context, ref, o),
+                      ),
                   ],
                 ),
                 onTap: () => _showEditDialog(context, ref, o),
@@ -250,6 +255,25 @@ class _OfferDraft {
   final DateTime? endAt;
 }
 
+/// One editable "buy X for Y" ladder row in the offer dialog.
+class _TierRow {
+  _TierRow({String quantity = '', String price = ''})
+    : quantity = TextEditingController(text: quantity),
+      price = TextEditingController(text: price);
+
+  final TextEditingController quantity;
+  final TextEditingController price;
+
+  /// Sort helper for keeping loaded tiers in ascending quantity order even
+  /// when a stored row is missing or malformed.
+  int get sortKey => int.tryParse(quantity.text.trim()) ?? 1 << 30;
+
+  void dispose() {
+    quantity.dispose();
+    price.dispose();
+  }
+}
+
 class _OfferDialog extends ConsumerStatefulWidget {
   const _OfferDialog({required this.shopId, this.initial});
   final String shopId;
@@ -268,6 +292,13 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
   final _comboPrice = TextEditingController();
   final _buyQty = TextEditingController(text: '2');
   final _getQty = TextEditingController(text: '1');
+
+  /// Quantity-tier rows ("buy X for Y"). Empty until the owner picks the
+  /// Quantity Tier type or an existing tier offer is loaded.
+  final List<_TierRow> _tiers = [];
+
+  /// Inline validation message for the tier list.
+  String? _tierError;
 
   /// Product ids selected for the current offer type. Internal only — the UI
   /// never exposes raw ids, only product name + price via [_ProductSelector].
@@ -302,8 +333,80 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
           _buyQty.text = (m['buyQty'] ?? '2').toString();
           _getQty.text = (m['getQty'] ?? '1').toString();
         }
+        if (_type == OfferType.quantityTier) {
+          _selectedProductIds = ((m['productIds'] as List?) ?? [])
+              .cast<String>()
+              .toSet();
+          _loadTiers(m['tiers']);
+        }
       } catch (_) {}
     }
+  }
+
+  /// Replaces the tier rows from a stored config, keeping them in ascending
+  /// quantity order so the owner sees the same ladder the calculator walks.
+  void _loadTiers(Object? raw) {
+    for (final row in _tiers) {
+      row.dispose();
+    }
+    _tiers.clear();
+    final entries = (raw as List?) ?? const [];
+    for (final entry in entries) {
+      if (entry is! Map) continue;
+      final qty = entry['quantity'];
+      final price = entry['pricePaise'];
+      _tiers.add(
+        _TierRow(
+          quantity: qty is int ? '$qty' : '',
+          price: price is int ? '$price' : '',
+        ),
+      );
+    }
+    _tiers.sort((a, b) => a.sortKey.compareTo(b.sortKey));
+  }
+
+  void _addTierRow() {
+    setState(() {
+      _tierError = null;
+      _tiers.add(_TierRow());
+    });
+  }
+
+  void _removeTierRow(int index) {
+    setState(() {
+      _tierError = null;
+      _tiers.removeAt(index).dispose();
+    });
+  }
+
+  /// Validates the tier ladder and returns it ascending by quantity, or null
+  /// when the rows are unusable (surfacing a message on [ _tierError ]).
+  List<QuantityTier>? _buildTiers() {
+    if (_tiers.isEmpty) {
+      _tierError = 'Add at least one tier.';
+      return null;
+    }
+    final parsed = <QuantityTier>[];
+    for (final row in _tiers) {
+      final quantity = int.tryParse(row.quantity.text.trim());
+      final pricePaise = int.tryParse(row.price.text.trim());
+      if (quantity == null || quantity < 1) {
+        _tierError = 'Tier quantity must be 1 or more.';
+        return null;
+      }
+      if (pricePaise == null || pricePaise < 0) {
+        _tierError = 'Tier price (paise) must be 0 or more.';
+        return null;
+      }
+      parsed.add(QuantityTier(quantity: quantity, pricePaise: pricePaise));
+    }
+    final quantities = parsed.map((t) => t.quantity).toList();
+    if (quantities.toSet().length != quantities.length) {
+      _tierError = 'Each tier quantity must be unique.';
+      return null;
+    }
+    parsed.sort((a, b) => a.quantity.compareTo(b.quantity));
+    return parsed;
   }
 
   @override
@@ -313,6 +416,9 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
     _comboPrice.dispose();
     _buyQty.dispose();
     _getQty.dispose();
+    for (final row in _tiers) {
+      row.dispose();
+    }
     super.dispose();
   }
 
@@ -350,6 +456,10 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                       child: Text('Percentage'),
                     ),
                     DropdownMenuItem(
+                      value: OfferType.quantityTier,
+                      child: Text('Quantity Tier'),
+                    ),
+                    DropdownMenuItem(
                       value: OfferType.combo,
                       child: Text('Combo'),
                     ),
@@ -358,7 +468,14 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                       child: Text('Buy X Get Y'),
                     ),
                   ],
-                  onChanged: (v) => setState(() => _type = v!),
+                  onChanged: (v) => setState(() {
+                    _type = v!;
+                    // Seed a starter ladder the first time the type is picked
+                    // so the owner edits rows instead of an empty list.
+                    if (_type == OfferType.quantityTier && _tiers.isEmpty) {
+                      _tiers.add(_TierRow(quantity: '1'));
+                    }
+                  }),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 if (_type == OfferType.percentage)
@@ -446,6 +563,88 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                     ],
                   ),
                 ],
+                if (_type == OfferType.quantityTier) ...[
+                  _ProductSelector(
+                    shopId: widget.shopId,
+                    title: 'Product *',
+                    hint:
+                        'Search and select the product these quantity tiers price',
+                    single: true,
+                    initialSelected: _selectedProductIds,
+                    selected: _selectedProductIds,
+                    onChanged: (ids) {
+                      setState(() {
+                        _selectedProductIds = ids;
+                        _selectionError = null;
+                      });
+                    },
+                    errorText: _selectionError,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Quantity tiers',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  for (var i = 0; i < _tiers.length; i++) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _tiers[i].quantity,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Quantity',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _tiers[i].price,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Total price (paise)',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        IconButton(
+                          onPressed: () => _removeTierRow(i),
+                          icon: const Icon(Icons.remove_circle_outline),
+                          tooltip: 'Remove tier',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                  ],
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _addTierRow,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add tier'),
+                    ),
+                  ),
+                  if (_tierError != null)
+                    Text(
+                      _tierError!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'Total price covers the whole quantity, e.g. 1 = 4500, '
+                    '2 = 8500, 3 = 12000 paise. The best tier that fits is '
+                    'applied automatically at billing.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.sm),
                 Text(
                   'Offers are managed per-business and sync to the correct tablet. POS application is next phase — original price preserved, discount calculation deferred.',
@@ -481,6 +680,21 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                   'percent': int.parse(_percent.text),
                   'productIds': <String>[],
                 };
+                break;
+              case OfferType.quantityTier:
+                if (_selectedProductIds.isEmpty) {
+                  setState(() => _selectionError = 'Select a product.');
+                  return;
+                }
+                final tiers = _buildTiers();
+                if (tiers == null) {
+                  setState(() {});
+                  return;
+                }
+                cfg = QuantityTierOfferConfig(
+                  productIds: _selectedProductIds.toList(),
+                  tiers: tiers,
+                ).toJson();
                 break;
               case OfferType.combo:
                 cfg = {

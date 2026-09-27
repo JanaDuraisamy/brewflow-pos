@@ -66,6 +66,8 @@ final class DriftStaffRepository implements StaffRepository {
   Future<UserProfile> claimOwnershipForCloud(
     AuthUser user, {
     required String shopId,
+    required UserRole role,
+    Set<Permission> permissions = const {},
   }) async {
     // Idempotent: if a profile already exists for this auth user, return it.
     final existing = await profileForAuthUser(user.id);
@@ -77,19 +79,22 @@ final class DriftStaffRepository implements StaffRepository {
         email: user.email,
         authUserId: user.id,
         shopId: shopId,
-        role: UserRole.owner,
+        role: role,
         displayName: null,
         isActive: true,
         createdAt: now,
       );
+      if (role == UserRole.staff && permissions.isNotEmpty) {
+        await setPermissions(id, permissions);
+      }
       return UserProfile(
         id: id,
         email: user.email,
         authUserId: user.id,
         shopId: shopId,
-        role: UserRole.owner,
+        role: role,
         isActive: true,
-        permissions: const {},
+        permissions: permissions,
       );
     });
   }
@@ -294,6 +299,66 @@ final class DriftStaffRepository implements StaffRepository {
     });
   }
 
+  @override
+  Future<UserProfile?> upsertStaffProfile({
+    required String authUserId,
+    required String email,
+    required String shopId,
+    required bool isActive,
+    Set<Permission> permissions = const {},
+    String? displayName,
+  }) {
+    return _database.transaction(() async {
+      final existing = await (_database.select(
+        _database.users,
+      )..where((t) => t.authUserId.equals(authUserId))).getSingleOrNull();
+      // OWNER rows are authoritative locally and never re-typed by a cloud
+      // roster pull.
+      if (existing != null && existing.role == 'OWNER') return null;
+
+      if (existing != null) {
+        await (_database.update(
+          _database.users,
+        )..where((t) => t.id.equals(existing.id))).write(
+          db.UsersCompanion(
+            shopId: Value(shopId),
+            displayName: displayName != null
+                ? Value(displayName)
+                : const Value.absent(),
+            isActive: Value(isActive),
+            updatedAt: Value(DateTime.now().toUtc()),
+          ),
+        );
+        // Reflect cloud grants only when the cloud actually carries them; an
+        // empty set means the owner never pushed them, so local grants stay.
+        if (permissions.isNotEmpty) {
+          await setPermissions(existing.id, permissions);
+        }
+        final updated = await (_database.select(
+          _database.users,
+        )..where((t) => t.id.equals(existing.id))).getSingle();
+        return _profileFromRow(updated);
+      }
+
+      final id = await _insertProfile(
+        email: email,
+        authUserId: authUserId,
+        shopId: shopId,
+        role: UserRole.staff,
+        displayName: displayName,
+        isActive: isActive,
+        createdAt: DateTime.now().toUtc(),
+      );
+      if (permissions.isNotEmpty) {
+        await setPermissions(id, permissions);
+      }
+      final created = await (_database.select(
+        _database.users,
+      )..where((t) => t.id.equals(id))).getSingle();
+      return _profileFromRow(created);
+    });
+  }
+
   Future<String> _insertProfile({
     required String email,
     required String? authUserId,
@@ -318,6 +383,61 @@ final class DriftStaffRepository implements StaffRepository {
           ),
         );
     return id;
+  }
+
+  @override
+  Future<void> archiveStaffProfile(String localUserId) {
+    return _database.transaction(() async {
+      final row = await (_database.select(
+        _database.users,
+      )..where((t) => t.id.equals(localUserId))).getSingleOrNull();
+      // Unknown id, or a profile that is not (still) STAFF — an owner must
+      // never be archivable, exactly like updateStaff/setPermissions.
+      if (row == null) throw const ProfileNotProvisionedFailure();
+      // Already archived by an earlier attempt: replaying is a no-op.
+      if (row.role == kArchivedStaffRole) return;
+      if (row.role != 'STAFF') throw const ProfileNotProvisionedFailure();
+      await _archiveRow(row);
+    });
+  }
+
+  @override
+  Future<void> archiveStaffProfileByAuthUserId(String authUserId) {
+    return _database.transaction(() async {
+      final row = await (_database.select(
+        _database.users,
+      )..where((t) => t.authUserId.equals(authUserId))).getSingleOrNull();
+      // Never provisioned on this device: a replayed tombstone is a no-op.
+      if (row == null) return;
+      if (row.role == kArchivedStaffRole) return;
+      if (row.role != 'STAFF') throw const ProfileNotProvisionedFailure();
+      await _archiveRow(row);
+    });
+  }
+
+  /// Re-types [row] into an inert foreign-key anchor. The row id is kept
+  /// because staff_attendance / staff_daily_salaries /
+  /// staff_monthly_salaries / staff_advances all reference it with
+  /// `ON DELETE CASCADE` — dropping the row would take that member's payroll
+  /// history with it. Nothing in this method touches those tables.
+  Future<void> _archiveRow(db.User row) async {
+    await (_database.delete(
+      _database.staffPermissions,
+    )..where((t) => t.userId.equals(row.id))).go();
+    await (_database.update(
+      _database.users,
+    )..where((t) => t.id.equals(row.id))).write(
+      db.UsersCompanion(
+        // NOT NULL + unique: release the address so it can be re-invited.
+        email: Value(archivedStaffEmail(row.id)),
+        // Detaches from the auth identity: sign-in can no longer resolve it.
+        authUserId: const Value(null),
+        displayName: const Value(null),
+        role: const Value(kArchivedStaffRole),
+        isActive: const Value(false),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
   }
 
   Future<UserProfile> _profileFromRow(db.User row) async {

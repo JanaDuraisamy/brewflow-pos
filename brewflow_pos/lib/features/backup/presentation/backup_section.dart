@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:brewflow_pos/app/widgets/app_buttons.dart';
 import 'package:brewflow_pos/app/widgets/app_card.dart';
 import 'package:brewflow_pos/app/widgets/context_actions.dart';
@@ -8,10 +11,13 @@ import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_shadows.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
+import 'package:brewflow_pos/features/backup/data/backup_csv_export.dart';
 import 'package:brewflow_pos/features/backup/data/backup_file_store.dart';
+import 'package:brewflow_pos/features/backup/data/backup_package.dart';
 import 'package:brewflow_pos/features/backup/domain/backup_failures.dart';
 import 'package:brewflow_pos/features/backup/domain/backup_models.dart';
 import 'package:brewflow_pos/features/backup/presentation/backup_providers.dart';
+import 'package:brewflow_pos/features/inventory/data/product_image_store.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
@@ -20,20 +26,28 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_controller.dart';
 import 'package:brewflow_pos/features/purchases/presentation/suppliers_controller.dart';
+import 'package:brewflow_pos/features/reports/domain/management_report_models.dart';
+import 'package:brewflow_pos/features/reports/presentation/management_report_loader.dart';
+import 'package:brewflow_pos/features/reports/data/management_report_pdf.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Data & Backup Section
 ///
 /// [BackupSectionCard] is the tablet/desktop card; [MobileBackupSection] is
-/// the phone variant. Both expose two actions:
+/// the phone variant. Both expose:
 ///   • Create backup  → snapshot the shop data to a JSON envelope in the
 ///     on-device `backups/` folder and offer to share it.
-///   • Restore backup → pick a stored backup, preview it and replace the
-///     current data transactionally after confirmation.
+///   • Restore backup → pick a stored backup (JSON or ZIP package), preview
+///     it and replace the current data transactionally after confirmation.
+///   • Export ZIP     → self-contained package (JSON + images + metadata).
+///   • Export CSV     → human/Excel-readable sheets (export-only, never a
+///     restorable backup).
+///   • PDF report     → date-range management report (export-only).
 ///
 /// Provider reads are deliberately lazy (inside button handlers, via
 /// `ref.read`): opening the database or the documents/backups directory must
@@ -107,6 +121,45 @@ final class _BackupCard extends ConsumerWidget {
               ),
             ],
           ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: SecondaryButton(
+                  label: 'Export ZIP',
+                  icon: Icons.folder_zip_outlined,
+                  minHeight: 44,
+                  onPressed: () => _exportPackage(context, ref),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: SecondaryButton(
+                  label: 'Export CSV',
+                  icon: Icons.table_chart_outlined,
+                  minHeight: 44,
+                  onPressed: () => _exportCsv(context, ref),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: SecondaryButton(
+                  label: 'PDF report',
+                  icon: Icons.picture_as_pdf_outlined,
+                  minHeight: 44,
+                  onPressed: () => _exportPdf(context, ref),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'ZIP is a restorable package. CSV is a readable export only. '
+            'The PDF report is a business summary — it cannot be restored.',
+            style: textTheme.bodySmall?.copyWith(
+              color: context.appColors.textSecondary,
+            ),
+          ),
         ],
       ),
     );
@@ -167,6 +220,30 @@ final class _MobileBackupSection extends ConsumerWidget {
                 expanded: true,
                 minHeight: 44,
                 onPressed: () => _restoreBackup(context, ref),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SecondaryButton(
+                label: 'Export ZIP',
+                icon: Icons.folder_zip_outlined,
+                expanded: true,
+                minHeight: 44,
+                onPressed: () => _exportPackage(context, ref),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SecondaryButton(
+                label: 'Export CSV',
+                icon: Icons.table_chart_outlined,
+                expanded: true,
+                minHeight: 44,
+                onPressed: () => _exportCsv(context, ref),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SecondaryButton(
+                label: 'PDF report',
+                icon: Icons.picture_as_pdf_outlined,
+                expanded: true,
+                minHeight: 44,
+                onPressed: () => _exportPdf(context, ref),
               ),
             ],
           ),
@@ -267,7 +344,7 @@ Future<void> _shareBackup(
     final contents = await store.readFile(fileName);
     await ref
         .read(shareServiceProvider)
-        .shareText(subject: 'BrewFlow backup', text: contents);
+        .shareText(subject: 'JiggarTea Bill backup', text: contents);
   } on Object {
     messenger
       ..hideCurrentSnackBar()
@@ -277,6 +354,295 @@ Future<void> _shareBackup(
   }
 }
 
+/// Builds the self-contained ZIP package (JSON + images + metadata), saves
+/// it to the on-device store and offers to share it.
+Future<void> _exportPackage(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  _guardBackupAccess(ref);
+  try {
+    final repository = ref.read(backupRepositoryProvider);
+    final envelope = await repository.buildBackup();
+    final imageStore = await ref.read(productImageStoreProvider.future);
+    final package = buildBackupPackage(
+      envelope: envelope,
+      productImagePaths: [
+        for (final product in envelope.tables.products)
+          if (product['imagePath'] is String) product['imagePath'] as String,
+      ],
+      readImageBytes: (imagePath) {
+        try {
+          return imageStore.resolve(imagePath)?.readAsBytesSync();
+        } on Object {
+          return null;
+        }
+      },
+    );
+    final store = await ref.read(backupFileStoreProvider.future);
+    final info = await store.writeBytes(
+      backupPackageFileName(DateTime.now()),
+      package.bytes,
+    );
+    if (!context.mounted) return;
+    final detail =
+        '${package.includedImages.length} image${package.includedImages.length == 1 ? '' : 's'}'
+        '${package.missingImages.isEmpty ? '' : ' (${package.missingImages.length} missing, skipped)'}';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.folder_zip_outlined, color: AppColors.primary),
+        title: const Text('Backup package exported'),
+        content: Text(
+          '${info.name}\n${backupSummaryLine(envelope.summary)}\n$detail.',
+        ),
+        actions: [
+          SecondaryButton(
+            label: 'Close',
+            minHeight: 40,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+          ),
+          PrimaryButton(
+            label: 'Share package',
+            minHeight: 40,
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              await _shareExportFile(context, ref, info.path);
+            },
+          ),
+        ],
+      ),
+    );
+  } on BackupFailure catch (error) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error.message)));
+  } on Object {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Could not export the package right now.'),
+        ),
+      );
+  }
+}
+
+/// Builds the human-readable CSV sheets (export-only, never restorable),
+/// saves them to the on-device store and offers to share them.
+Future<void> _exportCsv(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  _guardBackupAccess(ref);
+  try {
+    final repository = ref.read(backupRepositoryProvider);
+    final envelope = await repository.buildBackup();
+    final sheets = buildCsvExport(envelope);
+    final store = await ref.read(backupFileStoreProvider.future);
+    final written = <BackupFileInfo>[];
+    for (final sheet in sheets) {
+      written.add(
+        await store.writeBytes(sheet.fileName, utf8.encode(sheet.content)),
+      );
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.table_chart_outlined, color: AppColors.primary),
+        title: const Text('CSV export ready'),
+        content: Text(
+          '${written.length} sheets saved on this device '
+          '(products, customers, sales and more).\n'
+          'Readable export only — CSV files cannot be restored.',
+        ),
+        actions: [
+          SecondaryButton(
+            label: 'Close',
+            minHeight: 40,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+          ),
+          PrimaryButton(
+            label: 'Share files',
+            minHeight: 40,
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              await _shareExportFiles(context, ref, [
+                for (final info in written) info.path,
+              ]);
+            },
+          ),
+        ],
+      ),
+    );
+  } on BackupFailure catch (error) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error.message)));
+  } on Object {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not export CSV right now.')),
+      );
+  }
+}
+
+/// Builds the date-range management report PDF (export-only): sales, expenses,
+/// staff salary details and daily closings for the picked range. The owner
+/// picks an inclusive range, the loader aggregates the current data under the
+/// active business context, then the report is saved on-device and offered
+/// for sharing.
+Future<void> _exportPdf(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  _guardBackupAccess(ref);
+  try {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      initialDateRange: DateTimeRange(
+        start: DateTime(now.year, now.month, now.day - 6),
+        end: DateTime(now.year, now.month, now.day),
+      ),
+      firstDate: DateTime(now.year - 10),
+      lastDate: DateTime(now.year, now.month, now.day),
+      helpText: 'Pick the date range for the report',
+      saveText: 'Build report',
+    );
+    if (picked == null || !context.mounted) return;
+
+    final data = await ManagementReportLoader.from(
+      ref,
+    ).load(fromLocal: picked.start, toLocal: picked.end);
+    if (!context.mounted) return;
+    final bytes = await buildManagementReportPdf(data);
+    final store = await ref.read(backupFileStoreProvider.future);
+    final info = await store.writeBytes(
+      defaultManagementReportFileName(DateTime.now()),
+      bytes,
+    );
+    if (!context.mounted) return;
+
+    final rangeLabel =
+        '${DateFormat('d MMM yyyy').format(picked.start)} – '
+        '${DateFormat('d MMM yyyy').format(picked.end)}';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(
+          Icons.picture_as_pdf_outlined,
+          color: AppColors.primary,
+        ),
+        title: const Text('Management report ready'),
+        content: Text(
+          '${info.name}\n$rangeLabel '
+          '(${data.businessLabel}).\n'
+          'Sales, expenses, staff salary details and daily closings for the '
+          'selected range. Readable report only — it cannot be restored.',
+        ),
+        actions: [
+          SecondaryButton(
+            label: 'Close',
+            minHeight: 40,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+          ),
+          PrimaryButton(
+            label: 'Share report',
+            minHeight: 40,
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              await _shareExportFile(context, ref, info.path);
+            },
+          ),
+        ],
+      ),
+    );
+  } on ManagementReportFailure catch (error) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error.message)));
+  } on BackupFailure catch (error) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error.message)));
+  } on Object {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not build the report right now.')),
+      );
+  }
+}
+
+/// Shares one already-written export file through the system share sheet.
+Future<void> _shareExportFile(
+  BuildContext context,
+  WidgetRef ref,
+  String filePath,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await ref
+        .read(shareServiceProvider)
+        .shareFile(subject: 'JiggarTea Bill export', filePath: filePath);
+  } on Object {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not share the file right now.')),
+      );
+  }
+}
+
+/// Shares several already-written export files (the CSV sheets) at once.
+Future<void> _shareExportFiles(
+  BuildContext context,
+  WidgetRef ref,
+  List<String> filePaths,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await ref
+        .read(shareServiceProvider)
+        .shareFiles(subject: 'JiggarTea Bill export', filePaths: filePaths);
+  } on Object {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not share the files right now.')),
+      );
+  }
+}
+
+/// A parsed restore candidate: the envelope plus any packaged images.
+/// JSON backups carry no images; ZIP packages may carry `images/<file>` blobs
+/// that are written back to the product image store after the data commit.
+typedef _RestoreCandidate = ({
+  BackupEnvelope envelope,
+  Map<String, Uint8List> images,
+});
+
+/// Reads and parses one restore candidate. `.zip` packages are unpacked and
+/// their metadata cross-checked against the embedded envelope; anything else
+/// is parsed as a raw JSON envelope. Throws [BackupFailure] subtypes.
+Future<_RestoreCandidate> _loadRestoreCandidate(
+  BackupFileStore store,
+  String fileName,
+) async {
+  if (fileName.toLowerCase().endsWith('.zip')) {
+    final bytes = await store.readBytes(fileName);
+    final unpacked = unpackBackupPackage(bytes);
+    final envelope = BackupEnvelope.fromJsonString(unpacked.backupJson);
+    final metadata = unpacked.metadata;
+    if (metadata != null && metadata.shopId != envelope.shopId) {
+      throw const CorruptBackupFailure();
+    }
+    return (envelope: envelope, images: unpacked.images);
+  }
+  final contents = await store.readFile(fileName);
+  return (
+    envelope: BackupEnvelope.fromJsonString(contents),
+    images: const <String, Uint8List>{},
+  );
+}
+
 /// Walks the user through picking, previewing and confirming a restore.
 Future<void> _restoreBackup(BuildContext context, WidgetRef ref) async {
   final messenger = ScaffoldMessenger.of(context);
@@ -284,8 +650,10 @@ Future<void> _restoreBackup(BuildContext context, WidgetRef ref) async {
   try {
     final store = await ref.read(backupFileStoreProvider.future);
     final files = await store.listFiles();
+    final packages = await store.listPackages();
+    final candidates = [...files, ...packages]..sort(compareBackupFileInfo);
     if (!context.mounted) return;
-    if (files.isEmpty) {
+    if (candidates.isEmpty) {
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -304,11 +672,11 @@ Future<void> _restoreBackup(BuildContext context, WidgetRef ref) async {
           height: 320,
           child: ListView.separated(
             shrinkWrap: true,
-            itemCount: files.length,
+            itemCount: candidates.length,
             separatorBuilder: (separatorContext, index) =>
                 Divider(height: 1, color: context.appColors.divider),
             itemBuilder: (_, index) {
-              final file = files[index];
+              final file = candidates[index];
               return ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(file.name),
@@ -332,8 +700,8 @@ Future<void> _restoreBackup(BuildContext context, WidgetRef ref) async {
     );
     if (selected == null || !context.mounted) return;
 
-    final contents = await store.readFile(selected.name);
-    final envelope = BackupEnvelope.fromJsonString(contents);
+    final loaded = await _loadRestoreCandidate(store, selected.name);
+    final envelope = loaded.envelope;
     if (!context.mounted) return;
 
     final confirmed = await confirmDestructive(
@@ -349,6 +717,19 @@ Future<void> _restoreBackup(BuildContext context, WidgetRef ref) async {
     if (!confirmed || !context.mounted) return;
 
     await ref.read(backupRepositoryProvider).restoreBackup(envelope);
+    // Package images are restored best-effort after the data commit: the UI
+    // already falls back to a placeholder for missing images, so one
+    // unreadable file can never fail an otherwise complete restore.
+    if (loaded.images.isNotEmpty) {
+      final imageStore = await ref.read(productImageStoreProvider.future);
+      for (final entry in loaded.images.entries) {
+        try {
+          await imageStore.restoreBytes(entry.key, entry.value);
+        } on Object {
+          continue;
+        }
+      }
+    }
     if (!context.mounted) return;
     _invalidateAfterRestore(ref);
     messenger

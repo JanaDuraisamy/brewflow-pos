@@ -1,5 +1,7 @@
 import 'package:brewflow_pos/app/widgets/widgets.dart';
+import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/router/app_routes.dart';
+import 'package:brewflow_pos/core/sharing/share_service.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
@@ -13,10 +15,12 @@ import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Customer Detail Page
@@ -110,32 +114,77 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
     }
   }
 
-  /// Opens the Record Payment dialog; on success shows a confirmation.
-  Future<void> _recordPayment(
+  /// Opens the Collect Payment dialog; on success shows a confirmation.
+  Future<void> _collectPayment(
     String customerId,
     CustomerLedgerData ledger,
   ) async {
-    final duePurchases = [
-      for (final purchase in ledger.purchases)
-        if (purchase.duePaise > 0) purchase,
-    ];
-    if (duePurchases.isEmpty) {
+    if (ledger.summary.outstandingPaise <= 0) {
       return;
     }
-    final payment = await showDialog<CustomerPayment>(
+    final payments = await showDialog<List<CustomerPayment>>(
       context: context,
-      builder: (context) => _RecordPaymentDialog(
+      builder: (context) => _CollectPaymentDialog(
         customerId: customerId,
-        duePurchases: duePurchases,
+        outstandingPaise: ledger.summary.outstandingPaise,
       ),
     );
-    if (payment == null || !mounted) {
+    if (payments == null || !mounted) {
       return;
     }
     ref.invalidate(dashboardControllerProvider);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(const SnackBar(content: Text('Payment recorded.')));
+  }
+
+  /// Opens the Opening Due dialog (records a pre-billing debt entry); on
+  /// success shows a confirmation.
+  Future<void> _addOpeningDue(String customerId) async {
+    final added = await showDialog<bool>(
+      context: context,
+      builder: (context) => _AddOpeningDueDialog(
+        customerId: customerId,
+        customerName: _liveCustomer()?.name ?? 'this customer',
+      ),
+    );
+    if (added != true || !mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('Opening due added.')));
+  }
+
+  /// Shares the customer's LIVE outstanding balance through the system share
+  /// sheet (a polite payment reminder). Amounts are always derived at share
+  /// time — never hardcoded.
+  Future<void> _shareDue(Customer customer, CustomerLedgerData ledger) async {
+    final outstanding = ledger.summary.outstandingPaise;
+    if (outstanding <= 0) {
+      return;
+    }
+    final message =
+        'Hi ${customer.name}, your current outstanding amount is '
+        '${Money.formatPaise(outstanding)}. Please settle the pending amount '
+        'at your convenience. Thank you.';
+    try {
+      await ref
+          .read(shareServiceProvider)
+          .shareText(subject: 'Payment reminder', text: message);
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not open the share sheet. Please try again.',
+              ),
+            ),
+          );
+      }
+    }
   }
 
   @override
@@ -245,19 +294,28 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
                     ref.invalidate(customerLedgerProvider(customer.id)),
               ),
             ),
-            data: (data) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _FinancialSummaryCard(
-                  ledger: data,
-                  onRecordPayment: () => _recordPayment(customer.id, data),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                _PurchasesSection(purchases: data.purchases),
-                const SizedBox(height: AppSpacing.lg),
-                _PaymentsSection(payments: data.payments),
-              ],
-            ),
+            data: (data) {
+              final authorization = ref.watch(authorizationProvider);
+              final canCollect =
+                  authorization is RoleBasedAuthorization &&
+                  authorization.canForSession(Permission.customerLedger);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _FinancialSummaryCard(
+                    ledger: data,
+                    canCollect: canCollect,
+                    onAddOpeningDue: () => _addOpeningDue(customer.id),
+                    onShareDue: () => _shareDue(customer, data),
+                    onRecordPayment: () => _collectPayment(customer.id, data),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  _PurchasesSection(purchases: data.purchases),
+                  const SizedBox(height: AppSpacing.lg),
+                  _PaymentsSection(payments: data.payments),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -265,14 +323,25 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
   }
 }
 
-/// Outstanding dues + lifetime totals, with the Record Payment action.
+/// Outstanding dues + lifetime totals, with the Opening Due, Share Due and
+/// Collect Payment actions.
 final class _FinancialSummaryCard extends StatelessWidget {
   const _FinancialSummaryCard({
     required this.ledger,
+    required this.canCollect,
+    required this.onAddOpeningDue,
+    required this.onShareDue,
     required this.onRecordPayment,
   });
 
   final CustomerLedgerData ledger;
+
+  /// Whether the signed-in session may manage payments; without the
+  /// `customerLedger` permission the actions are hidden entirely (the
+  /// controller is the authoritative boundary, this is the UI layer).
+  final bool canCollect;
+  final VoidCallback onAddOpeningDue;
+  final VoidCallback onShareDue;
   final VoidCallback onRecordPayment;
 
   @override
@@ -322,14 +391,40 @@ final class _FinancialSummaryCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.lg),
-          PrimaryButton(
-            label: 'Record Payment',
-            icon: Icons.payments_outlined,
-            expanded: true,
-            minHeight: 44,
-            onPressed: hasDue ? onRecordPayment : null,
-          ),
+          if (canCollect) ...[
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: SecondaryButton(
+                    label: 'Add Opening Due',
+                    icon: Icons.playlist_add,
+                    expanded: true,
+                    minHeight: 44,
+                    onPressed: onAddOpeningDue,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: SecondaryButton(
+                    label: 'Share Due',
+                    icon: Icons.share_outlined,
+                    expanded: true,
+                    minHeight: 44,
+                    onPressed: hasDue ? onShareDue : null,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            PrimaryButton(
+              label: 'Collect Payment',
+              icon: Icons.payments_outlined,
+              expanded: true,
+              minHeight: 44,
+              onPressed: hasDue ? onRecordPayment : null,
+            ),
+          ],
         ],
       ),
     );
@@ -382,7 +477,9 @@ final class _PurchaseRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Receipt ${purchase.receiptNumber}',
+                purchase.isOpeningBalance
+                    ? 'Opening Due'
+                    : 'Receipt ${purchase.receiptNumber}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: textTheme.bodyMedium?.copyWith(
@@ -536,43 +633,42 @@ final class _PaymentStatusChip extends StatelessWidget {
   }
 }
 
-/// Records a payment against one due bill. Amount defaults to the bill's
-/// remaining due and is re-anchored when the bill changes; every
-/// [CustomerLedgerFailure] is shown inline without closing the dialog, so the
-/// counter can correct the input and retry.
-final class _RecordPaymentDialog extends ConsumerStatefulWidget {
-  const _RecordPaymentDialog({
+/// Collects any amount up to the customer's total outstanding in one atomic
+/// submission (older bills are settled before newer ones). The amount
+/// defaults to the full outstanding balance. [paymentGroupId] is generated
+/// once per dialog instance, so a retried save replays the same submission
+/// instead of double-charging. Every [CustomerLedgerFailure] is shown inline
+/// without closing the dialog, so the counter can correct the input and
+/// retry.
+final class _CollectPaymentDialog extends ConsumerStatefulWidget {
+  const _CollectPaymentDialog({
     required this.customerId,
-    required this.duePurchases,
+    required this.outstandingPaise,
   });
 
   final String customerId;
-  final List<CustomerPurchase> duePurchases;
+
+  /// The customer's total outstanding at dialog open; the amount may be any
+  /// positive value up to this.
+  final int outstandingPaise;
 
   @override
-  ConsumerState<_RecordPaymentDialog> createState() =>
-      _RecordPaymentDialogState();
+  ConsumerState<_CollectPaymentDialog> createState() =>
+      _CollectPaymentDialogState();
 }
 
-final class _RecordPaymentDialogState
-    extends ConsumerState<_RecordPaymentDialog> {
-  late String _saleId = widget.duePurchases.first.saleId;
+final class _CollectPaymentDialogState
+    extends ConsumerState<_CollectPaymentDialog> {
+  /// Identity of this whole submission; one per dialog instance so retries
+  /// are idempotent replays, never double charges.
+  final String _paymentGroupId = const Uuid().v4();
   late final TextEditingController _amount = TextEditingController(
-    text: Money.paiseToRupeesInput(_dueOf(_saleId)),
+    text: Money.paiseToRupeesInput(widget.outstandingPaise),
   );
   final TextEditingController _note = TextEditingController();
   PaymentMethod _method = PaymentMethod.cash;
   bool _saving = false;
   String? _error;
-
-  int _dueOf(String saleId) {
-    for (final purchase in widget.duePurchases) {
-      if (purchase.saleId == saleId) {
-        return purchase.duePaise;
-      }
-    }
-    return 0;
-  }
 
   @override
   void dispose() {
@@ -588,6 +684,8 @@ final class _RecordPaymentDialogState
       error = 'Enter a valid amount (e.g. 149.50)';
     } else if (paise <= 0) {
       error = 'Enter an amount greater than zero.';
+    } else if (paise > widget.outstandingPaise) {
+      error = 'Enter an amount up to the total outstanding.';
     }
     if (error != null) {
       setState(() => _error = error);
@@ -598,16 +696,16 @@ final class _RecordPaymentDialogState
       _error = null;
     });
     try {
-      final payment = await ref
+      final payments = await ref
           .read(customerLedgerProvider(widget.customerId).notifier)
-          .recordPayment(
-            saleId: _saleId,
+          .collectPayment(
             amountPaise: paise!,
             paymentMethod: _method,
             note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+            paymentGroupId: _paymentGroupId,
           );
       if (mounted) {
-        Navigator.of(context).pop(payment);
+        Navigator.of(context).pop(payments);
       }
     } on CustomerLedgerFailure catch (failure) {
       if (mounted) {
@@ -627,7 +725,7 @@ final class _RecordPaymentDialogState
       fontWeight: FontWeight.w700,
     );
     return AlertDialog(
-      title: const Text('Record Payment'),
+      title: const Text('Collect Payment'),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -635,33 +733,14 @@ final class _RecordPaymentDialogState
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Bill', style: labelStyle),
-              const SizedBox(height: AppSpacing.sm),
-              DropdownButtonFormField<String>(
-                initialValue: _saleId,
-                isExpanded: true,
-                decoration: const InputDecoration(border: OutlineInputBorder()),
-                items: [
-                  for (final purchase in widget.duePurchases)
-                    DropdownMenuItem(
-                      value: purchase.saleId,
-                      child: Text(
-                        'Receipt ${purchase.receiptNumber} · '
-                        '${Money.formatPaise(purchase.duePaise)} due',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
+              Row(
+                children: [
+                  Expanded(child: Text('Total outstanding', style: labelStyle)),
+                  Text(
+                    Money.formatPaise(widget.outstandingPaise),
+                    style: labelStyle,
+                  ),
                 ],
-                onChanged: (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() {
-                    _saleId = value;
-                    _amount.text = Money.paiseToRupeesInput(_dueOf(value));
-                  });
-                },
               ),
               const SizedBox(height: AppSpacing.lg),
               Text('Amount (₹) *', style: labelStyle),
@@ -741,6 +820,166 @@ final class _RecordPaymentDialogState
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Save Payment'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Records a pre-billing debt for this customer. The amount is validated
+/// locally (positive, parseable) and by the controller; every
+/// [CustomerLedgerFailure] is shown inline without closing the dialog so the
+/// amount can be corrected and retried.
+final class _AddOpeningDueDialog extends ConsumerStatefulWidget {
+  const _AddOpeningDueDialog({
+    required this.customerId,
+    required this.customerName,
+  });
+
+  final String customerId;
+  final String customerName;
+
+  @override
+  ConsumerState<_AddOpeningDueDialog> createState() =>
+      _AddOpeningDueDialogState();
+}
+
+final class _AddOpeningDueDialogState
+    extends ConsumerState<_AddOpeningDueDialog> {
+  late final TextEditingController _amount = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final paise = Money.parseRupeesToPaise(_amount.text);
+    String? error;
+    if (paise == null) {
+      error = 'Enter a valid amount (e.g. 149.50)';
+    } else if (paise <= 0) {
+      error = 'Enter an amount greater than zero.';
+    }
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(customerLedgerProvider(widget.customerId).notifier)
+          .recordOpeningDue(amountPaise: paise!);
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } on CustomerLedgerFailure catch (failure) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = failure.message;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final labelStyle = textTheme.titleSmall?.copyWith(
+      color: context.appColors.textPrimary,
+      fontWeight: FontWeight.w700,
+    );
+    return AlertDialog(
+      title: const Text('Add Opening Due'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.info.withValues(alpha: 0.1),
+                  borderRadius: AppBorderRadius.md,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 18,
+                      color: context.appColors.textSecondary,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Record an existing balance ${widget.customerName} '
+                        'owed before using JiggarTea Bill. This is not a sale — no '
+                        'bill, stock or receipt is created, and it will not '
+                        'appear in Sales or Reports totals.',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: context.appColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Text('Amount (₹) *', style: labelStyle),
+              const SizedBox(height: AppSpacing.sm),
+              TextFormField(
+                controller: _amount,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                ],
+                onFieldSubmitted: (_) => _save(),
+                decoration: const InputDecoration(
+                  hintText: 'e.g. 149.50',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  _error!,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: AppColors.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Add Opening Due'),
         ),
       ],
     );

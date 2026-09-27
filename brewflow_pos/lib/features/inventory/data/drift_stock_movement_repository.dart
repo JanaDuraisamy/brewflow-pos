@@ -1,5 +1,7 @@
 library;
 
+import 'dart:async';
+
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/network/online_guard.dart';
@@ -176,8 +178,14 @@ final class DriftStockMovementRepository implements StockMovementRepository {
     required StockAdjustmentReason reason,
     String? note,
   }) async {
-    await _ensureStockEntity(productId, variantId);
-    final resolvedShopId = await resolveWritableShopId(_database);
+    final entityShopId = await _ensureStockEntity(productId, variantId);
+    // The dialog carries only ids, and the domain Product drops shopId, so a
+    // profile-resolved shop can differ from the shop owning the shelf row —
+    // `adjust_stock_atomic` then correctly rejects with PRODUCT_NOT_FOUND /
+    // FORBIDDEN. Scope the RPC to the entity's own shop (falling back to the
+    // resolver only for legacy rows without a shop).
+    final resolvedShopId =
+        entityShopId ?? await resolveWritableShopId(_database);
     final result = await _callAdjustmentRpc(
       shopId: resolvedShopId,
       productId: productId,
@@ -207,8 +215,9 @@ final class DriftStockMovementRepository implements StockMovementRepository {
     if (await _movements.hasOpening(productId)) {
       throw const DuplicateOpeningFailure();
     }
-    await _ensureStockEntity(productId, null);
-    final resolvedShopId = await resolveWritableShopId(_database);
+    final entityShopId = await _ensureStockEntity(productId, null);
+    final resolvedShopId =
+        entityShopId ?? await resolveWritableShopId(_database);
     final result = await _callAdjustmentRpc(
       shopId: resolvedShopId,
       productId: productId,
@@ -246,6 +255,11 @@ final class DriftStockMovementRepository implements StockMovementRepository {
         note: note,
       );
     } catch (e) {
+      if (e is TimeoutException) {
+        throw const UnexpectedStockMovementFailure(
+          'The server is taking too long to respond. Please try again.',
+        );
+      }
       final msg = e.toString();
       if (msg.contains('INSUFFICIENT_STOCK')) {
         throw const AdjustmentInsufficientStockFailure();
@@ -331,8 +345,13 @@ final class DriftStockMovementRepository implements StockMovementRepository {
   }
 
   /// Preserves the local existence validation: adjustments target an entity
-  /// that must exist locally before any cloud write is attempted.
-  Future<void> _ensureStockEntity(String productId, String? variantId) async {
+  /// that must exist locally before any cloud write is attempted. Returns the
+  /// owning shop so the RPC is scoped to the entity, never to a guessed
+  /// profile shop (null for legacy rows without a shop).
+  Future<String?> _ensureStockEntity(
+    String productId,
+    String? variantId,
+  ) async {
     if (variantId == null) {
       final product = await (_database.select(
         _database.products,
@@ -340,6 +359,7 @@ final class DriftStockMovementRepository implements StockMovementRepository {
       if (product == null) {
         throw const ProductNotFoundFailure();
       }
+      return product.shopId;
     } else {
       final variant = await (_database.select(
         _database.productVariants,
@@ -347,6 +367,14 @@ final class DriftStockMovementRepository implements StockMovementRepository {
       if (variant == null) {
         throw const ProductNotFoundFailure();
       }
+      if (variant.shopId != null) return variant.shopId;
+      final product = await (_database.select(
+        _database.products,
+      )..where((t) => t.id.equals(productId))).getSingleOrNull();
+      if (product == null) {
+        throw const ProductNotFoundFailure();
+      }
+      return product.shopId;
     }
   }
 

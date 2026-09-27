@@ -15,10 +15,14 @@ final class PurchasesDao {
 
   final AppDatabase _db;
 
-  /// All purchases, newest first.
+  /// All purchases, newest first. Same-timestamp ties break by id (descending)
+  /// so the order is deterministic regardless of clock-millisecond collisions.
   Future<List<Purchase>> all({String? shopId}) {
     final query = _db.select(_db.purchases)
-      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+      ..orderBy([
+        (t) => OrderingTerm.desc(t.createdAt),
+        (t) => OrderingTerm.desc(t.id),
+      ]);
     if (shopId != null) {
       query.where((t) => t.shopId.equals(shopId));
     }

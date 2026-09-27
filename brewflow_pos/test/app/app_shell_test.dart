@@ -41,13 +41,13 @@ GoRouter _routerFor(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('app starts on the splash shell with BrewFlow branding', (
+  testWidgets('app starts on the splash shell with JiggarTea Bill branding', (
     tester,
   ) async {
     await tester.pumpWidget(_app());
 
     expect(find.byType(SplashShell), findsOneWidget);
-    expect(find.text('BrewFlow'), findsOneWidget);
+    expect(find.text('JiggarTea Bill'), findsOneWidget);
     expect(find.text('Point of Sale'), findsOneWidget);
   });
 

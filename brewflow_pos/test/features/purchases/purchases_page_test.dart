@@ -296,5 +296,34 @@ void main() {
       expect(find.byType(DataTable), findsOneWidget);
       expect(find.text('PUR-000001'), findsOneWidget);
     });
+
+    testWidgets('wide table is wrapped in a horizontal scroll view', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1440, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeSuppliers.storedSuppliers.add(supplier('s1', 'Acme Supplies'));
+      fakePurchases.storedPurchases.add(
+        purchase('p1', 'PUR-000001', supplierId: 's1', totalPaise: 120000),
+      );
+      await pumpAuthenticated(tester);
+      await openPurchases(tester);
+
+      expect(find.byType(DataTable), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(DataTable),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is SingleChildScrollView &&
+                widget.scrollDirection == Axis.horizontal,
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
   });
 }

@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:drift/drift.dart';
 import 'package:drift_dev/api/migrations_native.dart';
@@ -200,7 +201,7 @@ void main() {
       final version = await db.customSelect('PRAGMA user_version').getSingle();
       expect(
         version.data.values.first,
-        19,
+        AppConstants.databaseSchemaVersion,
         reason: 'real upgrade chain v14 -> live must land on the latest schema',
       );
 

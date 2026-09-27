@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/app/providers.dart';
+import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
@@ -34,8 +35,18 @@ Future<(ProviderContainer, GoRouter)> _pump(
       child: MaterialApp.router(routerConfig: router),
     ),
   );
-  await tester.pumpAndSettle();
+  await _boundedSettle(tester);
   return (container, router);
+}
+
+/// Pushes frames until no transient callbacks are scheduled, or up to [limit]
+/// iterations — the billing branch carries idle animations, so a strict
+/// [pumpAndSettle] would time out on it.
+Future<void> _boundedSettle(WidgetTester tester, {int limit = 60}) async {
+  for (var i = 0; i < limit; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (tester.binding.transientCallbackCount == 0) return;
+  }
 }
 
 void main() {
@@ -103,21 +114,60 @@ void main() {
         child: MaterialApp.router(routerConfig: router),
       ),
     );
-    await tester.pumpAndSettle();
+    await _boundedSettle(tester);
 
-    expect(find.text('Dashboard'), findsNothing);
-    expect(find.text('Inventory'), findsOneWidget);
-    expect(find.text('Billing'), findsOneWidget);
-    expect(find.text('Orders'), findsOneWidget);
-    expect(find.text('Customers'), findsOneWidget);
-    expect(find.text('Suppliers'), findsNothing);
-    expect(find.text('Purchases'), findsNothing);
-    expect(find.text('Expenses'), findsNothing);
-    expect(find.text('Reports'), findsNothing);
-    expect(find.text('Settings'), findsNothing);
+    // Navigation entries live in the sidebar; a granted landing page may also
+    // repeat its label as its title, so scope the nav assertions to the
+    // sidebar itself. The staff cold-start redirect to the first granted
+    // branch collapses the rail at desktop width, so reopen it first.
+    if (find.byType(AppSidebar).evaluate().isEmpty) {
+      await tester.tap(find.byTooltip('Open navigation'));
+      await _boundedSettle(tester);
+    }
+    final sidebar = find.byType(AppSidebar);
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Dashboard')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Inventory')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Billing')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Orders')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Customers')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Suppliers')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Purchases')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Expenses')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Reports')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('Settings')),
+      findsNothing,
+    );
 
     router.go('/reports');
-    await tester.pumpAndSettle();
+    await _boundedSettle(tester);
     expect(find.text('No access to this area'), findsOneWidget);
   });
 }

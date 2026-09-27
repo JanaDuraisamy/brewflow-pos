@@ -5,6 +5,7 @@ import 'package:brewflow_pos/features/expenses/data/drift_expenses_repository.da
 import 'package:brewflow_pos/features/expenses/data/quick_expense_store.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
+import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -117,8 +118,24 @@ final class _DayBound {
 }
 
 final class ExpensesFilterController extends Notifier<ExpensesFilter> {
+  /// The default expenses view: today's expenses with real day bounds.
+  ///
+  /// A fresh counter opens on the current day (transactions land with
+  /// [DateTime.now]) instead of all-time, so the list is never a silent
+  /// wall of history. Resetting filters returns here too.
+  static ExpensesFilter _defaultToday() {
+    final now = DateTime.now();
+    final startOfDay = _localDay(now);
+    final bounds = _boundsOf(startOfDay);
+    return ExpensesFilter(
+      datePreset: OrdersDatePreset.today,
+      fromUtc: startOfDay.toUtc(),
+      toUtc: bounds.toUtc,
+    );
+  }
+
   @override
-  ExpensesFilter build() => const ExpensesFilter();
+  ExpensesFilter build() => _defaultToday();
 
   void setQuery(String query) => state = state.copyWith(query: query);
 
@@ -173,7 +190,7 @@ final class ExpensesFilterController extends Notifier<ExpensesFilter> {
     );
   }
 
-  void clear() => state = const ExpensesFilter();
+  void clear() => state = _defaultToday();
 
   static _DayBound _boundsOf(DateTime startOfDay) => _DayBound(
     startOfDay.toUtc(),
@@ -193,7 +210,8 @@ final expensesProvider =
       ExpensesController.new,
     );
 
-/// Total amount the shop still owes on expenses (active NOT_PAID records).
+/// Total amount the shop still owes on expenses (active NOT_PAID records,
+/// minus payments already recorded against those payees).
 /// Rebuilt by [ExpensesController] after every mutation.
 final shopPayableProvider = FutureProvider<int>((ref) async {
   try {
@@ -203,6 +221,65 @@ final shopPayableProvider = FutureProvider<int>((ref) async {
   } catch (error, stackTrace) {
     AppLog.error(
       'Failed to load payable total',
+      tag: ExpensesController.tag,
+      error: error,
+      stackTrace: stackTrace,
+    );
+    throw const UnexpectedExpensesFailure();
+  }
+});
+
+/// Grouped outstanding payables, one row per payee/item, largest remaining
+/// balance first. Backs the per-payee detail screen.
+final shopPayablesProvider = FutureProvider<List<ShopPayable>>((ref) async {
+  try {
+    return await ref.watch(expensesRepositoryProvider).shopPayables();
+  } on ExpensesFailure {
+    rethrow;
+  } catch (error, stackTrace) {
+    AppLog.error(
+      'Failed to load shop payables',
+      tag: ExpensesController.tag,
+      error: error,
+      stackTrace: stackTrace,
+    );
+    throw const UnexpectedExpensesFailure();
+  }
+});
+
+/// Payments recorded against [payeeName], newest first. Backs the payment
+/// history list on the detail screen.
+final payablePaymentsProvider =
+    FutureProvider.family<List<ExpensePayment>, String>((ref, payeeName) async {
+      try {
+        return await ref
+            .watch(expensesRepositoryProvider)
+            .payablePayments(payeeName: payeeName);
+      } on ExpensesFailure {
+        rethrow;
+      } catch (error, stackTrace) {
+        AppLog.error(
+          'Failed to load payable payments',
+          tag: ExpensesController.tag,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        throw const UnexpectedExpensesFailure();
+      }
+    });
+
+/// Unfiltered expense record count, so the landing page can tell a brand-new
+/// shop ("No expenses yet") apart from a filter that matched nothing
+/// ("No expenses match your filters") even though the default date view is
+/// already narrowed to today. Rebuilt after every expense mutation.
+final expensesCountProvider = FutureProvider<int>((ref) async {
+  try {
+    return await ref.watch(expensesRepositoryProvider).expensesCount();
+  } on ExpensesFailure {
+    rethrow;
+  } catch (error, stackTrace) {
+    AppLog.error(
+      'Failed to load expense count',
       tag: ExpensesController.tag,
       error: error,
       stackTrace: stackTrace,
@@ -326,6 +403,51 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     );
   }
 
+  /// Records a payment against one payee's outstanding balance.
+  ///
+  /// Owner-only, like [delete]: paying a supplier moves money out, so it is not
+  /// a staff action even though staff may record the original expense. The
+  /// amount is validated against the derived remaining balance in the
+  /// repository (and again in the cloud RPC), so an over-payment cannot be
+  /// recorded here.
+  Future<ExpensePayment> payPayable({
+    required String payeeName,
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    required DateTime paidAt,
+    String? note,
+  }) async {
+    requireOwner(ref);
+    try {
+      final payment = await ref
+          .read(expensesRepositoryProvider)
+          .recordPayablePayment(
+            payeeName: payeeName,
+            amountPaise: amountPaise,
+            paymentMethod: paymentMethod,
+            paidAt: paidAt,
+            note: note,
+          );
+      // A payment does not change the expense list, but it does change every
+      // payable view and the Reports payable total.
+      ref.invalidate(shopPayableProvider);
+      ref.invalidate(shopPayablesProvider);
+      ref.invalidate(payablePaymentsProvider(payeeName));
+      ref.invalidate(reportsControllerProvider);
+      return payment;
+    } on ExpensesFailure {
+      rethrow;
+    } catch (error, stackTrace) {
+      AppLog.error(
+        'Payable payment failed',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      throw const UnexpectedExpensesFailure();
+    }
+  }
+
   /// Runs [action] against the repository, then refreshes this controller's
   /// state. [ExpensesFailure]s pass through untouched; anything unexpected is
   /// logged and rethrown as [UnexpectedExpensesFailure].
@@ -334,6 +456,7 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
       await action();
       ref.invalidateSelf();
       ref.invalidate(shopPayableProvider);
+      ref.invalidate(expensesCountProvider);
       ref.invalidate(reportsControllerProvider);
     } on ExpensesFailure {
       rethrow;

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
@@ -14,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
@@ -104,6 +106,7 @@ Future<ProviderContainer> _pumpReports(
   FakeOrdersRepository? orders,
   FakeInventoryRepository? inventory,
   FakeExpensesRepository? expenses,
+  FakeCustomerLedgerRepository? ledger,
 }) async {
   final container = ProviderContainer(
     // Riverpod retries failing builds by default; tests want deterministic
@@ -115,6 +118,9 @@ Future<ProviderContainer> _pumpReports(
       ),
       inventoryRepositoryProvider.overrideWithValue(
         inventory ?? FakeInventoryRepository(),
+      ),
+      customerLedgerRepositoryProvider.overrideWithValue(
+        ledger ?? FakeCustomerLedgerRepository(),
       ),
       expensesRepositoryProvider.overrideWithValue(
         expenses ?? FakeExpensesRepository(),
@@ -712,4 +718,103 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Customer Receivables and Shop Payables cards show the balances',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1200, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final now = DateTime.now().toUtc();
+      final expenses = FakeExpensesRepository();
+      expenses.seed(
+        name: 'Shop Rent',
+        amountPaise: 5000,
+        category: ExpenseCategory.rent,
+        paymentMethod: PaymentMethod.bank,
+        expenseDate: now,
+      );
+      expenses.seed(
+        name: 'Unpaid supply',
+        amountPaise: 15000,
+        category: ExpenseCategory.supplies,
+        paymentMethod: PaymentMethod.cash,
+        expenseDate: now,
+        paymentStatus: ExpensePaymentStatus.notPaid,
+      );
+      expenses.seed(
+        name: 'Transport credit',
+        amountPaise: 7000,
+        category: ExpenseCategory.transport,
+        paymentMethod: PaymentMethod.cash,
+        expenseDate: now,
+        paymentStatus: ExpensePaymentStatus.notPaid,
+      );
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills
+        ..add(
+          FakeLedgerBill(
+            id: 's1',
+            customerId: 'c1',
+            customerName: 'Priya',
+            receiptNumber: 'BF-000001',
+            createdAt: now,
+            totalPaise: 10000,
+          ),
+        )
+        ..add(
+          FakeLedgerBill(
+            id: 's2',
+            customerId: 'c1',
+            customerName: 'Priya',
+            receiptNumber: 'BF-000002',
+            createdAt: now,
+            totalPaise: 10000,
+          ),
+        )
+        ..add(
+          FakeLedgerBill(
+            id: 's3',
+            customerId: 'c2',
+            customerName: 'Arun',
+            receiptNumber: 'BF-000003',
+            createdAt: now,
+            totalPaise: 4000,
+          ),
+        );
+
+      await _pumpReports(tester, expenses: expenses, ledger: ledger);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ListView), findsOneWidget);
+      for (
+        var i = 0;
+        i < 12 && !tester.any(find.text('Customer Receivables'));
+        i++
+      ) {
+        await tester.drag(find.byType(ListView), const Offset(0, -600));
+        await tester.pumpAndSettle();
+      }
+
+      expect(find.text('Customer Receivables'), findsOneWidget);
+      expect(find.text('Total Receivable'), findsOneWidget);
+      expect(find.text('₹240.00'), findsOneWidget);
+      expect(find.text('Priya'), findsOneWidget);
+      expect(find.text('2 open bills'), findsOneWidget);
+      expect(find.text('Arun'), findsOneWidget);
+      expect(find.text('1 open bill'), findsOneWidget);
+
+      for (var i = 0; i < 8 && !tester.any(find.text('Shop Payables')); i++) {
+        await tester.drag(find.byType(ListView), const Offset(0, -600));
+        await tester.pumpAndSettle();
+      }
+
+      expect(find.text('Shop Payables'), findsOneWidget);
+      expect(find.text('Total Payable'), findsOneWidget);
+      expect(find.text('₹220.00'), findsOneWidget);
+      expect(find.text('Transport credit'), findsWidgets);
+    },
+  );
 }

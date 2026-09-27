@@ -1,6 +1,7 @@
 import 'package:brewflow_pos/app/widgets/app_buttons.dart';
 import 'package:brewflow_pos/app/widgets/page_header.dart';
 import 'package:brewflow_pos/app/widgets/state_views.dart';
+import 'package:brewflow_pos/core/router/app_routes.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/features/storage_cleanup/domain/storage_cleanup_models.dart';
@@ -8,6 +9,7 @@ import 'package:brewflow_pos/features/storage_cleanup/presentation/owner_storage
 import 'package:brewflow_pos/features/storage_cleanup/presentation/storage_cleanup_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 /// Owner-confirmed cleanup review.
 ///
@@ -40,7 +42,18 @@ final class _StorageCleanupReviewPageState
     final orphans = report?.orphanPaths ?? const <String>[];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Review files')),
+      appBar: AppBar(
+        leading: BackButton(
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.storageCleanup);
+            }
+          },
+        ),
+        title: const Text('Review files'),
+      ),
       body: report == null
           ? const Center(child: LoadingState(message: 'Loading…'))
           : ListView(

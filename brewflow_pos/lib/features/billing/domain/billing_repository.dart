@@ -133,6 +133,19 @@ abstract interface class BillingRepository {
   /// The persisted items of one sale, in insertion order.
   Future<List<SaleItem>> saleItemsFor(String saleId);
 
+  /// The most-sold product ids in the current window, by total quantity.
+  ///
+  /// Powers the POS "Frequently Sold" shelf: real counter history only, so
+  /// voided sales and opening-balance ledger entries are excluded, and only
+  /// sales recorded no earlier than [sinceUtc] are counted. Returns at most
+  /// [limit] ids, ranked by total quantity sold (ties broken by product id).
+  /// Empty when there is no matching history.
+  Future<List<String>> frequentlySoldProductIds({
+    required DateTime sinceUtc,
+    int limit = 10,
+    String? shopId,
+  });
+
   /// All completed sales, newest first.
   Future<List<Sale>> sales();
 

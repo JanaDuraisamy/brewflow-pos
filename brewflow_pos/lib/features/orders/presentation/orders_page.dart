@@ -138,6 +138,60 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
     ref.read(ordersFilterProvider.notifier).setPreset(preset);
   }
 
+  Widget _methodDropdown(WidgetRef ref, OrdersFilter filter) {
+    return DropdownButton<PaymentMethod?>(
+      value: filter.paymentMethod,
+      hint: const Text('All methods'),
+      items: [
+        const DropdownMenuItem<PaymentMethod?>(
+          value: null,
+          child: Text('All methods'),
+        ),
+        for (final method in PaymentMethod.values)
+          DropdownMenuItem<PaymentMethod?>(
+            value: method,
+            child: Text(paymentMethodLabel(method)),
+          ),
+      ],
+      onChanged: (method) =>
+          ref.read(ordersFilterProvider.notifier).setPaymentMethod(method),
+    );
+  }
+
+  Widget _dateDropdown(OrdersFilter filter) {
+    return DropdownButton<OrdersDatePreset>(
+      value: filter.datePreset,
+      items: [
+        const DropdownMenuItem(
+          value: OrdersDatePreset.all,
+          child: Text('All time'),
+        ),
+        const DropdownMenuItem(
+          value: OrdersDatePreset.today,
+          child: Text('Today'),
+        ),
+        const DropdownMenuItem(
+          value: OrdersDatePreset.last7,
+          child: Text('Last 7 days'),
+        ),
+        const DropdownMenuItem(
+          value: OrdersDatePreset.last30,
+          child: Text('Last 30 days'),
+        ),
+        const DropdownMenuItem(
+          value: OrdersDatePreset.last90,
+          child: Text('Last 90 days'),
+        ),
+        if (filter.datePreset == OrdersDatePreset.custom)
+          const DropdownMenuItem(
+            value: OrdersDatePreset.custom,
+            child: Text('Custom range'),
+          ),
+      ],
+      onChanged: _onDateSelected,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filter = ref.watch(ordersFilterProvider);
@@ -170,54 +224,6 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
         ),
       ),
     );
-    final methodDropdown = DropdownButton<PaymentMethod?>(
-      value: filter.paymentMethod,
-      hint: const Text('All methods'),
-      items: [
-        const DropdownMenuItem<PaymentMethod?>(
-          value: null,
-          child: Text('All methods'),
-        ),
-        for (final method in PaymentMethod.values)
-          DropdownMenuItem<PaymentMethod?>(
-            value: method,
-            child: Text(paymentMethodLabel(method)),
-          ),
-      ],
-      onChanged: (method) =>
-          ref.read(ordersFilterProvider.notifier).setPaymentMethod(method),
-    );
-    final dateDropdown = DropdownButton<OrdersDatePreset>(
-      value: filter.datePreset,
-      items: [
-        const DropdownMenuItem(
-          value: OrdersDatePreset.all,
-          child: Text('All time'),
-        ),
-        const DropdownMenuItem(
-          value: OrdersDatePreset.today,
-          child: Text('Today'),
-        ),
-        const DropdownMenuItem(
-          value: OrdersDatePreset.last7,
-          child: Text('Last 7 days'),
-        ),
-        const DropdownMenuItem(
-          value: OrdersDatePreset.last30,
-          child: Text('Last 30 days'),
-        ),
-        DropdownMenuItem(
-          value: OrdersDatePreset.last90,
-          child: Text('Last 90 days'),
-        ),
-        if (filter.datePreset == OrdersDatePreset.custom)
-          DropdownMenuItem(
-            value: OrdersDatePreset.custom,
-            child: Text('Custom range'),
-          ),
-      ],
-      onChanged: _onDateSelected,
-    );
     if (compact) {
       final notifier = ref.read(ordersFilterProvider.notifier);
       final activeCount =
@@ -236,10 +242,20 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
               onReset: notifier.clear,
               children: [
                 _filterSectionLabel(context, 'Payment'),
-                methodDropdown,
+                Consumer(
+                  builder: (context, ref, child) {
+                    final live = ref.watch(ordersFilterProvider);
+                    return _methodDropdown(ref, live);
+                  },
+                ),
                 const SizedBox(height: AppSpacing.md),
                 _filterSectionLabel(context, 'Date'),
-                dateDropdown,
+                Consumer(
+                  builder: (context, ref, child) {
+                    final live = ref.watch(ordersFilterProvider);
+                    return _dateDropdown(live);
+                  },
+                ),
               ],
             ),
           ),
@@ -252,8 +268,8 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         search,
-        methodDropdown,
-        dateDropdown,
+        _methodDropdown(ref, filter),
+        _dateDropdown(filter),
         if (filter.isActive)
           TextButton.icon(
             onPressed: () => ref.read(ordersFilterProvider.notifier).clear(),
@@ -281,9 +297,14 @@ final class _OrderList extends ConsumerWidget {
           return Column(
             children: [
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: _OrderTable(orders: feed.items),
+                child: Scrollbar(
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: _OrderTable(orders: feed.items),
+                    ),
+                  ),
                 ),
               ),
               if (feed.hasMore) ...[
@@ -711,7 +732,7 @@ void _showOrderActions(
   WidgetRef ref,
   OrderSummary order,
 ) {
-  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? true;
+  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? false;
   showContextActionSheet(
     context,
     title: order.receiptNumber,

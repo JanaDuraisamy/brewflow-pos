@@ -4,6 +4,7 @@ import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,6 +14,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Local-first category administration: create, rename, enable/disable and
 /// delete (deletion is rejected while products reference the category).
 /// Pushed from the inventory page, so it carries its own scaffold.
+///
+/// Deletion is OWNER-only: the trailing delete action is rendered for the owner
+/// alone, and [CategoriesController.delete] enforces the same boundary so
+/// hiding the button is never the only protection.
 /// ---------------------------------------------------------------------------
 
 final class CategoryManagementPage extends ConsumerWidget {
@@ -21,6 +26,7 @@ final class CategoryManagementPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final categories = ref.watch(categoriesProvider);
+    final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
     return Scaffold(
       appBar: AppBar(title: const Text('Categories')),
       floatingActionButton: FloatingActionButton.extended(
@@ -60,7 +66,9 @@ final class CategoryManagementPage extends ConsumerWidget {
                     },
                     onRename: () =>
                         _showCategoryDialog(context, category: category),
-                    onDelete: () => _confirmDelete(context, ref, category),
+                    onDelete: isOwner
+                        ? () => _confirmDelete(context, ref, category)
+                        : null,
                   );
                 },
               ),
@@ -220,13 +228,15 @@ final class _CategoryCard extends StatelessWidget {
     required this.category,
     required this.onToggleActive,
     required this.onRename,
-    required this.onDelete,
+    this.onDelete,
   });
 
   final Category category;
   final ValueChanged<bool> onToggleActive;
   final VoidCallback onRename;
-  final VoidCallback onDelete;
+
+  /// Null hides the delete action — deletion is owner-only.
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -259,12 +269,13 @@ final class _CategoryCard extends StatelessWidget {
               color: context.appColors.textSecondary,
               onPressed: onRename,
             ),
-            IconButton(
-              tooltip: 'Delete category',
-              icon: const Icon(Icons.delete_outline),
-              color: AppColors.error,
-              onPressed: onDelete,
-            ),
+            if (onDelete != null)
+              IconButton(
+                tooltip: 'Delete category',
+                icon: const Icon(Icons.delete_outline),
+                color: AppColors.error,
+                onPressed: onDelete,
+              ),
           ],
         ),
       ),

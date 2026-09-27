@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
@@ -10,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
@@ -77,6 +79,9 @@ Future<void> _pumpPhone(WidgetTester tester, double width) async {
     overrides: [
       ordersRepositoryProvider.overrideWithValue(orders),
       inventoryRepositoryProvider.overrideWithValue(inventory),
+      customerLedgerRepositoryProvider.overrideWithValue(
+        FakeCustomerLedgerRepository(),
+      ),
       expensesRepositoryProvider.overrideWithValue(expenses),
       staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
     ],

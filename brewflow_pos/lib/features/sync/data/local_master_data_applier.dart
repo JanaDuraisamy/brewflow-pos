@@ -4,6 +4,7 @@ import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/features/settings/data/preferences_settings_repository.dart';
+import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
 
@@ -21,9 +22,11 @@ import 'package:drift/drift.dart';
 ///   therefore the whole page (no partial pages, cursors stay honest).
 /// - Product images are NEVER overwritten: image paths are device-local
 ///   files today (see master_data_models.dart).
-/// - Hard deletions land as tombstone-driven deletes where legal; when local
-///   history still references the row, deletion degrades to soft
-///   deactivation — data loss is never the price of convergence.
+/// - Hard deletions land as tombstone-driven deletes where legal. Customers
+///   hard-delete (schema v25 -> v26) because their billing history no longer
+///   references them through a foreign key; categories and offers hard-delete
+///   when unreferenced. Everything else soft-deactivates — data loss is never
+///   the price of convergence.
 ///
 /// This class writes DIRECTLY to tables (no outbox enqueue): applying remote
 /// truth is not a new local business change.
@@ -468,6 +471,7 @@ final class LocalMasterDataApplier {
                 voidedAt: Value(row.voidedAt),
                 createdAt: Value(row.createdAt),
                 updatedAt: Value(appliedAt),
+                isOpeningBalance: Value(row.isOpeningBalance),
               ),
             );
         if (hasClash) {
@@ -698,6 +702,45 @@ final class LocalMasterDataApplier {
                 shopId: Value(row.shopId),
                 customerId: row.customerId,
                 saleId: Value(row.saleId),
+                paymentGroupId: Value(row.paymentGroupId),
+                amountPaise: row.amountPaise,
+                paymentMethod: row.paymentMethod,
+                note: Value(row.note),
+                paidAt: row.paidAt,
+                reversed: Value(row.reversed),
+                reversedAt: Value(row.reversedAt),
+                createdAt: Value(row.createdAt),
+                updatedAt: Value(appliedAt),
+              ),
+            );
+      }
+    });
+  }
+
+  Future<void> applyExpensePaymentPage(
+    List<SyncExpensePayment> rows,
+    DateTime appliedAt,
+  ) async {
+    await _database.transaction(() async {
+      final skipped = await _pendingIds(
+        MasterEntity.expensePayment,
+        rows.map((r) => r.id),
+      );
+      for (final row in rows) {
+        if (skipped.contains(row.id)) continue;
+        // Whole-row upsert, never a delta: the receiving device derives the
+        // payable balance from the payments it now holds, so it lands on
+        // exactly the same remaining amount as the paying device. No balance is
+        // transmitted and none is stored, which is what makes cross-device
+        // balances converge instead of drifting.
+        await _database
+            .into(_database.expensePayments)
+            .insertOnConflictUpdate(
+              db.ExpensePaymentsCompanion.insert(
+                id: Value(row.id),
+                shopId: Value(row.shopId),
+                payeeKey: row.payeeKey,
+                payeeName: Value(row.payeeName),
                 amountPaise: row.amountPaise,
                 paymentMethod: row.paymentMethod,
                 note: Value(row.note),
@@ -740,9 +783,9 @@ final class LocalMasterDataApplier {
     });
   }
 
-  /// Applies a pulled deletion. Categories hard-delete when unreferenced and
-  /// soft-deactivate otherwise; every other entity soft-deactivates (their
-  /// local semantics never hard-delete).
+  /// Applies a pulled deletion. Categories and offers hard-delete; customers
+  /// hard-delete as of schema v25 -> v26; every other entity soft-deactivates
+  /// (their local semantics never hard-delete).
   Future<void> applyDeletion(SyncDeletion deletion) async {
     switch (deletion.entity) {
       case MasterEntity.category:
@@ -762,10 +805,22 @@ final class LocalMasterDataApplier {
       case MasterEntity.supplier:
         await _deactivate(_database.suppliers, deletion.id);
       case MasterEntity.customer:
-        await _deactivate(_database.customers, deletion.id);
+        // A real delete, on this device exactly as on the deleting one.
+        // `sales.customer_id` / `customer_payments.customer_id` are plain
+        // columns (schema v25 -> v26), so no history blocks the row and none is
+        // touched: the ledger keeps the id and its attribution. Previously this
+        // deactivated the row, which left a zombie customer on every other
+        // device — it vanished from the peer's list only because of the
+        // hidden filter, while still holding the globally-unique phone.
+        await _database.transaction(() async {
+          await (_database.delete(
+            _database.customers,
+          )..where((t) => t.id.equals(deletion.id))).go();
+        });
       case MasterEntity.sale:
       case MasterEntity.saleItem:
       case MasterEntity.customerPayment:
+      case MasterEntity.expensePayment:
         // Immutable append-only: sync never deletes these.
         break;
       case MasterEntity.shop:
@@ -777,7 +832,48 @@ final class LocalMasterDataApplier {
         await (_database.delete(
           _database.offers,
         )..where((t) => t.id.equals(deletion.id))).go();
+      case MasterEntity.staffProfile:
+        await _archiveStaffProfile(deletion.id);
     }
+  }
+
+  /// Removes a deleted staff member from the local roster via a pulled
+  /// STAFF_PROFILE tombstone, addressed by the Supabase auth user id.
+  ///
+  /// Mirrors [StaffRepository.archiveStaffProfile]: the `users` row is kept as
+  /// an inert foreign-key anchor because the local payroll tables reference it
+  /// with `ON DELETE CASCADE` and `PRAGMA foreign_keys` is ON — dropping the
+  /// row would silently destroy that member's attendance, salary and advance
+  /// history. Re-typing it out of `'STAFF'` is what removes them from the
+  /// roster, the Staff page and sign-in while history stays attributed.
+  ///
+  /// No history table is touched, so a peer's copy of the payroll records is
+  /// preserved exactly like the deleting device's.
+  Future<void> _archiveStaffProfile(String authUserId) async {
+    await _database.transaction(() async {
+      final row = await (_database.select(
+        _database.users,
+      )..where((t) => t.authUserId.equals(authUserId))).getSingleOrNull();
+      // Never seen on this device, or already gone: nothing to do.
+      if (row == null) return;
+      // Idempotent, and an OWNER profile must never be archivable.
+      if (row.role != 'STAFF') return;
+      await (_database.delete(
+        _database.staffPermissions,
+      )..where((t) => t.userId.equals(row.id))).go();
+      await (_database.update(
+        _database.users,
+      )..where((t) => t.id.equals(row.id))).write(
+        db.UsersCompanion(
+          email: Value(archivedStaffEmail(row.id)),
+          authUserId: const Value(null),
+          displayName: const Value(null),
+          role: const Value(kArchivedStaffRole),
+          isActive: const Value(false),
+          updatedAt: Value(DateTime.now().toUtc()),
+        ),
+      );
+    });
   }
 
   Future<void> _deactivate(TableInfo table, String id) async {

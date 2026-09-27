@@ -266,43 +266,7 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
         );
         final chips = Row(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            AppFilterChip(
-              label: 'All',
-              selected: filter.status == SupplierStatusFilter.all,
-              onSelected: (selected) {
-                if (selected) {
-                  ref
-                      .read(suppliersFilterProvider.notifier)
-                      .setStatus(SupplierStatusFilter.all);
-                }
-              },
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            AppFilterChip(
-              label: 'Active',
-              selected: filter.status == SupplierStatusFilter.active,
-              onSelected: (selected) => ref
-                  .read(suppliersFilterProvider.notifier)
-                  .setStatus(
-                    selected
-                        ? SupplierStatusFilter.active
-                        : SupplierStatusFilter.all,
-                  ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            AppFilterChip(
-              label: 'Inactive',
-              selected: filter.status == SupplierStatusFilter.inactive,
-              onSelected: (selected) => ref
-                  .read(suppliersFilterProvider.notifier)
-                  .setStatus(
-                    selected
-                        ? SupplierStatusFilter.inactive
-                        : SupplierStatusFilter.all,
-                  ),
-            ),
-          ],
+          children: _statusFilterChips(ref, filter),
         );
         if (compact) {
           final notifier = ref.read(suppliersFilterProvider.notifier);
@@ -319,10 +283,15 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
                   title: 'Filter Suppliers',
                   onReset: notifier.clear,
                   children: [
-                    Wrap(
-                      spacing: AppSpacing.sm,
-                      runSpacing: AppSpacing.sm,
-                      children: [for (final chip in chips.children) chip],
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final live = ref.watch(suppliersFilterProvider);
+                        return Wrap(
+                          spacing: AppSpacing.sm,
+                          runSpacing: AppSpacing.sm,
+                          children: _statusFilterChips(ref, live),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -360,7 +329,15 @@ final class _SupplierList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final wide = MediaQuery.sizeOf(context).width >= 800;
     if (wide) {
-      return SingleChildScrollView(child: _SupplierTable(suppliers: suppliers));
+      return Scrollbar(
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: _SupplierTable(suppliers: suppliers),
+          ),
+        ),
+      );
     }
     return ListView.builder(
       itemCount: suppliers.length,
@@ -699,7 +676,7 @@ void _showSupplierActions(
   WidgetRef ref,
   Supplier supplier,
 ) {
-  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? true;
+  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? false;
   showContextActionSheet(
     context,
     title: supplier.name,
@@ -786,4 +763,42 @@ Future<void> _deleteSupplier(
       context,
     ).showSnackBar(SnackBar(content: Text(error.message)));
   }
+}
+
+/// Status filter chips for suppliers, rebuilt from the live filter so the
+/// phone filter sheet highlights selections while it stays open.
+List<Widget> _statusFilterChips(WidgetRef ref, SuppliersFilter filter) {
+  return [
+    AppFilterChip(
+      label: 'All',
+      selected: filter.status == SupplierStatusFilter.all,
+      onSelected: (selected) {
+        if (selected) {
+          ref
+              .read(suppliersFilterProvider.notifier)
+              .setStatus(SupplierStatusFilter.all);
+        }
+      },
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'Active',
+      selected: filter.status == SupplierStatusFilter.active,
+      onSelected: (selected) => ref
+          .read(suppliersFilterProvider.notifier)
+          .setStatus(
+            selected ? SupplierStatusFilter.active : SupplierStatusFilter.all,
+          ),
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'Inactive',
+      selected: filter.status == SupplierStatusFilter.inactive,
+      onSelected: (selected) => ref
+          .read(suppliersFilterProvider.notifier)
+          .setStatus(
+            selected ? SupplierStatusFilter.inactive : SupplierStatusFilter.all,
+          ),
+    ),
+  ];
 }

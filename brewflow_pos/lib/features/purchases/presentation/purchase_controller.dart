@@ -418,7 +418,10 @@ final class ActiveSuppliersController extends AsyncNotifier<List<Supplier>> {
 
   @override
   Future<List<Supplier>> build() async {
-    final repository = ref.watch(suppliersRepositoryProvider);
+    // Use ref.read so this does not create a dependency on the repository
+    // notifier. The provider is invalidated explicitly after mutations or
+    // sync so the list refreshes.
+    final repository = ref.read(suppliersRepositoryProvider);
     try {
       return await repository.suppliers(status: SupplierStatusFilter.active);
     } on SuppliersFailure {
@@ -446,7 +449,10 @@ final class PurchaseProductsController extends AsyncNotifier<List<Product>> {
 
   @override
   Future<List<Product>> build() async {
-    final repository = ref.watch(inventoryRepositoryProvider);
+    // Use ref.read so this does not create a dependency on the repository
+    // notifier. The provider is invalidated explicitly after sync so newly
+    // pulled products appear without requiring an app restart.
+    final repository = ref.read(inventoryRepositoryProvider);
     try {
       return await repository.products(status: ProductStatusFilter.active);
     } on InventoryFailure {

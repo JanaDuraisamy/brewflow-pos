@@ -1,4 +1,6 @@
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
+import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
@@ -11,6 +13,7 @@ import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
@@ -35,6 +38,7 @@ ProviderContainer _container({
   FakeOrdersRepository? orders,
   FakeExpensesRepository? expenses,
   FakeInventoryRepository? inventory,
+  FakeCustomerLedgerRepository? ledger,
 }) {
   final container = ProviderContainer(
     // Riverpod retries failing builds with exponential backoff by default;
@@ -49,6 +53,9 @@ ProviderContainer _container({
       ),
       inventoryRepositoryProvider.overrideWithValue(
         inventory ?? FakeInventoryRepository(),
+      ),
+      customerLedgerRepositoryProvider.overrideWithValue(
+        ledger ?? FakeCustomerLedgerRepository(),
       ),
       staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
     ],
@@ -670,6 +677,101 @@ void main() {
       expect(snapshot.categoryPerformance[0].revenuePaise, 3000);
       expect(snapshot.categoryPerformance[1].categoryName, 'Snacks');
       expect(snapshot.categoryPerformance[1].revenuePaise, 2000);
+    });
+  });
+
+  group('receivables and payables', () {
+    test('feed current-balance totals into the snapshot', () async {
+      final now = DateTime.now().toUtc();
+      final expenses = FakeExpensesRepository();
+      expenses.seed(
+        name: 'Shop Rent',
+        amountPaise: 50000,
+        category: ExpenseCategory.rent,
+        paymentMethod: PaymentMethod.bank,
+        expenseDate: now,
+      );
+      expenses.seed(
+        name: 'Unpaid supply',
+        amountPaise: 20000,
+        category: ExpenseCategory.supplies,
+        paymentMethod: PaymentMethod.cash,
+        expenseDate: now,
+        paymentStatus: ExpensePaymentStatus.notPaid,
+      );
+
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.add(
+        FakeLedgerBill(
+          id: 's1',
+          customerId: 'c1',
+          customerName: 'Priya',
+          receiptNumber: 'BF-000001',
+          createdAt: now.subtract(const Duration(days: 2)),
+          totalPaise: 10000,
+        ),
+      );
+      ledger.bills.add(
+        FakeLedgerBill(
+          id: 's2',
+          customerId: 'c1',
+          customerName: 'Priya',
+          receiptNumber: 'BF-000002',
+          createdAt: now.subtract(const Duration(days: 1)),
+          totalPaise: 10000,
+        ),
+      );
+      ledger.bills.add(
+        FakeLedgerBill(
+          id: 's3',
+          customerId: 'c2',
+          customerName: 'Arun',
+          receiptNumber: 'BF-000003',
+          createdAt: now,
+          totalPaise: 8000,
+        ),
+      );
+      ledger.storedPayments.add(
+        CustomerPayment(
+          id: 'p1',
+          customerId: 'c1',
+          saleId: 's1',
+          amountPaise: 5000,
+          paymentMethod: PaymentMethod.cash,
+          paidAt: now,
+          reversed: false,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+
+      final snapshot = await _load(
+        _container(expenses: expenses, ledger: ledger),
+      );
+
+      // Receivables: two customers; Priya's 2 open bills minus the partial
+      // payment -> 150.00 due; Arun 80.00. Newest snapshot is not window-
+      // bounded — these are current outstanding balances.
+      expect(snapshot.totalReceivablePaise, 23000);
+      expect(snapshot.customerReceivables, hasLength(2));
+      expect(snapshot.customerReceivables.map((r) => r.customerName).toList(), [
+        'Arun',
+        'Priya',
+      ]);
+      final priya = snapshot.customerReceivables.firstWhere(
+        (r) => r.customerId == 'c1',
+      );
+      expect(priya.outstandingBillCount, 2);
+      expect(priya.totalDuePaise, 15000);
+      expect(priya.bills.map((b) => b.saleId).toList(), ['s1', 's2']);
+
+      // Payables: only the active NOT_PAID expense is a shop liability. Grouped
+      // by payee, and the total is the remaining balance.
+      expect(snapshot.shopPayables, hasLength(1));
+      expect(snapshot.shopPayables.single.payeeName, 'Unpaid supply');
+      expect(snapshot.shopPayables.single.totalPaise, 20000);
+      expect(snapshot.shopPayables.single.remainingPaise, 20000);
+      expect(snapshot.totalPayablePaise, 20000);
     });
   });
 

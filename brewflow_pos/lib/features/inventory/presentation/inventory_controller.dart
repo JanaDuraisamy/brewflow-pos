@@ -98,8 +98,12 @@ final class CategoriesController extends AsyncNotifier<List<Category>> {
     );
   }
 
+  /// Categories are owner-only to delete: an inventory editor may still rename
+  /// and toggle categories, but removal is guarded here as well as in the UI so
+  /// hiding the button is never the only protection.
   Future<void> delete(String id) {
     requirePermission(ref, Permission.editInventory);
+    requireOwner(ref);
     return _mutate(
       () => ref.read(inventoryRepositoryProvider).deleteCategory(id),
     );
@@ -135,6 +139,7 @@ final class InventoryFilter {
     this.categoryId,
     this.status = ProductStatusFilter.all,
     this.lowStockOnly = false,
+    this.outOfStockOnly = false,
   });
 
   /// Search text matched against product name and SKU.
@@ -152,11 +157,18 @@ final class InventoryFilter {
   /// Low Stock alert opens Inventory with this filter pre-applied.
   final bool lowStockOnly;
 
+  /// When true, only products whose currently effective stock is exactly zero
+  /// are listed. Mirrors the dashboard's Out of Stock rule: an active
+  /// variant-level zero beats a non-zero parent, judged against the same
+  /// active-entity rules as the low-stock filter.
+  final bool outOfStockOnly;
+
   InventoryFilter withQuery(String query) => InventoryFilter(
     query: query,
     categoryId: categoryId,
     status: status,
     lowStockOnly: lowStockOnly,
+    outOfStockOnly: outOfStockOnly,
   );
 
   InventoryFilter withCategory(String? categoryId) => InventoryFilter(
@@ -164,6 +176,7 @@ final class InventoryFilter {
     categoryId: categoryId,
     status: status,
     lowStockOnly: lowStockOnly,
+    outOfStockOnly: outOfStockOnly,
   );
 
   InventoryFilter withStatus(ProductStatusFilter status) => InventoryFilter(
@@ -171,6 +184,7 @@ final class InventoryFilter {
     categoryId: categoryId,
     status: status,
     lowStockOnly: lowStockOnly,
+    outOfStockOnly: outOfStockOnly,
   );
 
   InventoryFilter withLowStockOnly(bool lowStockOnly) => InventoryFilter(
@@ -178,10 +192,19 @@ final class InventoryFilter {
     categoryId: categoryId,
     status: status,
     lowStockOnly: lowStockOnly,
+    outOfStockOnly: outOfStockOnly,
+  );
+
+  InventoryFilter withOutOfStockOnly(bool outOfStockOnly) => InventoryFilter(
+    query: query,
+    categoryId: categoryId,
+    status: status,
+    lowStockOnly: lowStockOnly,
+    outOfStockOnly: outOfStockOnly,
   );
 }
 
-/// Holds the current product list filter; changes rebuild [productsProvider].
+/// Holds the current product list filter; changes rebuild [inventoryFilterProvider].
 final inventoryFilterProvider =
     NotifierProvider<InventoryFilterController, InventoryFilter>(
       InventoryFilterController.new,
@@ -201,6 +224,9 @@ final class InventoryFilterController extends Notifier<InventoryFilter> {
 
   void setLowStockOnly(bool lowStockOnly) =>
       state = state.withLowStockOnly(lowStockOnly);
+
+  void setOutOfStockOnly(bool outOfStockOnly) =>
+      state = state.withOutOfStockOnly(outOfStockOnly);
 
   void clear() => state = const InventoryFilter();
 }
@@ -267,6 +293,25 @@ final class ProductsController extends AsyncNotifier<List<Product>> {
         items = [
           for (final product in items)
             if (isEntityLow(product)) product,
+        ];
+      }
+      if (filter.outOfStockOnly) {
+        // Mirrors the dashboard's Out of Stock rule: any active line whose
+        // currently effective stock is exactly zero (a variant-level zero
+        // beats a non-zero parent, judged against the same active-variant
+        // rules as the low-stock filter).
+        bool isEntityOut(Product product) {
+          if (product.variants.isNotEmpty) {
+            return product.variants.any(
+              (variant) => variant.isActive && variant.stockQuantity <= 0,
+            );
+          }
+          return product.stockQuantity <= 0;
+        }
+
+        items = [
+          for (final product in items)
+            if (isEntityOut(product)) product,
         ];
       }
       return items;

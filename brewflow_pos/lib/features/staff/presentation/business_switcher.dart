@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
@@ -44,6 +45,13 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
   /// business can push its cloud identity + OWNER membership.
   static const String foodTruckShopIdKey = 'business_food_truck_shop_id';
 
+  /// Whether the user has explicitly chosen a context in this session. Guards
+  /// the async prefs hydration so a late prefs read can never revert an
+  /// explicit Cafe ↔ Food Truck ↔ Combined selection (the QA "switch does
+  /// nothing" race: build returns Cafe, hydration lands Food Truck after the
+  /// tap, and the UI appears stuck).
+  bool _userSelected = false;
+
   @override
   BusinessContext build() {
     // Default to Cafe for backward compatibility; hydrate from prefs async.
@@ -55,13 +63,55 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
     try {
       final raw = await AppStorage.preferences.readString(_prefsKey);
       final next = BusinessContext.values.asNameMap()[raw ?? ''];
-      if (next != null && next != state) state = next;
-    } catch (_) {}
+      if (next == null || next == state || _userSelected) return;
+      state = next;
+      AppLog.info('Business context hydrated: ${next.name}', tag: 'Shop');
+    } catch (error, stackTrace) {
+      AppLog.warning(
+        'Business context hydration failed (keeping Cafe)',
+        tag: 'Shop',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> select(BusinessContext next) async {
+    _userSelected = true;
+    if (next == state) {
+      // Still persist + log so a tap on the active entry is observable in
+      // logcat (QA reported "no Flutter log") instead of a silent no-op.
+      try {
+        await AppStorage.preferences.writeString(_prefsKey, next.name);
+      } catch (error, stackTrace) {
+        AppLog.warning(
+          'Business context persist failed',
+          tag: 'Shop',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      AppLog.info(
+        'Business context selected (unchanged): ${next.name}',
+        tag: 'Shop',
+      );
+      return;
+    }
     state = next;
-    await AppStorage.preferences.writeString(_prefsKey, next.name);
+    try {
+      await AppStorage.preferences.writeString(_prefsKey, next.name);
+    } catch (error, stackTrace) {
+      AppLog.warning(
+        'Business context persist failed',
+        tag: 'Shop',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    AppLog.info('Business context selected: ${next.name}', tag: 'Shop');
+    // Watchers (dashboard, reports, POS shelf/offers) rebuild via the
+    // provider subscription; no manual invalidation here so Combined
+    // read-only semantics stay untouched.
   }
 
   /// Resolves the `shopId` for [context].

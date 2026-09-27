@@ -1,6 +1,13 @@
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:brewflow_pos/features/customers/data/drift_customers_repository.dart';
 import 'package:brewflow_pos/features/customers/domain/whatsapp_verification.dart';
+import 'package:brewflow_pos/features/expenses/data/drift_expenses_repository.dart';
+// `show` avoids a clash with the Drift `Expense` row class exported by
+// app_database.dart, which this file also needs.
+import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart'
+    show ExpenseCategory, ExpensePaymentStatus;
+import 'package:brewflow_pos/features/billing/domain/billing_models.dart'
+    show PaymentMethod;
 import 'package:brewflow_pos/features/inventory/data/drift_inventory_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/purchases/data/drift_suppliers_repository.dart';
@@ -36,6 +43,7 @@ final class Device {
     required this.inventory,
     required this.suppliers,
     required this.customers,
+    required this.expenses,
   });
 
   final String id;
@@ -48,6 +56,7 @@ final class Device {
   final DriftInventoryRepository inventory;
   final DriftSuppliersRepository suppliers;
   final DriftCustomersRepository customers;
+  final DriftExpensesRepository expenses;
 
   Future<void> runCycle() => engine.runCycle(deviceId: id, shopId: shopId);
 
@@ -97,6 +106,10 @@ void main() {
         outboxCoordinator: coordinator,
       ),
       customers: DriftCustomersRepository(
+        database,
+        outboxCoordinator: coordinator,
+      ),
+      expenses: DriftExpensesRepository(
         database,
         outboxCoordinator: coordinator,
       ),
@@ -410,6 +423,145 @@ void main() {
     );
   });
 
+  group('customer deletion sync', () {
+    test(
+      'a delete on A removes the customer on B and frees the unique phone',
+      () async {
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
+        addTearDown(a.database.close);
+        addTearDown(b.database.close);
+
+        final created = await a.customers.createCustomer(
+          name: 'Jana',
+          phone: '9876500000',
+        );
+        await a.runCycle();
+        await b.runCycle();
+        expect(
+          (await b.customers.customerById(created.id))!.phone,
+          '9876500000',
+        );
+
+        await a.customers.deleteCustomer(created.id);
+        await a.runCycle();
+        await b.runCycle();
+
+        // A real delete, not a deactivate. The tombstone used to be applied as
+        // `is_active = false`, which left a zombie row on every peer: invisible
+        // in the list only because of the hidden filter, but still squatting on
+        // the globally-unique `customers.phone` column.
+        expect(await b.customers.customerById(created.id), isNull);
+        expect(await b.database.select(b.database.customers).get(), isEmpty);
+        expect(
+          await (b.database.select(
+            b.database.customers,
+          )..where((t) => t.phone.equals('9876500000'))).get(),
+          isEmpty,
+        );
+
+        // B can immediately reuse the freed phone, which a zombie row would
+        // have blocked with SqliteException 2067.
+        final reused = await b.customers.createCustomer(
+          name: 'New Jana',
+          phone: '9876500000',
+        );
+        expect(reused.phone, '9876500000');
+        await b.runCycle();
+        await a.runCycle();
+        expect((await a.customers.customerById(reused.id))!.name, 'New Jana');
+        expect(await a.customers.customerById(created.id), isNull);
+      },
+    );
+
+    test(
+      'the deleted customer leaves the cloud, not just this device',
+      () async {
+        final a = await makeDevice('A', 'shop-1');
+        addTearDown(a.database.close);
+
+        final created = await a.customers.createCustomer(
+          name: 'Jana',
+          phone: '9876500000',
+        );
+        await a.runCycle();
+        expect(cloud.customers.containsKey(created.id), isTrue);
+
+        await a.customers.deleteCustomer(created.id);
+        await a.runCycle();
+
+        // The row is gone from the cloud table itself, not merely tombstoned.
+        // This is what stops every freshly provisioned device from re-pulling
+        // it on every first sync, and stops deleted customers from piling up
+        // invisibly in `customers`.
+        expect(cloud.customers.containsKey(created.id), isFalse);
+
+        // A device provisioned afterwards has nothing to resurrect. The
+        // CUSTOMER tombstone drains last in the pull cycle, so even a row that
+        // were still present would be removed again before the cycle ends.
+        final fresh = await makeDevice('C', 'shop-1');
+        addTearDown(fresh.database.close);
+        await fresh.runCycle();
+        expect(await fresh.customers.customerById(created.id), isNull);
+        expect(
+          await fresh.database.select(fresh.database.customers).get(),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'peer deletion keeps the ledger and its attribution on both devices',
+      () async {
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
+        addTearDown(a.database.close);
+        addTearDown(b.database.close);
+
+        final created = await a.customers.createCustomer(
+          name: 'Jana',
+          phone: '9876500000',
+        );
+        // A customer-linked sale on A, so the delete has real history behind it.
+        final now = DateTime.now().toUtc();
+        await a.database
+            .into(a.database.sales)
+            .insert(
+              SalesCompanion.insert(
+                id: const Value('sale-1'),
+                receiptNumber: 'BF-000001',
+                customerId: Value(created.id),
+                subtotalPaise: 50000,
+                totalPaise: 50000,
+                paymentStatus: const Value('NOT_PAID'),
+                paymentMethod: const Value('CASH'),
+                createdAt: Value(now),
+                updatedAt: Value(now),
+              ),
+            );
+        await a.runCycle();
+        await b.runCycle();
+        // NB: sales are transactional, not master data, so B legitimately has
+        // no copy of this sale. What must travel is the CUSTOMER tombstone.
+
+        await a.customers.deleteCustomer(created.id);
+        await a.runCycle();
+        await b.runCycle();
+
+        // The deleting device keeps its ledger, still attributed, even though
+        // the customer row is gone. Nothing is nulled and nothing cascades.
+        final sale = await (a.database.select(
+          a.database.sales,
+        )..where((t) => t.id.equals('sale-1'))).getSingle();
+        expect(sale.totalPaise, 50000);
+        expect(sale.customerId, created.id);
+
+        // And the peer ends up with no customer row at all.
+        expect(await b.customers.customerById(created.id), isNull);
+      },
+    );
+  });
+
   group('pull mechanics', () {
     test('applier never overwrites rows with pending local changes', () async {
       final a = await makeDevice('A', 'shop-1');
@@ -514,6 +666,245 @@ void main() {
       expect(
         (await fresh.customers.customers()).single.name,
         'Walk-in Regular',
+      );
+    });
+  });
+
+  group('expense payment sync', () {
+    // Return type is inferred on purpose: the domain `Expense` name collides
+    // with the Drift row class this file already imports.
+    seedUnpaidExpense(
+      Device d,
+      String name,
+      int amountPaise, {
+      String? shopId,
+    }) => d.expenses.createExpense(
+      name: name,
+      amountPaise: amountPaise,
+      category: ExpenseCategory.supplies,
+      paymentMethod: PaymentMethod.cash,
+      expenseDate: DateTime.utc(2026, 8, 10),
+      paymentStatus: ExpensePaymentStatus.notPaid,
+      shopId: shopId ?? d.shopId,
+    );
+
+    test('A records a payment → cloud → B derives the same balance', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      // Both devices see the same unpaid expense first.
+      await seedUnpaidExpense(a, 'Milk', 160000);
+      await a.runCycle();
+      await b.runCycle();
+      expect(
+        (await b.expenses.shopPayables(
+          shopIds: const ['shop-1'],
+        )).single.totalPaise,
+        160000,
+      );
+
+      await a.expenses.recordPayablePayment(
+        payeeName: 'milk',
+        amountPaise: 100000,
+        paymentMethod: PaymentMethod.upi,
+        paidAt: DateTime.utc(2026, 8, 12),
+        note: 'Part payment',
+        shopId: 'shop-1',
+      );
+      expect(await a.pending(), 1);
+
+      await a.runCycle();
+      expect(await a.pending(), 0);
+      expect(cloud.expensePayments, hasLength(1));
+
+      await b.runCycle();
+
+      // B never received a balance — it derived one from the same rows.
+      final bPayable = (await b.expenses.shopPayables(
+        shopIds: const ['shop-1'],
+      )).single;
+      expect(bPayable.payeeName, 'Milk');
+      expect(bPayable.totalPaise, 160000);
+      expect(bPayable.paidPaise, 100000);
+      expect(bPayable.remainingPaise, 60000);
+
+      final history = await b.expenses.payablePayments(payeeName: 'milk');
+      expect(history, hasLength(1));
+      expect(history.single.amountPaise, 100000);
+      expect(history.single.note, 'Part payment');
+    });
+
+    test('the whole payment row round-trips, not just the balance', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      await seedUnpaidExpense(a, 'Milk', 160000);
+      await a.runCycle();
+      await b.runCycle();
+
+      final paid = await a.expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 100000,
+        paymentMethod: PaymentMethod.bank,
+        paidAt: DateTime.utc(2026, 8, 12, 10, 30),
+        note: 'Paid in full for the week',
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      await b.runCycle();
+
+      final received = (await b.expenses.payablePayments(
+        payeeName: 'milk',
+      )).single;
+      expect(received.id, paid.id, reason: 'same UUID identity across devices');
+      expect(received.payeeKey, 'milk');
+      expect(received.payeeName, 'Milk');
+      expect(received.amountPaise, 100000);
+      expect(received.paymentMethod, PaymentMethod.bank);
+      expect(received.note, 'Paid in full for the week');
+      expect(received.paidAt.toUtc(), DateTime.utc(2026, 8, 12, 10, 30));
+    });
+
+    test('partial payments accumulate on the receiving device', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      await seedUnpaidExpense(a, 'Milk', 160000);
+      await a.runCycle();
+      await b.runCycle();
+
+      await a.expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 100000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 12),
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      await b.runCycle();
+      expect(
+        (await b.expenses.shopPayables(
+          shopIds: const ['shop-1'],
+        )).single.remainingPaise,
+        60000,
+      );
+
+      // B pays the rest.
+      await b.expenses.recordPayablePayment(
+        payeeName: 'MILK',
+        amountPaise: 60000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 13),
+        shopId: 'shop-1',
+      );
+      await b.runCycle();
+      await a.runCycle();
+
+      final aPayable = (await a.expenses.shopPayables(
+        shopIds: const ['shop-1'],
+      )).single;
+      expect(aPayable.remainingPaise, 0);
+      expect(await a.expenses.payablePayments(payeeName: 'milk'), hasLength(2));
+    });
+
+    test('the original expense row is never edited by a payment', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      final expense = await seedUnpaidExpense(a, 'Milk', 160000);
+      await a.runCycle();
+      await b.runCycle();
+
+      await a.expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 160000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 12),
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      await b.runCycle();
+
+      // Append-only: the expense keeps its own amount and still reads NOT_PAID.
+      // Settling a payable is a derived fact, not a mutation of the expense.
+      for (final repo in [a.expenses, b.expenses]) {
+        final row = await repo.expenseById(expense.id);
+        expect(row, isNotNull);
+        expect(row!.amountPaise, 160000);
+        expect(row.paymentStatus, ExpensePaymentStatus.notPaid);
+        expect(row.isActive, isTrue);
+      }
+    });
+
+    test('a foreign shop never sees another shop payable or payment', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final intruder = await makeDevice('EVIL', 'shop-2');
+      addTearDown(a.database.close);
+      addTearDown(intruder.database.close);
+
+      await seedUnpaidExpense(a, 'Milk', 160000, shopId: 'shop-1');
+      await a.runCycle();
+      await a.expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 100000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 12),
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+
+      await intruder.runCycle();
+      expect(
+        await intruder.expenses.shopPayables(shopIds: const ['shop-2']),
+        isEmpty,
+      );
+      expect(
+        await intruder.expenses.payablePayments(payeeName: 'milk'),
+        isEmpty,
+      );
+    });
+
+    test('same-named payees in different shops stay separate', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-2');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      await seedUnpaidExpense(a, 'Milk', 160000, shopId: 'shop-1');
+      await seedUnpaidExpense(b, 'Milk', 50000, shopId: 'shop-2');
+      await a.runCycle();
+      await b.runCycle();
+
+      await a.expenses.recordPayablePayment(
+        payeeName: 'Milk',
+        amountPaise: 100000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: DateTime.utc(2026, 8, 12),
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      await b.runCycle();
+
+      expect(
+        (await a.expenses.shopPayables(
+          shopIds: const ['shop-1'],
+        )).single.remainingPaise,
+        60000,
+      );
+      expect(
+        (await b.expenses.shopPayables(
+          shopIds: const ['shop-2'],
+        )).single.remainingPaise,
+        50000,
+        reason: 'shop-1 payment must not reduce shop-2 dues for the same payee',
       );
     });
   });

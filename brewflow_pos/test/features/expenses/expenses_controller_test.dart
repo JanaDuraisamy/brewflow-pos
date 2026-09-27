@@ -19,6 +19,10 @@ void main() {
 
   final now = DateTime.now().toUtc();
 
+  /// Start of the current local day in UTC — expenses default to TODAY because
+  /// the expenses filter defaults to the Today preset.
+  final todayUtc = DateTime(now.year, now.month, now.day).toUtc();
+
   Expense expense(
     String id,
     String name, {
@@ -36,7 +40,7 @@ void main() {
     category: category,
     paymentMethod: paymentMethod,
     paymentStatus: paymentStatus,
-    expenseDate: expenseDate ?? DateTime.utc(2026, 8, 10),
+    expenseDate: expenseDate ?? todayUtc,
     note: note,
     isActive: isActive,
     createdAt: now,
@@ -64,9 +68,13 @@ void main() {
         expense(
           'e2',
           'Electricity bill',
-          expenseDate: DateTime.utc(2026, 8, 5),
+          expenseDate: todayUtc.add(const Duration(hours: 2)),
         ),
-        expense('e1', 'Coffee beans', expenseDate: DateTime.utc(2026, 8, 10)),
+        expense(
+          'e1',
+          'Coffee beans',
+          expenseDate: todayUtc.add(const Duration(hours: 8)),
+        ),
       ]);
       final container = buildContainer();
       addTearDown(container.dispose);
@@ -240,59 +248,82 @@ void main() {
       });
     });
 
-    test(
-      'setPreset and setCustomRange bound the list, clear restores it',
-      () async {
-        final today = DateTime.now();
-        final todayUtc = DateTime(today.year, today.month, today.day).toUtc();
-        final pastUtc = todayUtc.subtract(const Duration(days: 15));
-        fake.storedExpenses.addAll([
-          expense('e1', 'Today entry', expenseDate: todayUtc),
-          expense('e2', 'Old entry', expenseDate: pastUtc),
-        ]);
-        final container = buildContainer();
-        addTearDown(container.dispose);
+    test('setPreset and setCustomRange bound the list, clear resets to the '
+        'today default', () async {
+      final today = DateTime.now();
+      final todayFrom = DateTime(today.year, today.month, today.day).toUtc();
+      final pastUtc = todayFrom.subtract(const Duration(days: 15));
+      fake.storedExpenses.addAll([
+        expense('e1', 'Today entry', expenseDate: todayFrom),
+        expense('e2', 'Old entry', expenseDate: pastUtc),
+      ]);
+      final container = buildContainer();
+      addTearDown(container.dispose);
 
-        await container.read(expensesProvider.future);
-        expect(container.read(expensesProvider).value, hasLength(2));
+      // The default view IS today: the old entry is filtered out on load and
+      // the date preset reads Today, not All dates.
+      await container.read(expensesProvider.future);
+      expect(
+        container.read(expensesFilterProvider).datePreset,
+        OrdersDatePreset.today,
+      );
+      expect(container.read(expensesProvider).value, hasLength(1));
+      expect(
+        container.read(expensesProvider).value!.single.name,
+        'Today entry',
+      );
 
-        container
-            .read(expensesFilterProvider.notifier)
-            .setPreset(OrdersDatePreset.today);
-        await awaitUntil(container, () {
-          final list =
-              container.read(expensesProvider).value ?? const <Expense>[];
-          return list.length == 1;
-        });
-        expect(
-          container.read(expensesProvider).value!.single.name,
-          'Today entry',
-        );
+      container
+          .read(expensesFilterProvider.notifier)
+          .setPreset(OrdersDatePreset.all);
+      await awaitUntil(
+        container,
+        () =>
+            (container.read(expensesProvider).value ?? const <Expense>[])
+                .length ==
+            2,
+      );
+      expect(container.read(expensesProvider).value, hasLength(2));
 
-        container
-            .read(expensesFilterProvider.notifier)
-            .setCustomRange(today.subtract(const Duration(days: 2)), today);
-        await awaitUntil(container, () {
-          final list =
-              container.read(expensesProvider).value ?? const <Expense>[];
-          return list.length == 1 && list.single.name == 'Today entry';
-        });
-        expect(
-          container.read(expensesFilterProvider).datePreset,
-          OrdersDatePreset.custom,
-        );
+      container
+          .read(expensesFilterProvider.notifier)
+          .setPreset(OrdersDatePreset.today);
+      await awaitUntil(container, () {
+        final list =
+            container.read(expensesProvider).value ?? const <Expense>[];
+        return list.length == 1;
+      });
+      expect(
+        container.read(expensesProvider).value!.single.name,
+        'Today entry',
+      );
 
-        container.read(expensesFilterProvider.notifier).clear();
-        await awaitUntil(
-          container,
-          () =>
-              (container.read(expensesProvider).value ?? const <Expense>[])
-                  .length ==
-              2,
-        );
-        expect(container.read(expensesProvider).value, hasLength(2));
-      },
-    );
+      container
+          .read(expensesFilterProvider.notifier)
+          .setCustomRange(today.subtract(const Duration(days: 2)), today);
+      await awaitUntil(container, () {
+        final list =
+            container.read(expensesProvider).value ?? const <Expense>[];
+        return list.length == 1 && list.single.name == 'Today entry';
+      });
+      expect(
+        container.read(expensesFilterProvider).datePreset,
+        OrdersDatePreset.custom,
+      );
+
+      // Clear returns to the DEFAULT Today filter — never all-time.
+      container.read(expensesFilterProvider.notifier).clear();
+      await awaitUntil(container, () {
+        final list =
+            container.read(expensesProvider).value ?? const <Expense>[];
+        return list.length == 1 && list.single.name == 'Today entry';
+      });
+      expect(
+        container.read(expensesFilterProvider).datePreset,
+        OrdersDatePreset.today,
+      );
+      expect(container.read(expensesProvider).value, hasLength(1));
+    });
   });
 
   group('mutations', () {
@@ -310,7 +341,7 @@ void main() {
             amountPaise: 25500,
             category: ExpenseCategory.supplies,
             paymentMethod: PaymentMethod.cash,
-            expenseDate: DateTime.utc(2026, 8, 10),
+            expenseDate: todayUtc,
           );
 
       await awaitUntil(
@@ -336,7 +367,7 @@ void main() {
               amountPaise: 25500,
               category: ExpenseCategory.supplies,
               paymentMethod: PaymentMethod.cash,
-              expenseDate: DateTime.utc(2026, 8, 10),
+              expenseDate: todayUtc,
             ),
         throwsA(isA<MissingExpenseFailure>()),
       );
@@ -358,7 +389,7 @@ void main() {
             amountPaise: 32000,
             category: ExpenseCategory.supplies,
             paymentMethod: PaymentMethod.bank,
-            expenseDate: DateTime.utc(2026, 8, 11),
+            expenseDate: todayUtc,
             isActive: true,
             paymentStatus: ExpensePaymentStatus.notPaid,
           );
@@ -401,7 +432,7 @@ void main() {
               amountPaise: 25500,
               category: ExpenseCategory.supplies,
               paymentMethod: PaymentMethod.cash,
-              expenseDate: DateTime.utc(2026, 8, 10),
+              expenseDate: todayUtc,
             ),
         throwsA(isA<UnexpectedExpensesFailure>()),
       );
@@ -443,7 +474,7 @@ void main() {
               amountPaise: 5000000,
               category: ExpenseCategory.rent,
               paymentMethod: PaymentMethod.bank,
-              expenseDate: DateTime.utc(2026, 8, 1),
+              expenseDate: todayUtc,
               isActive: true,
               paymentStatus: ExpensePaymentStatus.paid,
             );
@@ -467,7 +498,7 @@ void main() {
             amountPaise: 5000000,
             category: ExpenseCategory.rent,
             paymentMethod: PaymentMethod.bank,
-            expenseDate: DateTime.utc(2026, 8, 1),
+            expenseDate: todayUtc,
             paymentStatus: ExpensePaymentStatus.notPaid,
           );
 

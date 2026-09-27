@@ -30,6 +30,8 @@ final class PreferencesSettingsRepository implements SettingsRepository {
   static const String _lowStockThresholdKey = 'settings_low_stock_threshold';
   static const String _themeKey = 'settings_theme';
   static const String _membershipEnabledKey = 'settings_membership_enabled';
+  static const String _navigationOrderKey = 'settings_navigation_order';
+  static const String _navigationPrimaryKey = 'settings_navigation_primary';
 
   /// Preferences key backing the shop display-name render cache. Exposed so
   /// the sync layer can refresh the cache when a pulled rename lands in the
@@ -69,6 +71,14 @@ final class PreferencesSettingsRepository implements SettingsRepository {
           ThemePreference.values.asNameMap()[themeName] ??
           ShopSettings.defaultTheme,
       membershipEnabled: membershipEnabled,
+      // Raw persisted route lists. They are deliberately NOT sanitized here:
+      // NavArrangement.resolve() folds them onto the canonical destination
+      // list at read time, so a destination that appears (or disappears) in a
+      // later release can never leave the navigation broken or incomplete.
+      navigationOrder: await _preferences.readStringList(_navigationOrderKey),
+      navigationPrimary: await _preferences.readStringList(
+        _navigationPrimaryKey,
+      ),
     );
   }
 
@@ -88,6 +98,14 @@ final class PreferencesSettingsRepository implements SettingsRepository {
     await _preferences.writeBool(
       _membershipEnabledKey,
       settings.membershipEnabled,
+    );
+    await _preferences.writeStringList(
+      _navigationOrderKey,
+      settings.navigationOrder,
+    );
+    await _preferences.writeStringList(
+      _navigationPrimaryKey,
+      settings.navigationPrimary,
     );
   }
 }

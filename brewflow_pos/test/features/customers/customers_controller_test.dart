@@ -1,12 +1,18 @@
 import 'dart:async';
 
+import 'package:brewflow_pos/core/authorization/authorization.dart';
+import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
+import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_repository.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 void main() {
   late FakeCustomersRepository fake;
@@ -281,6 +287,63 @@ void main() {
         container.read(customersProvider.notifier).create(name: 'Priya'),
         throwsA(isA<UnexpectedCustomersFailure>()),
       );
+    });
+  });
+
+  group('delete authorization', () {
+    /// Builds a container signed in as a non-owner staff member, so
+    /// [requireOwner] actually has a profile to reject.
+    Future<ProviderContainer> staffContainer() async {
+      const member = AuthUser(id: 'u2', email: 'staff@brewflow.example');
+      final staffRepo = FakeStaffRepository();
+      final shop = await staffRepo.ensureShop();
+      await staffRepo.claimOwnershipForCloud(
+        member,
+        shopId: shop.id,
+        role: UserRole.staff,
+        permissions: {Permission.billing},
+      );
+      final container = ProviderContainer(
+        overrides: [
+          customersRepositoryProvider.overrideWithValue(fake),
+          staffRepositoryProvider.overrideWithValue(staffRepo),
+          authRepositoryProvider.overrideWithValue(
+            FakeAuthRepository(user: member),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      // Wait for the profile to resolve so the gate is not skipped by a null
+      // (still-loading) profile.
+      final profile = await container.read(userProfileProvider.future);
+      expect(profile!.isOwner, isFalse);
+      return container;
+    }
+
+    test('a staff member cannot delete a customer', () async {
+      // True deletion is a destructive, irreversible capability, so it stays
+      // owner-only. Billing permission is NOT enough.
+      fake.storedCustomers.add(customer('c1', 'Priya'));
+      final container = await staffContainer();
+
+      await expectLater(
+        container.read(customersProvider.notifier).delete('c1'),
+        throwsA(isA<PermissionDeniedFailure>()),
+      );
+      expect(fake.storedCustomers.map((c) => c.id), contains('c1'));
+    });
+
+    test('the owner can delete a customer', () async {
+      fake.storedCustomers.add(customer('c1', 'Priya'));
+      final container = buildContainer();
+      addTearDown(container.dispose);
+
+      final result = await container
+          .read(customersProvider.notifier)
+          .delete('c1');
+
+      expect(result, CustomerDeleteResult.deleted);
+      expect(fake.storedCustomers, isEmpty);
     });
   });
 

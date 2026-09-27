@@ -15,6 +15,17 @@ abstract interface class ShareService {
   /// sheet with an optional [subject]. Throws on platform failure; callers
   /// surface a safe message without touching the sale.
   Future<void> shareText({required String subject, required String text});
+
+  /// Shares an already-written file (backup ZIP, CSV export, PDF report)
+  /// through the system share sheet. Throws on platform failure.
+  Future<void> shareFile({required String subject, required String filePath});
+
+  /// Shares several already-written files at once (the CSV sheets).
+  /// Throws on platform failure.
+  Future<void> shareFiles({
+    required String subject,
+    required List<String> filePaths,
+  });
 }
 
 final shareServiceProvider = Provider<ShareService>((ref) {

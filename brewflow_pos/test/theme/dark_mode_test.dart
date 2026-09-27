@@ -630,8 +630,8 @@ void main() {
             .first,
       );
       expect(sidebar.color, AppColors.primaryDark);
-      expect(find.text('BrewFlow'), findsOneWidget);
-      final brand = tester.widget<Text>(find.text('BrewFlow'));
+      expect(find.text('JiggarTea Bill'), findsOneWidget);
+      final brand = tester.widget<Text>(find.text('JiggarTea Bill'));
       expect(brand.style?.color, Colors.white);
     });
 
@@ -646,7 +646,7 @@ void main() {
         ),
       );
 
-      final wordmark = tester.widget<Text>(find.text('BrewFlow'));
+      final wordmark = tester.widget<Text>(find.text('JiggarTea Bill'));
       expect(wordmark.style?.color, AppThemeColors.dark.charcoal);
     });
   });

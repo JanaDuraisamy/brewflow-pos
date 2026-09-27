@@ -69,6 +69,16 @@ final class ProductImageStore {
       await file.delete();
     }
   }
+
+  /// Writes [bytes] back under its exact stored [relativePath] (basename is
+  /// preserved, never re-uuid'd) so a ZIP-package restore keeps every
+  /// product's `imagePath` reference valid. Used only by backup restore;
+  /// normal saves keep using [saveFrom]/[saveBytes].
+  Future<void> restoreBytes(String relativePath, List<int> bytes) async {
+    await _root.create(recursive: true);
+    final file = File(p.join(_root.path, p.basename(relativePath)));
+    await file.writeAsBytes(bytes, flush: true);
+  }
 }
 
 /// The app-wide product image store. Defaults to the app documents directory

@@ -1,7 +1,9 @@
-import 'package:brewflow_pos/core/database/app_database.dart' show AppDatabase;
+import 'package:brewflow_pos/core/database/app_database.dart'
+    show AppDatabase, CustomerPaymentsCompanion, SalesCompanion;
 import 'package:brewflow_pos/features/customers/data/drift_customers_repository.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_repository.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -240,6 +242,146 @@ void main() {
       final all = await repository.customers();
       expect(all, hasLength(1));
       expect(all.single.isActive, isFalse);
+    });
+  });
+
+  group('deleteCustomer', () {
+    /// Seeds one customer-linked sale plus one allocated payment, i.e. exactly
+    /// the history that used to force the old deactivate-instead-of-delete path.
+    Future<void> seedLedger(String customerId) async {
+      final now = DateTime.now().toUtc();
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              id: const Value('sale-1'),
+              receiptNumber: 'BF-000001',
+              customerId: Value(customerId),
+              subtotalPaise: 50000,
+              totalPaise: 50000,
+              paymentStatus: const Value('NOT_PAID'),
+              paymentMethod: const Value('CASH'),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+            ),
+          );
+      await database
+          .into(database.customerPayments)
+          .insert(
+            CustomerPaymentsCompanion.insert(
+              id: const Value('pay-1'),
+              customerId: customerId,
+              amountPaise: 20000,
+              paymentMethod: 'CASH',
+              saleId: const Value('sale-1'),
+              paidAt: now,
+              createdAt: Value(now),
+              updatedAt: Value(now),
+            ),
+          );
+    }
+
+    test('deletes a customer with no history outright', () async {
+      final customer = await createCustomer(name: 'Priya');
+
+      final result = await repository.deleteCustomer(customer.id);
+
+      expect(result, CustomerDeleteResult.deleted);
+      expect(await repository.customerById(customer.id), isNull);
+      expect(await repository.customers(), isEmpty);
+    });
+
+    test(
+      'deletes a customer WITH ledger history instead of deactivating',
+      () async {
+        // This is the whole point of schema v25 -> v26: the customer row goes
+        // away even though it owns a sale and a payment. Before, the app had to
+        // keep a hidden/deactivated master row alive to satisfy the FKs.
+        final customer = await createCustomer(name: 'Priya');
+        await seedLedger(customer.id);
+
+        final result = await repository.deleteCustomer(customer.id);
+
+        expect(result, CustomerDeleteResult.deleted);
+        expect(await repository.customerById(customer.id), isNull);
+      },
+    );
+
+    test(
+      'keeps the ledger intact and still attributed after the delete',
+      () async {
+        final customer = await createCustomer(name: 'Priya');
+        await seedLedger(customer.id);
+
+        await repository.deleteCustomer(customer.id);
+
+        final sale = await (database.select(
+          database.sales,
+        )..where((t) => t.id.equals('sale-1'))).getSingle();
+        expect(sale.totalPaise, 50000);
+        // The id is preserved, not nulled: history keeps its attribution.
+        expect(sale.customerId, customer.id);
+
+        final payment = await (database.select(
+          database.customerPayments,
+        )..where((t) => t.id.equals('pay-1'))).getSingle();
+        expect(payment.amountPaise, 20000);
+        expect(payment.customerId, customer.id);
+        expect(payment.saleId, 'sale-1');
+      },
+    );
+
+    test('leaves no deactivated zombie holding the unique phone', () async {
+      final customer = await createCustomer(name: 'Priya', phone: '9845012345');
+
+      await repository.deleteCustomer(customer.id);
+
+      final rows = await database.select(database.customers).get();
+      expect(rows, isEmpty);
+      // The phone is genuinely free now, so a new customer can reuse it. A
+      // deactivated row would have kept squatting on this global UNIQUE column.
+      final reused = await repository.createCustomer(
+        name: 'New Priya',
+        phone: '9845012345',
+      );
+      expect(reused.phone, '9845012345');
+    });
+
+    test('fails loudly when the customer is already gone', () async {
+      final customer = await createCustomer(name: 'Priya');
+      await repository.deleteCustomer(customer.id);
+
+      await expectLater(
+        repository.deleteCustomer(customer.id),
+        throwsA(isA<CustomersFailure>()),
+      );
+    });
+
+    test('customer_payments.sale_id stays enforced after the delete', () async {
+      // Deleting the CUSTOMER must not have cost us the sale->payment
+      // relationship, which is a real RESTRICT FK and is what stops a payment
+      // from outliving the sale it was allocated to.
+      final customer = await createCustomer(name: 'Priya');
+      await seedLedger(customer.id);
+      await repository.deleteCustomer(customer.id);
+
+      await expectLater(
+        database
+            .into(database.customerPayments)
+            .insert(
+              CustomerPaymentsCompanion.insert(
+                id: const Value('pay-2'),
+                customerId: customer.id,
+                amountPaise: 100,
+                paymentMethod: 'CASH',
+                saleId: const Value('sale-missing'),
+                paidAt: DateTime.now().toUtc(),
+                createdAt: Value(DateTime.now().toUtc()),
+                updatedAt: Value(DateTime.now().toUtc()),
+              ),
+            ),
+        throwsA(isA<SqliteException>()),
+      );
     });
   });
 

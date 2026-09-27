@@ -26,19 +26,19 @@ final class FakeCustomersRepository implements CustomersRepository {
   /// deactivation). Tests can populate this to exercise the safe path.
   final Set<String> customersWithHistory = {};
 
+  /// Always hard-deletes, exactly like [DriftCustomersRepository] now does.
+  ///
+  /// Billing history is deliberately ignored: since schema v25 -> v26 the
+  /// customer row can be deleted even when the customer owns sales and payments.
+  /// A fake that still deactivated here would let a deactivate-shaped regression
+  /// pass every controller/page test while production deleted for real.
   @override
   Future<CustomerDeleteResult> deleteCustomer(String id) async {
     _throwIfLoadError();
-    final existing = storedCustomers.firstWhere(
+    storedCustomers.firstWhere(
       (customer) => customer.id == id,
       orElse: () => throw const UnexpectedCustomersFailure(),
     );
-    if (customersWithHistory.contains(id)) {
-      _replaceCustomer(
-        existing.copyWith(isActive: false, updatedAt: DateTime.now().toUtc()),
-      );
-      return CustomerDeleteResult.deactivated;
-    }
     storedCustomers.removeWhere((customer) => customer.id == id);
     return CustomerDeleteResult.deleted;
   }

@@ -17,7 +17,9 @@
 library;
 
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
+import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 
 /// Bounds of one reporting window, reusing the established preset semantics.
@@ -218,6 +220,10 @@ final class ReportsSnapshot {
     required this.profitLoss,
     required this.topProducts,
     required this.categoryPerformance,
+    required this.customerReceivables,
+    required this.totalReceivablePaise,
+    required this.shopPayables,
+    required this.totalPayablePaise,
     this.businessBreakdown = const [],
   });
 
@@ -228,6 +234,26 @@ final class ReportsSnapshot {
   final ProfitLossSummary profitLoss;
   final List<ProductPerformanceRow> topProducts;
   final List<CategoryPerformanceRow> categoryPerformance;
+
+  /// Customers with money outstanding, current (not window-bounded) and
+  /// read-only. Drives the Customer Receivables section with a per-customer
+  /// drill-down into the open bills each one still owes on.
+  final List<CustomerReceivable> customerReceivables;
+
+  /// Sum of every receivable's outstanding balance — always equals the folder
+  /// total shown in the section header.
+  final int totalReceivablePaise;
+
+  /// The shop's outstanding payables, one row per payee/item, current (not
+  /// window-bounded) and read-only. Grouped rather than per-expense: two
+  /// same-named unpaid expenses are one payable that a single payment settles,
+  /// so a per-expense row could not show a correct balance after a partial
+  /// payment. See [ShopPayable].
+  final List<ShopPayable> shopPayables;
+
+  /// Sum of every payable's remaining balance — always equals the folder total
+  /// shown in the section header.
+  final int totalPayablePaise;
 
   /// Per-business sales for the window. Empty unless the owner is in the
   /// Combined view. Shops are never aggregated together; each keeps its own

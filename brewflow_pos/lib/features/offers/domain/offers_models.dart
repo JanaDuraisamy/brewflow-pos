@@ -15,6 +15,7 @@ export 'offer_calculator.dart';
 
 enum OfferType {
   percentage('PERCENTAGE'),
+  quantityTier('QUANTITY_TIER'),
   combo('COMBO'),
   buyXGetY('BUY_X_GET_Y');
 
@@ -87,6 +88,67 @@ final class BuyXGetYOfferConfig {
         productId: j['productId'] as String,
         buyQty: j['buyQty'] as int,
         getQty: j['getQty'] as int,
+      );
+}
+
+/// One "buy X quantity for ₹Y" step: [pricePaise] is the TOTAL price for
+/// [quantity] units, not a per-unit price.
+///
+/// Example (1 Kulfi = ₹45, 2 = ₹85, 3 = ₹120) is the tier list
+/// `[(1, 4500), (2, 8500), (3, 12000)]`.
+final class QuantityTier {
+  const QuantityTier({required this.quantity, required this.pricePaise});
+
+  /// Units covered by this step (>= 1).
+  final int quantity;
+
+  /// Total price in integer paise for [quantity] units (>= 0).
+  final int pricePaise;
+
+  Map<String, dynamic> toJson() => {
+    'quantity': quantity,
+    'pricePaise': pricePaise,
+  };
+
+  factory QuantityTier.fromJson(Map<String, dynamic> j) => QuantityTier(
+    quantity: j['quantity'] as int,
+    pricePaise: j['pricePaise'] as int,
+  );
+}
+
+/// Quantity tiers: buy [QuantityTier.quantity] units for a fixed
+/// [QuantityTier.pricePaise].
+///
+/// This is NOT Buy X Get Y — nothing is free here, the whole group is simply
+/// priced at a bundle rate. The best (largest) tier that fits the line
+/// quantity is applied, and leftover units fall through to the next smaller
+/// tier (or the shelf price) so a quantity above the top tier still prices
+/// sensibly.
+final class QuantityTierOfferConfig {
+  const QuantityTierOfferConfig({
+    required this.productIds,
+    required this.tiers,
+  });
+
+  /// Products this offer applies to; empty means all products (same
+  /// convention as [PercentageOfferConfig.productIds]).
+  final List<String> productIds;
+
+  /// Price steps. Semantics are order-independent, but the owner UI and
+  /// [fromJson] normalize them to ascending quantity.
+  final List<QuantityTier> tiers;
+
+  Map<String, dynamic> toJson() => {
+    'productIds': productIds,
+    'tiers': tiers.map((t) => t.toJson()).toList(),
+  };
+
+  factory QuantityTierOfferConfig.fromJson(Map<String, dynamic> j) =>
+      QuantityTierOfferConfig(
+        productIds: (j['productIds'] as List?)?.cast<String>() ?? const [],
+        tiers: ((j['tiers'] as List?) ?? const [])
+            .map((e) => QuantityTier.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
 

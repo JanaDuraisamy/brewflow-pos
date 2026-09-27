@@ -7,6 +7,8 @@ import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
+import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
@@ -155,6 +157,10 @@ final class _PhoneReportContent extends ConsumerWidget {
           _PaymentMethodsCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.xl),
           _ExpensesCard(snapshot: snapshot),
+          const SizedBox(height: AppSpacing.xl),
+          _CustomerReceivablesCard(snapshot: snapshot),
+          const SizedBox(height: AppSpacing.xl),
+          _ShopPayablesCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.xl),
           _ProfitLossCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.xl),
@@ -360,6 +366,10 @@ final class _ReportContent extends ConsumerWidget {
           _PaymentMethodsCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.sectionSpacing),
           _ExpensesCard(snapshot: snapshot),
+          const SizedBox(height: AppSpacing.sectionSpacing),
+          _CustomerReceivablesCard(snapshot: snapshot),
+          const SizedBox(height: AppSpacing.sectionSpacing),
+          _ShopPayablesCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.sectionSpacing),
           _ProfitLossCard(snapshot: snapshot),
           SizedBox(height: AppSpacing.sectionSpacing),
@@ -1288,6 +1298,236 @@ final class _CategoryPerformanceCard extends StatelessWidget {
                 ],
               ],
             ),
+    );
+  }
+}
+
+final class _CustomerReceivablesCard extends StatelessWidget {
+  const _CustomerReceivablesCard({required this.snapshot});
+
+  final ReportsSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final rows = snapshot.customerReceivables;
+    return SectionCard(
+      title: 'Customer Receivables',
+      subtitle: 'Outstanding credit as of now · read-only',
+      child: Column(
+        children: [
+          if (rows.isNotEmpty) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Total Receivable',
+                    style: textTheme.titleSmall?.copyWith(
+                      color: context.appColors.charcoal,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  Money.formatPaise(snapshot.totalReceivablePaise),
+                  style: textTheme.titleSmall?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            Divider(height: 20, thickness: 1, color: context.appColors.divider),
+          ],
+          if (rows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              child: Text(
+                'No outstanding balances right now',
+                style: textTheme.bodySmall?.copyWith(
+                  color: context.appColors.textSecondary,
+                ),
+              ),
+            )
+          else
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0)
+                Divider(
+                  height: 12,
+                  thickness: 1,
+                  color: context.appColors.divider,
+                ),
+              _ReceivableRow(row: rows[i]),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _ReceivableRow extends StatelessWidget {
+  const _ReceivableRow({required this.row});
+
+  final CustomerReceivable row;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  row.customerName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  '${row.outstandingBillCount} ${row.outstandingBillCount == 1 ? 'open bill' : 'open bills'}',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: AppSpacing.sm),
+          Text(
+            Money.formatPaise(row.totalDuePaise),
+            style: textTheme.bodyMedium?.copyWith(
+              color: context.appColors.charcoal,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _ShopPayablesCard extends StatelessWidget {
+  const _ShopPayablesCard({required this.snapshot});
+
+  final ReportsSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final rows = snapshot.shopPayables;
+    return SectionCard(
+      title: 'Shop Payables',
+      subtitle: 'Outstanding per payee as of now · read-only',
+      child: Column(
+        children: [
+          if (rows.isNotEmpty) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Total Payable',
+                    style: textTheme.titleSmall?.copyWith(
+                      color: context.appColors.charcoal,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  Money.formatPaise(snapshot.totalPayablePaise),
+                  style: textTheme.titleSmall?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            Divider(height: 20, thickness: 1, color: context.appColors.divider),
+          ],
+          if (rows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              child: Text(
+                'Nothing payable right now',
+                style: textTheme.bodySmall?.copyWith(
+                  color: context.appColors.textSecondary,
+                ),
+              ),
+            )
+          else
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0)
+                Divider(
+                  height: 12,
+                  thickness: 1,
+                  color: context.appColors.divider,
+                ),
+              _PayableRow(row: rows[i]),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _PayableRow extends StatelessWidget {
+  const _PayableRow({required this.row});
+
+  final ShopPayable row;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final settled = row.remainingPaise == 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  row.payeeName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  // A payment already made shows "Paid x of y" so the row
+                  // still explains the gap instead of silently shrinking.
+                  settled
+                      ? '${row.expenseCount} expense(s) · fully paid'
+                      : '${row.expenseCount} expense(s) · ${DateFormat('d MMM yyyy').format(row.oldestExpenseDate.toLocal())}'
+                            '${row.paidPaise > 0 ? ' · ${Money.formatPaise(row.paidPaise)} paid' : ''}',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: AppSpacing.sm),
+          Text(
+            Money.formatPaise(row.remainingPaise),
+            style: textTheme.bodyMedium?.copyWith(
+              color: context.appColors.charcoal,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

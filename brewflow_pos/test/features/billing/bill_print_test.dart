@@ -164,6 +164,18 @@ final class _NoopShare implements ShareService {
     required String subject,
     required String text,
   }) async {}
+
+  @override
+  Future<void> shareFile({
+    required String subject,
+    required String filePath,
+  }) async {}
+
+  @override
+  Future<void> shareFiles({
+    required String subject,
+    required List<String> filePaths,
+  }) async {}
 }
 
 /// Pumps the POS and completes a [customerToSelect]-linked sale with [printer]

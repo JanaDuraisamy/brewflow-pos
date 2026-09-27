@@ -30,7 +30,9 @@ enum MasterEntity {
   saleItem('SALE_ITEM'),
   expense('EXPENSE'),
   customerPayment('CUSTOMER_PAYMENT'),
-  offer('OFFER');
+  expensePayment('EXPENSE_PAYMENT'),
+  offer('OFFER'),
+  staffProfile('STAFF_PROFILE');
 
   const MasterEntity(this.wire);
   final String wire;
@@ -475,6 +477,7 @@ final class SyncSale {
     this.voided = false,
     this.voidedAt,
     this.offerDiscountPaise = 0,
+    this.isOpeningBalance = false,
   });
 
   factory SyncSale.fromJson(Map<String, dynamic> json) => SyncSale(
@@ -493,6 +496,9 @@ final class SyncSale {
         : null,
     // Tolerant: payloads written before offer sync carry no discount field.
     offerDiscountPaise: json['offerDiscountPaise'] as int? ?? 0,
+    // Tolerant: payloads written before opening-due sync carry no flag; a
+    // bare sale is a real counter sale.
+    isOpeningBalance: json['isOpeningBalance'] as bool? ?? false,
   );
 
   final String id;
@@ -510,6 +516,11 @@ final class SyncSale {
   /// Total offer discount on this sale in paise; 0 when no offer applied.
   final int offerDiscountPaise;
 
+  /// True when this row is an opening-balance ledger entry (a pre-billing
+  /// debt), NOT a counter sale. The flag must survive push AND pull so the
+  /// entry stays excluded from Orders/Reports/Sales totals on every device.
+  final bool isOpeningBalance;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -523,6 +534,7 @@ final class SyncSale {
     'voided': voided,
     'voidedAt': voidedAt?.toIso8601String(),
     'offerDiscountPaise': offerDiscountPaise,
+    'isOpeningBalance': isOpeningBalance,
   };
 }
 
@@ -669,15 +681,91 @@ final class SyncExpense {
 }
 
 // ---------------------------------------------------------------------------
+// Expense Payments
+// ---------------------------------------------------------------------------
+
+/// One payment made against a shop payable.
+///
+/// Append-only money record, the payable-side mirror of
+/// [SyncCustomerPayment]. It travels as a whole row (never a delta) so every
+/// device derives the identical remaining balance from the same set of
+/// payments — no balance is transmitted, and none is stored.
+final class SyncExpensePayment {
+  const SyncExpensePayment({
+    required this.id,
+    required this.shopId,
+    required this.payeeKey,
+    this.payeeName,
+    required this.amountPaise,
+    required this.paymentMethod,
+    this.note,
+    required this.paidAt,
+    required this.reversed,
+    this.reversedAt,
+    required this.createdAt,
+  });
+
+  factory SyncExpensePayment.fromJson(Map<String, dynamic> json) =>
+      SyncExpensePayment(
+        id: json['id'] as String,
+        shopId: json['shopId'] as String,
+        payeeKey: json['payeeKey'] as String,
+        payeeName: json['payeeName'] as String?,
+        amountPaise: json['amountPaise'] as int,
+        paymentMethod: json['paymentMethod'] as String,
+        note: json['note'] as String?,
+        paidAt: DateTime.parse(json['paidAt'] as String),
+        reversed: json['reversed'] as bool,
+        reversedAt: json['reversedAt'] != null
+            ? DateTime.parse(json['reversedAt'] as String)
+            : null,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+
+  final String id;
+  final String shopId;
+
+  /// Normalized payee key; the grouping identity every device agrees on.
+  final String payeeKey;
+
+  /// Display name captured when the payment was recorded.
+  final String? payeeName;
+
+  final int amountPaise;
+  final String paymentMethod;
+  final String? note;
+  final DateTime paidAt;
+  final bool reversed;
+  final DateTime? reversedAt;
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'payeeKey': payeeKey,
+    'payeeName': payeeName,
+    'amountPaise': amountPaise,
+    'paymentMethod': paymentMethod,
+    'note': note,
+    'paidAt': paidAt.toIso8601String(),
+    'reversed': reversed,
+    'reversedAt': reversedAt?.toIso8601String(),
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Customer Payments
 // ---------------------------------------------------------------------------
 
+/// One payment collected against a customer bill.
 final class SyncCustomerPayment {
   const SyncCustomerPayment({
     required this.id,
     required this.shopId,
     required this.customerId,
     this.saleId,
+    this.paymentGroupId,
     required this.amountPaise,
     required this.paymentMethod,
     this.note,
@@ -693,6 +781,7 @@ final class SyncCustomerPayment {
         shopId: json['shopId'] as String,
         customerId: json['customerId'] as String,
         saleId: json['saleId'] as String?,
+        paymentGroupId: json['paymentGroupId'] as String?,
         amountPaise: json['amountPaise'] as int,
         paymentMethod: json['paymentMethod'] as String,
         note: json['note'] as String?,
@@ -708,6 +797,7 @@ final class SyncCustomerPayment {
   final String shopId;
   final String customerId;
   final String? saleId;
+  final String? paymentGroupId;
   final int amountPaise;
   final String paymentMethod;
   final String? note;
@@ -721,6 +811,7 @@ final class SyncCustomerPayment {
     'shopId': shopId,
     'customerId': customerId,
     'saleId': saleId,
+    'paymentGroupId': paymentGroupId,
     'amountPaise': amountPaise,
     'paymentMethod': paymentMethod,
     'note': note,

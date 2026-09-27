@@ -5,6 +5,7 @@ import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
+import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
@@ -100,6 +101,18 @@ final class DriftExpensesRepository implements ExpensesRepository {
       return rows.map(_expenseFromRow).toList();
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load expenses', error, stackTrace);
+    }
+  }
+
+  @override
+  Future<int> expensesCount({List<String>? shopIds}) async {
+    try {
+      final row = await _database
+          .customSelect('SELECT COUNT(*) AS c FROM expenses')
+          .getSingle();
+      return row.read<int>('c');
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to count expenses', error, stackTrace);
     }
   }
 
@@ -429,15 +442,277 @@ final class DriftExpensesRepository implements ExpensesRepository {
       if (shopIds != null && shopIds.isNotEmpty) {
         int total = 0;
         for (final id in shopIds) {
-          total += await _expenses.payablePaise(shopId: id);
+          total += await _expenses.payablePaiseWithPayments(shopId: id);
         }
         return total;
       }
-      return await _expenses.payablePaise();
+      return await _expenses.payablePaiseWithPayments();
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load payable total', error, stackTrace);
     }
   }
+
+  @override
+  Future<List<Expense>> payables({List<String>? shopIds}) async {
+    try {
+      if (shopIds != null && shopIds.isNotEmpty) {
+        final allRows = <db.Expense>[];
+        for (final id in shopIds) {
+          allRows.addAll(await _expenses.payables(shopId: id));
+        }
+        return allRows.map(_expenseFromRow).toList();
+      }
+      return (await _expenses.payables()).map(_expenseFromRow).toList();
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to load payables', error, stackTrace);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shop payables — grouped unpaid expenses, and payments against them
+  // ---------------------------------------------------------------------------
+
+  @override
+  Future<List<ShopPayable>> shopPayables({List<String>? shopIds}) async {
+    try {
+      final payables = <ShopPayable>[];
+      if (shopIds != null && shopIds.isNotEmpty) {
+        // Scoped per shop on purpose: summing across shops before grouping
+        // would let a same-named payee in two businesses merge into one row.
+        for (final id in shopIds) {
+          payables.addAll(await _shopPayablesFor(shopId: id));
+        }
+      } else {
+        payables.addAll(await _shopPayablesFor());
+      }
+      // Most pressing first: biggest remaining balance, then oldest expense.
+      payables.sort((a, b) {
+        final byRemaining = b.remainingPaise.compareTo(a.remainingPaise);
+        if (byRemaining != 0) return byRemaining;
+        return a.oldestExpenseDate.compareTo(b.oldestExpenseDate);
+      });
+      return payables;
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to load shop payables', error, stackTrace);
+    }
+  }
+
+  /// One shop's grouped payables, built from unpaid expenses minus payments.
+  Future<List<ShopPayable>> _shopPayablesFor({String? shopId}) async {
+    final groups = await _expenses.payableGroups(shopId: shopId);
+    final paid = await _expenses.paidTotalsByPayeeKey(shopId: shopId);
+    final result = <ShopPayable>[];
+    for (final group in groups.values) {
+      result.add(
+        ShopPayable(
+          payeeKey: group.payeeKey,
+          payeeName: group.payeeName,
+          totalPaise: group.totalPaise,
+          paidPaise: paid[group.payeeKey] ?? 0,
+          expenseCount: group.expenseCount,
+          oldestExpenseDate: group.oldestExpenseDate,
+          lastPaidAt: group.lastPaidAt,
+        ),
+      );
+    }
+    return result;
+  }
+
+  @override
+  Future<List<ExpensePayment>> payablePayments({
+    String? payeeName,
+    List<String>? shopIds,
+  }) async {
+    try {
+      final key = payeeName == null ? null : PayeeKey.of(payeeName);
+      Future<List<db.ExpensePayment>> read(String? shopId) =>
+          _expenses.expensePayments(payeeKey: key, shopId: shopId);
+      if (shopIds != null && shopIds.isNotEmpty) {
+        final allRows = <db.ExpensePayment>[];
+        for (final id in shopIds) {
+          allRows.addAll(await read(id));
+        }
+        return allRows.map(_expensePaymentFromRow).toList();
+      }
+      return (await read(null)).map(_expensePaymentFromRow).toList();
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to load payable payments', error, stackTrace);
+    }
+  }
+
+  @override
+  Future<ExpensePayment> recordPayablePayment({
+    required String payeeName,
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    required DateTime paidAt,
+    String? note,
+    String? shopId,
+  }) async {
+    if (amountPaise <= 0) throw const InvalidPayablePaymentFailure();
+    if (_connectivity != null) await _requireOnline();
+    final normalizedNote = _optionalText(note);
+    final trimmedName = PayeeKey.display(payeeName);
+    if (trimmedName.isEmpty) throw const PayableNotFoundFailure();
+    final payeeKey = PayeeKey.of(trimmedName);
+    final resolvedShopId = await resolveWritableShopId(_database, shopId);
+
+    if (_supabase != null) {
+      try {
+        final res = await _supabase!.rpc<dynamic>(
+          'record_expense_payment_atomic',
+          params: {
+            'p_shop_id': resolvedShopId,
+            'p_payee_key': payeeKey,
+            'p_payee_name': trimmedName,
+            'p_amount_paise': amountPaise,
+            'p_payment_method': paymentMethod.dbValue,
+            'p_paid_at': paidAt.toUtc().toIso8601String(),
+            'p_note': normalizedNote,
+          },
+        );
+        final map = res is Map<String, dynamic>
+            ? res
+            : Map<String, dynamic>.from(res as Map);
+        final now = DateTime.now().toUtc();
+        // Mirror the authoritative row locally so the balance moves at once;
+        // the next sync reconciles if the mirror and the server ever differ.
+        await _database.transaction(() async {
+          await _expenses.insertExpensePayment(
+            db.ExpensePaymentsCompanion.insert(
+              id: Value(map['id'] as String),
+              shopId: Value(resolvedShopId),
+              payeeKey: payeeKey,
+              payeeName: Value(trimmedName),
+              amountPaise: amountPaise,
+              paymentMethod: paymentMethod.dbValue,
+              note: Value(normalizedNote),
+              paidAt: paidAt.toUtc(),
+              reversed: const Value(false),
+              reversedAt: const Value(null),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+            ),
+          );
+        });
+        return ExpensePayment(
+          id: map['id'] as String,
+          payeeKey: payeeKey,
+          payeeName: trimmedName,
+          amountPaise: amountPaise,
+          paymentMethod: paymentMethod,
+          paidAt: paidAt.toUtc(),
+          note: normalizedNote,
+          reversed: false,
+          reversedAt: null,
+          createdAt: now,
+        );
+      } catch (e) {
+        final msg = e.toString();
+        if (msg.contains('SocketException') ||
+            msg.contains('Failed host lookup')) {
+          throw const OfflineException();
+        }
+        if (msg.contains('INVALID_AMOUNT')) {
+          throw const InvalidPayablePaymentFailure();
+        }
+        if (msg.contains('PAYMENT_EXCEEDS_DUE')) {
+          throw const PayablePaymentExceedsDueFailure();
+        }
+        if (msg.contains('PAYEE_NOT_FOUND')) {
+          throw const PayableNotFoundFailure();
+        }
+        if (msg.contains('FORBIDDEN')) {
+          throw const UnexpectedExpensesFailure(
+            'Access denied for this business.',
+          );
+        }
+        rethrow;
+      }
+    }
+
+    try {
+      // Validate against the same derived balance the UI shows, then insert
+      // inside the business transaction so the check and the write cannot race.
+      final write = () => _database.transaction(() async {
+        final remaining =
+            (await _expenses.remainingByPayeeKey(
+              shopId: resolvedShopId,
+            ))[payeeKey] ??
+            0;
+        if (remaining <= 0) throw const PayableNotFoundFailure();
+        if (amountPaise > remaining) {
+          throw const PayablePaymentExceedsDueFailure();
+        }
+        final now = DateTime.now().toUtc();
+        return _expenses.insertExpensePayment(
+          db.ExpensePaymentsCompanion.insert(
+            shopId: Value(resolvedShopId),
+            payeeKey: payeeKey,
+            payeeName: Value(trimmedName),
+            amountPaise: amountPaise,
+            paymentMethod: paymentMethod.dbValue,
+            note: Value(normalizedNote),
+            paidAt: paidAt.toUtc(),
+            reversed: const Value(false),
+            reversedAt: const Value(null),
+            createdAt: Value(now),
+            updatedAt: Value(now),
+          ),
+        );
+      });
+      final db.ExpensePayment row;
+      if (_outbox == null) {
+        row = await write();
+      } else {
+        final result = await _outbox.run<db.ExpensePayment>(
+          write: write,
+          snapshots: (r, ctx) async => [
+            OutboxAppend(
+              entity: MasterEntity.expensePayment,
+              entityId: r.id,
+              payload: SyncExpensePayment(
+                id: r.id,
+                shopId: ctx.shopId,
+                payeeKey: r.payeeKey,
+                payeeName: r.payeeName,
+                amountPaise: r.amountPaise,
+                paymentMethod: r.paymentMethod,
+                note: r.note,
+                paidAt: r.paidAt,
+                reversed: r.reversed,
+                reversedAt: r.reversedAt,
+                createdAt: r.createdAt,
+              ).toJson(),
+            ),
+          ],
+        );
+        row = result;
+      }
+      return _expensePaymentFromRow(row);
+    } on OfflineException catch (e) {
+      throw UnexpectedExpensesFailure(e.message);
+    } on ExpensesFailure {
+      rethrow;
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to record payment', error, stackTrace);
+    }
+  }
+
+  ExpensePayment _expensePaymentFromRow(db.ExpensePayment row) =>
+      ExpensePayment(
+        id: row.id,
+        payeeKey: row.payeeKey,
+        payeeName: row.payeeName ?? PayeeKey.display(row.payeeKey),
+        amountPaise: row.amountPaise,
+        paymentMethod:
+            PaymentMethod.fromDbValue(row.paymentMethod) ?? PaymentMethod.cash,
+        paidAt: row.paidAt,
+        note: row.note,
+        reversed: row.reversed,
+        reversedAt: row.reversedAt,
+        createdAt: row.createdAt,
+      );
 
   @override
   Future<void> deleteExpense(String id) async {

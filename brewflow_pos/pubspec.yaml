@@ -1,8 +1,8 @@
 name: brewflow_pos
-description: "BrewFlow POS - Offline First Multi Device Point of Sale System"
+description: "JiggarTea Bill - Offline First Multi Device Point of Sale System"
 publish_to: "none"
 
-version: 1.0.0+1
+version: 2.1.2-beta.5+7
 
 environment:
   sdk: ^3.12.2
@@ -14,7 +14,7 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   google_fonts: ^6.3.1
-
+    
   # -----------------------------
   # State Management
   # -----------------------------
@@ -77,6 +77,8 @@ dependencies:
   # Environment Configuration
   # -----------------------------
   flutter_dotenv: ^6.0.1
+  archive: ^4.3.0
+  pdf: ^3.13.1
 
 dev_dependencies:
   flutter_test:
@@ -99,6 +101,7 @@ flutter:
   assets:
     - .env
     - assets/fonts/
+    - assets/images/
 
   fonts:
     - family: Inter

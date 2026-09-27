@@ -189,6 +189,31 @@ final class FakeBillingRepository implements BillingRepository {
     return sorted;
   }
 
+  @override
+  Future<List<String>> frequentlySoldProductIds({
+    required DateTime sinceUtc,
+    int limit = 10,
+    String? shopId,
+  }) async {
+    final quantityByProduct = <String, int>{};
+    for (final sale in storedSales) {
+      if (sale.voided) continue;
+      if (sale.createdAt.isBefore(sinceUtc)) continue;
+      for (final item in _storedItems[sale.id] ?? const <SaleItem>[]) {
+        quantityByProduct[item.productId] =
+            (quantityByProduct[item.productId] ?? 0) + item.quantity;
+      }
+    }
+    final ranked = quantityByProduct.keys.toList()
+      ..sort((a, b) {
+        final byQuantity = quantityByProduct[b]!.compareTo(
+          quantityByProduct[a]!,
+        );
+        return byQuantity != 0 ? byQuantity : a.compareTo(b);
+      });
+    return ranked.take(limit).toList();
+  }
+
   /// Ids of sales that have been voided.
   final Set<String> voidedIds = {};
 

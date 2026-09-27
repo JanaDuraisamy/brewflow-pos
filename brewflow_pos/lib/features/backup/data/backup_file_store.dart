@@ -37,6 +37,23 @@ int compareBackupFileInfo(BackupFileInfo a, BackupFileInfo b) {
   return a.name.compareTo(b.name);
 }
 
+/// Human-safe default name for a full backup package:
+/// `brewflow_backup_YYYYMMDD_HHMMSS.zip`. The ZIP is self-contained (backup
+/// JSON + metadata + images) so it can be restored without anything else.
+String backupPackageFileName(DateTime time) {
+  String two(int value) => value.toString().padLeft(2, '0');
+  final local = time.toLocal();
+  final stamp =
+      '${local.year}'
+      '${two(local.month)}'
+      '${two(local.day)}'
+      '_'
+      '${two(local.hour)}'
+      '${two(local.minute)}'
+      '${two(local.second)}';
+  return 'brewflow_backup_$stamp.zip';
+}
+
 /// Human-safe default name: `brewflow_backup_YYYYMMDD_HHMMSS.json`.
 String backupFileName(DateTime time) {
   String two(int value) => value.toString().padLeft(2, '0');
@@ -53,15 +70,26 @@ String backupFileName(DateTime time) {
 }
 
 abstract interface class BackupFileStore {
-  /// All backups currently in the store, newest first.
+  /// All JSON backups currently in the store, newest first.
   Future<List<BackupFileInfo>> listFiles();
+
+  /// All ZIP backup packages currently in the store, newest first.
+  Future<List<BackupFileInfo>> listPackages();
 
   /// Writes [contents] as [fileName], appending a collision suffix when a
   /// file with that name already exists. Returns the written file info.
   Future<BackupFileInfo> write(String fileName, String contents);
 
+  /// Writes raw [bytes] (ZIP package, PDF report, CSV export) as [fileName],
+  /// appending a collision suffix when a file with that name already exists.
+  /// Returns the written file info.
+  Future<BackupFileInfo> writeBytes(String fileName, List<int> bytes);
+
   /// Reads the full contents of a stored backup.
   Future<String> readFile(String fileName);
+
+  /// Reads the raw bytes of a stored file (package, report or export).
+  Future<List<int>> readBytes(String fileName);
 
   /// Deletes a stored backup. Missing files are ignored.
   Future<void> deleteFile(String fileName);
@@ -75,9 +103,18 @@ final class DirectoryBackupFileStore implements BackupFileStore {
 
   @override
   Future<List<BackupFileInfo>> listFiles() async {
+    return _listByExtension('.json');
+  }
+
+  @override
+  Future<List<BackupFileInfo>> listPackages() async {
+    return _listByExtension('.zip');
+  }
+
+  Future<List<BackupFileInfo>> _listByExtension(String extension) async {
     if (!await directory.exists()) return const [];
     final files = directory.listSync().whereType<File>().where(
-      (file) => file.path.endsWith('.json'),
+      (file) => file.path.toLowerCase().endsWith(extension),
     );
     final infos = <BackupFileInfo>[
       for (final file in files)
@@ -112,10 +149,36 @@ final class DirectoryBackupFileStore implements BackupFileStore {
   }
 
   @override
+  Future<BackupFileInfo> writeBytes(String fileName, List<int> bytes) async {
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    var target = File(p.join(directory.path, fileName));
+    var index = 2;
+    while (await target.exists()) {
+      target = File(p.join(directory.path, _suffixed(fileName, index++)));
+    }
+    await target.writeAsBytes(bytes, flush: true);
+    return BackupFileInfo(
+      name: p.basename(target.path),
+      path: target.path,
+      sizeBytes: bytes.length,
+      modifiedAt: await target.lastModified(),
+    );
+  }
+
+  @override
   Future<String> readFile(String fileName) async {
     final file = File(p.join(directory.path, fileName));
     if (!await file.exists()) throw const UnexpectedBackupFailure();
     return file.readAsString();
+  }
+
+  @override
+  Future<List<int>> readBytes(String fileName) async {
+    final file = File(p.join(directory.path, fileName));
+    if (!await file.exists()) throw const UnexpectedBackupFailure();
+    return file.readAsBytes();
   }
 
   @override
@@ -153,11 +216,21 @@ final class AppDocumentsBackupFileStore implements BackupFileStore {
   Future<List<BackupFileInfo>> listFiles() => _inner.listFiles();
 
   @override
+  Future<List<BackupFileInfo>> listPackages() => _inner.listPackages();
+
+  @override
   Future<BackupFileInfo> write(String fileName, String contents) =>
       _inner.write(fileName, contents);
 
   @override
+  Future<BackupFileInfo> writeBytes(String fileName, List<int> bytes) =>
+      _inner.writeBytes(fileName, bytes);
+
+  @override
   Future<String> readFile(String fileName) => _inner.readFile(fileName);
+
+  @override
+  Future<List<int>> readBytes(String fileName) => _inner.readBytes(fileName);
 
   @override
   Future<void> deleteFile(String fileName) => _inner.deleteFile(fileName);

@@ -22,15 +22,28 @@ import 'package:uuid/uuid.dart';
 /// write. That preserves all single-shop / fresh-install behavior.
 /// ---------------------------------------------------------------------------
 
+/// Resolves the authoritative shop WITHOUT creating one: the profile-bound
+/// shop first, then the first existing `shops` row. Returns null when this
+/// device has no provisioned shop yet.
+///
+/// Read-only flows (notably backup export) must use this instead of
+/// [resolveWritableShopId]: exporting must never insert a shop row as a
+/// side effect just to back up an empty device.
+Future<String?> resolveExistingShopIdOrNull(db.AppDatabase database) async {
+  final authoritative = await _authoritativeProfileShopId(database);
+  if (authoritative != null) return authoritative;
+  final rows = await database.select(database.shops).get();
+  if (rows.isNotEmpty) return rows.first.id;
+  return null;
+}
+
 Future<String> resolveWritableShopId(
   db.AppDatabase database, [
   String? shopId,
 ]) async {
   if (shopId != null) return shopId;
-  final authoritative = await _authoritativeProfileShopId(database);
-  if (authoritative != null) return authoritative;
-  final rows = await database.select(database.shops).get();
-  if (rows.isNotEmpty) return rows.first.id;
+  final existing = await resolveExistingShopIdOrNull(database);
+  if (existing != null) return existing;
   // Legacy single-shop: the first write auto-creates a Cafe shop.
   final id = const Uuid().v4();
   await database

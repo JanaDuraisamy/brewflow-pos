@@ -599,6 +599,47 @@ void main() {
       expect(find.text('BF-000001'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('wide screens let rows below the fold be reached by '
+        'scrolling', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1440, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      for (var i = 1; i <= 30; i++) {
+        seedOrder(
+          receipt: 'BF-${i.toString().padLeft(6, '0')}',
+          createdAt: DateTime.utc(2026, 1, 1).add(Duration(minutes: i)),
+        );
+      }
+      await pumpAuthenticated(tester);
+      await goToOrders(tester);
+
+      expect(find.byType(DataTable), findsOneWidget);
+      // The oldest receipt sits at the bottom of the table, below the fold on
+      // a 900-px-high viewport (newer orders render first).
+      final oldestReceipt = find.text('BF-000001');
+      expect(oldestReceipt, findsOneWidget);
+      expect(tester.getRect(oldestReceipt).top, greaterThan(900));
+
+      final verticalTableScroll = find.descendant(
+        of: find.byType(OrdersPage),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.down,
+        ),
+      );
+      await tester.scrollUntilVisible(
+        oldestReceipt,
+        300,
+        scrollable: verticalTableScroll,
+      );
+
+      expect(tester.getRect(oldestReceipt).bottom, lessThan(900));
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('routing', () {

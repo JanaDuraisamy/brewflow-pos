@@ -141,7 +141,6 @@ void main() {
           amountPaise: 4800,
           category: ExpenseCategory.utilities,
           paymentMethod: PaymentMethod.cash,
-          expenseDate: todayUtc.subtract(const Duration(days: 5)),
           isActive: false,
         ),
       ]);
@@ -251,6 +250,23 @@ void main() {
       ]);
       await pumpAuthenticated(tester);
       await openExpenses(tester);
+
+      // The filter defaults to today, so the old entry is hidden up front.
+      expect(find.text('Today entry'), findsOneWidget);
+      expect(find.text('Old entry'), findsNothing);
+
+      await tester.tap(find.text('Today'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(DropdownMenuItem<OrdersDatePreset>),
+          matching: find.text('All dates'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Today entry'), findsOneWidget);
+      expect(find.text('Old entry'), findsOneWidget);
 
       await tester.tap(find.text('All dates'));
       await tester.pumpAndSettle();

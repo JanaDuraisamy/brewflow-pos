@@ -72,34 +72,39 @@ Future<(ProviderContainer, GoRouter)> _pumpSettings(
 
 void main() {
   testWidgets(
-    'owner sees the Staff & Permissions entry and it navigates to Staff Management',
+    'owner settings no longer hosts Staff Management; the rest is intact',
     (tester) async {
-      final (_, router) = await _pumpSettings(
+      await _pumpSettings(
         tester,
         user: const AuthUser(id: 'a-1', email: 'o@x.co'),
       );
 
+      // Settings keeps its other sections...
       expect(find.text('Business identity'), findsOneWidget);
       expect(
         find.text('Receipt printing status and diagnostics.'),
         findsOneWidget,
       );
-      expect(find.text('Staff & Permissions'), findsOneWidget);
-      expect(find.text('Staff Management'), findsOneWidget);
-
-      await tester.ensureVisible(find.text('Staff Management'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Staff Management'), warnIfMissed: false);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(
-        router.routerDelegate.currentConfiguration.uri.toString(),
-        '/staff',
-      );
-      expect(find.text('No staff yet'), findsOneWidget);
+      // ...but Staff Management moved out to its own navigation item.
+      expect(find.text('Staff & Permissions'), findsNothing);
+      expect(find.text('Staff Management'), findsNothing);
     },
   );
+
+  testWidgets('Staff Management is reachable from its own navigation item', (
+    tester,
+  ) async {
+    final (_, router) = await _pumpSettings(
+      tester,
+      user: const AuthUser(id: 'a-1', email: 'o@x.co'),
+    );
+
+    router.go('/staff');
+    await tester.pumpAndSettle();
+
+    expect(router.routerDelegate.currentConfiguration.uri.toString(), '/staff');
+    expect(find.text('No staff yet'), findsOneWidget);
+  });
 
   testWidgets(
     'staff without manage-staff permission sees no owner-only staff controls',

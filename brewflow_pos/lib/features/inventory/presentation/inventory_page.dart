@@ -537,6 +537,13 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
               .read(inventoryFilterProvider.notifier)
               .setLowStockOnly(selected),
         ),
+        AppFilterChip(
+          label: 'Out of Stock',
+          selected: filter.outOfStockOnly,
+          onSelected: (selected) => ref
+              .read(inventoryFilterProvider.notifier)
+              .setOutOfStockOnly(selected),
+        ),
       ],
     );
   }
@@ -560,43 +567,6 @@ final class _MobileFilterBarState extends ConsumerState<_MobileFilterBar> {
     final filter = ref.watch(inventoryFilterProvider);
     final notifier = ref.read(inventoryFilterProvider.notifier);
 
-    final statusChips = [
-      _chip(
-        label: 'All',
-        selected: filter.status == ProductStatusFilter.all,
-        onTap: () => notifier.setStatus(ProductStatusFilter.all),
-      ),
-      _chip(
-        label: 'Active',
-        selected: filter.status == ProductStatusFilter.active,
-        onTap: () => notifier.setStatus(ProductStatusFilter.active),
-      ),
-      _chip(
-        label: 'Inactive',
-        selected: filter.status == ProductStatusFilter.inactive,
-        onTap: () => notifier.setStatus(ProductStatusFilter.inactive),
-      ),
-      _chip(
-        label: 'Low Stock',
-        selected: filter.lowStockOnly,
-        onTap: () => notifier.setLowStockOnly(!filter.lowStockOnly),
-      ),
-    ];
-
-    final categoryChips = [
-      _chip(
-        label: 'All Categories',
-        selected: filter.categoryId == null,
-        onTap: () => notifier.setCategory(null),
-      ),
-      for (final category in widget.categories)
-        _chip(
-          label: category.name,
-          selected: filter.categoryId == category.id,
-          onTap: () => notifier.setCategory(category.id),
-        ),
-    ];
-
     final activeCount =
         (filter.status != ProductStatusFilter.all ? 1 : 0) +
         (filter.lowStockOnly ? 1 : 0) +
@@ -609,21 +579,77 @@ final class _MobileFilterBarState extends ConsumerState<_MobileFilterBar> {
         title: 'Filter Products',
         onReset: notifier.clear,
         children: [
-          _sectionLabel('Status'),
-          Wrap(
-            spacing: AppSpacing.sm,
-            runSpacing: AppSpacing.sm,
-            children: statusChips,
+          Consumer(
+            builder: (context, ref, child) {
+              final live = ref.watch(inventoryFilterProvider);
+              final liveNotifier = ref.read(inventoryFilterProvider.notifier);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _sectionLabel('Status'),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      _chip(
+                        label: 'All',
+                        selected: live.status == ProductStatusFilter.all,
+                        onTap: () =>
+                            liveNotifier.setStatus(ProductStatusFilter.all),
+                      ),
+                      _chip(
+                        label: 'Active',
+                        selected: live.status == ProductStatusFilter.active,
+                        onTap: () =>
+                            liveNotifier.setStatus(ProductStatusFilter.active),
+                      ),
+                      _chip(
+                        label: 'Inactive',
+                        selected: live.status == ProductStatusFilter.inactive,
+                        onTap: () => liveNotifier.setStatus(
+                          ProductStatusFilter.inactive,
+                        ),
+                      ),
+                      _chip(
+                        label: 'Low Stock',
+                        selected: live.lowStockOnly,
+                        onTap: () =>
+                            liveNotifier.setLowStockOnly(!live.lowStockOnly),
+                      ),
+                      _chip(
+                        label: 'Out of Stock',
+                        selected: live.outOfStockOnly,
+                        onTap: () => liveNotifier.setOutOfStockOnly(
+                          !live.outOfStockOnly,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (widget.categories.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    _sectionLabel('Category'),
+                    Wrap(
+                      spacing: AppSpacing.sm,
+                      runSpacing: AppSpacing.sm,
+                      children: [
+                        _chip(
+                          label: 'All Categories',
+                          selected: live.categoryId == null,
+                          onTap: () => liveNotifier.setCategory(null),
+                        ),
+                        for (final category in widget.categories)
+                          _chip(
+                            label: category.name,
+                            selected: live.categoryId == category.id,
+                            onTap: () => liveNotifier.setCategory(category.id),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
-          if (widget.categories.isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.md),
-            _sectionLabel('Category'),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.sm,
-              children: categoryChips,
-            ),
-          ],
         ],
       ),
     );
@@ -1399,7 +1425,7 @@ void _showAdjustStockDialog(
 /// Long-press context menu for a product card: quick, safe access to editing,
 /// stock adjustment and activate/deactivate without hunting through the page.
 void _showProductActions(BuildContext context, WidgetRef ref, Product product) {
-  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? true;
+  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? false;
   showContextActionSheet(
     context,
     title: product.name,

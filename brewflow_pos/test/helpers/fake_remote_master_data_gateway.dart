@@ -40,6 +40,10 @@ final class FakeRemoteStore {
   final Map<String, StoredRow<SyncSaleItem>> saleItems = {};
   final Map<String, StoredRow<SyncExpense>> expenses = {};
   final Map<String, StoredRow<SyncCustomerPayment>> customerPayments = {};
+
+  /// Payments made against shop payables. Whole rows only, exactly like
+  /// [customerPayments] — a balance is derived by each device, never sent.
+  final Map<String, StoredRow<SyncExpensePayment>> expensePayments = {};
   final Map<String, StoredRow<SyncOffer>> offers = {};
   final Map<String, StoredRow<SyncDeletion>> deletions = {};
 
@@ -409,6 +413,38 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
     return _page(_store.customerPayments, since, limit, (r) => r.row);
   }
 
+  // ---- Expense Payments ----------------------------------------------------------------
+
+  @override
+  Future<void> upsertExpensePayments(List<SyncExpensePayment> rows) async {
+    pushAttempts++;
+    if (pushesFail) _ensureOnline();
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.expensePayments[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.expensePayments[row.id] = StoredRow(
+          row,
+          row.shopId,
+          _store._tick(),
+        );
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncExpensePayment>> pullExpensePayments({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) _ensureOnline();
+    return _page(_store.expensePayments, since, limit, (r) => r.row);
+  }
+
   @override
   Future<void> upsertOffers(List<SyncOffer> rows) async {
     pushAttempts++;
@@ -436,6 +472,19 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
   }
 
   // ---- Deletions ----------------------------------------------------------------------------
+
+  @override
+  Future<void> deleteCustomer(String id) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    // The row really leaves the cloud, exactly like the Supabase gateway's
+    // `delete from customers`. Recording only a tombstone here would hide a
+    // production bug: a device that had not yet pulled the customer would pull
+    // it again from the still-present row and resurrect it.
+    _store.customers.remove(id);
+  }
 
   @override
   Future<void> recordDeletion(SyncDeletion deletion) async {

@@ -335,6 +335,15 @@ final class DriftCustomersRepository implements CustomersRepository {
     }
   }
 
+  /// Deletes the customer for real — locally, in the cloud, and on every other
+  /// device through the outbox tombstone.
+  ///
+  /// Billing history deliberately does NOT block this. `sales.customer_id` and
+  /// `customer_payments.customer_id` are plain columns (schema v25 -> v26), so
+  /// the ledger keeps the id and its attribution while the customer row itself
+  /// disappears. A customer with a lifetime of bills can be removed, which is
+  /// the whole point: previously the app had to keep a hidden, deactivated
+  /// master row alive just to satisfy the foreign keys.
   @override
   Future<CustomerDeleteResult> deleteCustomer(String id) async {
     try {
@@ -342,30 +351,6 @@ final class DriftCustomersRepository implements CustomersRepository {
       final existing = await _customers.byId(id);
       if (existing == null) {
         throw UnexpectedCustomersFailure('Customer not found.');
-      }
-      final hasHistory = await _customers.countReferences(id) > 0;
-      if (hasHistory) {
-        if (_supabase != null) {
-          try {
-            await _supabase!
-                .from('customers')
-                .update({'is_active': false})
-                .eq('id', id);
-          } catch (e) {
-            if (e.toString().contains('SocketException'))
-              throw const OfflineException();
-            rethrow;
-          }
-          await _customers.updateActive(id, false);
-          final row = await _customers.byId(id);
-          if (row != null) await _pushCustomerToCloud(row);
-        } else {
-          await _upsertWithSnapshot(
-            id: id,
-            write: () => _customers.updateActive(id, false),
-          );
-        }
-        return CustomerDeleteResult.deactivated;
       }
       if (_supabase != null) {
         try {

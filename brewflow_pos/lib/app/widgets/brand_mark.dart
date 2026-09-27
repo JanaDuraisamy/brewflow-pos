@@ -8,22 +8,22 @@ import 'package:flutter/material.dart';
 /// ---------------------------------------------------------------------------
 /// BrewFlow Design System — Brand
 ///
-/// - [BrandMark]: the BF monogram tile, with light/dark variants and the
-///   approved size ladder.
-/// - [BrewFlowBrand]: monogram + wordmark (+ optional edition and tagline)
+/// - [BrandMark]: the JiggarTea Bill logo tile, with light/dark variants and
+///   the approved size ladder.
+/// - [BrewFlowBrand]: logo + wordmark (+ optional edition and tagline)
 ///   used in headers, splash and the dark navigation areas.
 ///
 /// Approved copy:
-///   wordmark: BrewFlow
+///   wordmark: JiggarTea Bill
 ///   edition:  Tea & Jigarthanda Edition
 ///   tagline:  Smart Business. Simple Billing.
 /// ---------------------------------------------------------------------------
 
-/// Where the monogram sits: green tile on light surfaces, light tile on the
+/// Where the logo sits: green tile on light surfaces, light tile on the
 /// dark green navigation surfaces.
 enum BrandMarkVariant { onLight, onDark }
 
-/// BrewFlow BF monogram tile.
+/// JiggarTea Bill brand logo tile.
 final class BrandMark extends StatelessWidget {
   const BrandMark({
     super.key,
@@ -43,35 +43,38 @@ final class BrandMark extends StatelessWidget {
   /// Hero branding size (splash, large surfaces).
   static const double largeSize = 64;
 
+  static const String _assetPath = 'assets/images/brand_logo.png';
+
   final BrandMarkVariant variant;
   final double size;
 
   @override
   Widget build(BuildContext context) {
     final onDark = variant == BrandMarkVariant.onDark;
-    final letterStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
-      fontSize: size * 0.44,
-      height: 1,
-      fontWeight: FontWeight.w800,
-      letterSpacing: 0,
-      color: onDark ? AppColors.primaryDark : Colors.white,
-    );
+    final radius = BorderRadius.circular(size * 0.28);
     return Container(
       width: size,
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.28),
+        borderRadius: radius,
         gradient: onDark ? null : AppGradients.brand,
         color: onDark ? Colors.white : null,
         boxShadow: onDark ? null : const [AppShadows.xs],
       ),
-      child: Text('BF', style: letterStyle),
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Image.asset(
+          _assetPath,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        ),
+      ),
     );
   }
 }
 
-/// Monogram + wordmark block for headers, splash and dark navigation areas.
 final class BrewFlowBrand extends StatelessWidget {
   const BrewFlowBrand({
     super.key,
@@ -106,7 +109,7 @@ final class BrewFlowBrand extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'BrewFlow',
+              'JiggarTea Bill',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: textTheme.titleLarge?.copyWith(

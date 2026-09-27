@@ -405,6 +405,54 @@ void main() {
         '₹100.00',
       );
     });
+
+    testWidgets('a sheet with many variants scrolls and the last is '
+        'reachable', (tester) async {
+      fakeInventory.storedProducts.add(
+        product(
+          'p1',
+          'Coffee Beans',
+          variants: [
+            for (var i = 0; i < 24; i++) variant('v$i', 'p1', 'Variant $i'),
+          ],
+        ),
+      );
+      await pumpAuthenticated(tester);
+      await openForm(tester);
+
+      await scrollFormTo(tester, find.byKey(const Key('add-p1')));
+      await tester.tap(find.byKey(const Key('add-p1')));
+      await pumpAsync(tester);
+
+      final sheet = find.byType(BottomSheet);
+      final lastVariant = find.byKey(const Key('add-v23'));
+      await tester.scrollUntilVisible(
+        lastVariant,
+        200,
+        scrollable: find
+            .descendant(of: sheet, matching: find.byType(Scrollable))
+            .first,
+      );
+      expect(lastVariant, findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(lastVariant);
+      await pumpAsync(tester);
+
+      expect(find.text('Items to receive (1)'), findsOneWidget);
+      expect(find.text('Coffee Beans — Variant 23'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('Done'),
+        200,
+        scrollable: find
+            .descendant(of: sheet, matching: find.byType(Scrollable))
+            .first,
+      );
+      await tester.tap(find.text('Done'));
+      await pumpAsync(tester);
+      expect(find.byType(BottomSheet), findsNothing);
+    });
   });
 
   group('non-variant regression', () {

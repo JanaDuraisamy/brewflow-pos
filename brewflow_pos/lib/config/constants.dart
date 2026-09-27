@@ -15,13 +15,13 @@ final class AppConstants {
   // App Identity
   // -------------------------------------------------------------------------
 
-  static const String appName = 'BrewFlow POS';
-  static const String appVersion = '1.0.0';
+  static const String appName = 'JiggarTea Bill';
+  static const String appVersion = '2.0.0-beta.1';
 
   /// The app display / brand name shown as the header wordmark. This is the
   /// display identity and (unlike the shop/business name) is editable from
   /// Settings. Defaults to the core brand wordmark.
-  static const String defaultAppDisplayName = 'BrewFlow';
+  static const String defaultAppDisplayName = 'JiggarTea Bill';
 
   /// Default locale for formatting (dates, currency, numbers).
   static const String defaultLocale = 'en';
@@ -37,7 +37,7 @@ final class AppConstants {
   static const String databaseFileName = 'brewflow_pos.db';
 
   /// Current schema version. Bump on every database migration.
-  static const int databaseSchemaVersion = 19;
+  static const int databaseSchemaVersion = 27;
 
   /// Prefix for human-readable receipt numbers (e.g. 'BF-000042').
   static const String receiptPrefix = 'BF-';

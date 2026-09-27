@@ -84,10 +84,16 @@ abstract interface class CustomersRepository {
   /// removal path; customers are never hard-deleted.
   Future<void> setCustomerActive(String id, bool isActive);
 
-  /// Removes a customer. When the customer has no sales or payment history it
-  /// is hard-deleted (and its sync tombstone pushed so other devices learn
-  /// it); when history exists, deletion degrades to a safe soft deactivation
-  /// and [CustomerDeleteResult.deactivated] is returned.
+  /// Removes a customer for real, together with its sync tombstone so other
+  /// devices learn about it.
+  ///
+  /// Billing history does NOT degrade this into a soft deactivation: since
+  /// schema v25 -> v26 `sales.customer_id` and `customer_payments.customer_id`
+  /// are plain columns, so a customer with a lifetime of bills can be deleted
+  /// while the ledger keeps the id and its attribution. The result is
+  /// therefore always [CustomerDeleteResult.deleted]; the
+  /// [CustomerDeleteResult.deactivated] member is kept only so existing
+  /// `switch`es keep compiling and now reads as unreachable.
   Future<CustomerDeleteResult> deleteCustomer(String id);
 }
 

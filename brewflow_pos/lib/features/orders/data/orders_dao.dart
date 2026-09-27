@@ -31,13 +31,18 @@ final class OrdersDao {
     final query = _db.select(_db.sales);
     query
       ..where(
-        (t) => _matchesSales(
-          t,
-          search: search,
-          paymentMethod: paymentMethod,
-          fromUtc: fromUtc,
-          toUtc: toUtc,
-        ),
+        (t) =>
+            // Opening-balance rows are ledger-only entries, never counter
+            // sales: they must not surface in Orders list/detail, the
+            // dashboard's sales figures or any Reports window.
+            t.isOpeningBalance.equals(false) &
+            _matchesSales(
+              t,
+              search: search,
+              paymentMethod: paymentMethod,
+              fromUtc: fromUtc,
+              toUtc: toUtc,
+            ),
       )
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
       ..limit(limit, offset: offset);
@@ -66,7 +71,8 @@ final class OrdersDao {
 
   Future<Sale?> saleById(String id) {
     final query = _db.select(_db.sales)
-      ..where((t) => t.id.equals(id))
+      // Opening balances are not orders; a direct lookup never resolves to one.
+      ..where((t) => t.id.equals(id) & t.isOpeningBalance.equals(false))
       ..limit(1);
     return query.getSingleOrNull();
   }

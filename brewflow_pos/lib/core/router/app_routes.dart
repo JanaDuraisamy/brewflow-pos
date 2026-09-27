@@ -18,8 +18,18 @@ abstract final class AppRoutes {
   /// tried to open directly.
   static const String noAccess = '/no-access';
 
-  /// Owner-only staff management (pushed page, not a shell branch).
+  /// Owner-only staff management. A real shell destination: the navigation
+  /// entry switches to this branch, so tapping it always opens Staff
+  /// Management (never another module).
   static const String staff = '/staff';
+
+  /// Owner-only per-staff attendance & salary (pushed page on top of staff
+  /// management); the staff member travels via [GoRouterState.extra].
+  static const String staffPayroll = '/staff/payroll';
+
+  /// Owner-only daily closing records (pushed page, not a shell branch);
+  /// gated by the expenses permission like other cash-monitoring screens.
+  static const String closing = '/closing';
 
   /// Owner-only storage monitoring + monthly cleanup (pushed page).
   static const String storageCleanup = '/storage';
@@ -64,10 +74,16 @@ abstract final class AppRoutes {
   static const String expenseNew = '/expenses/new';
   static const String expenseEdit = '/expenses/edit';
 
+  /// Per-payee payable detail, reached from the Expenses "Shop Payable" card.
+  /// One screen lists grouped payables and records a partial payment against
+  /// the selected payee, so the card is not a dead-end total.
+  static const String shopPayables = '/expenses/payables';
+
   /// Every authenticated destination hosted by the application shell, in
   /// navigation order (branch index == list index).
   static const List<String> destinations = [
     dashboard,
+    staff,
     inventory,
     billing,
     orders,
@@ -79,6 +95,13 @@ abstract final class AppRoutes {
     offers,
     settings,
   ];
+
+  /// The shell branch index hosting [route], or -1 when it is not a branch.
+  ///
+  /// Always prefer this over a hardcoded branch number: inserting a
+  /// destination shifts every later index, which is how the navigation list
+  /// and the branch list drifted apart in the first place.
+  static int branchIndexOf(String route) => destinations.indexOf(route);
 
   /// Whether [location] is one of the authenticated shell destinations.
   static bool isDestination(String location) => destinations.contains(location);

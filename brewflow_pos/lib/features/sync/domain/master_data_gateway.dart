@@ -123,6 +123,18 @@ abstract interface class RemoteMasterDataGateway
     required int limit,
   });
 
+  // ---- Expense payments ------------------------------------------------------
+
+  /// Pushes payments made against shop payables. Whole rows only: a balance is
+  /// derived by every device from the payments it holds, so nothing here
+  /// carries a running total that two devices could disagree about.
+  Future<void> upsertExpensePayments(List<SyncExpensePayment> rows);
+
+  Future<PullPage<SyncExpensePayment>> pullExpensePayments({
+    required DateTime since,
+    required int limit,
+  });
+
   // ---- Offers ---------------------------------------------------------------
 
   Future<void> upsertOffers(List<SyncOffer> rows);
@@ -133,6 +145,17 @@ abstract interface class RemoteMasterDataGateway
   });
 
   // ---- Deletions -------------------------------------------------------------
+
+  /// Hard-deletes the `customers` row in the cloud.
+  ///
+  /// The CUSTOMER tombstone is what actually makes deletion correct on other
+  /// devices: `_drainDeletions` runs last in every pull cycle, so a device that
+  /// re-pulls a still-present row in the same cycle has it removed again by the
+  /// tombstone. This is the belt to that braces, removing the other half of the
+  /// problem: without it the deleted row stays in `customers` forever, so every
+  /// freshly provisioned device pulls and deletes it again on every first sync,
+  /// and deleted customers accumulate in the cloud table invisibly.
+  Future<void> deleteCustomer(String id);
 
   /// Records that an entity row was hard-deleted on this device, so other
   /// devices can learn about it through their next pull.

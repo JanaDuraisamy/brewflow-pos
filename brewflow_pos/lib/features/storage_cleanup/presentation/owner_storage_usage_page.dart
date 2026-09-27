@@ -54,7 +54,18 @@ final class _OwnerStorageUsagePageState
     final report = state.report;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Storage & Cleanup')),
+      appBar: AppBar(
+        leading: BackButton(
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.settings);
+            }
+          },
+        ),
+        title: const Text('Storage & Cleanup'),
+      ),
       body: ListView(
         padding: AppInsets.screen,
         children: [

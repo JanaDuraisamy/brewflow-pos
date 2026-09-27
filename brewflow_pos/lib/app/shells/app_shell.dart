@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/app/navigation/navigation_config.dart';
 import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/config/constants.dart';
@@ -9,6 +10,7 @@ import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher_widget.dart';
+import 'package:brewflow_pos/core/router/app_router.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +26,15 @@ import 'package:go_router/go_router.dart';
 /// - tablet (>= 600): compact [AppSidebar] rail
 /// - wide desktop (>= 1000): extended [AppSidebar] with brand labels
 ///
+/// The rail starts open on every app entry and auto-collapses after the FIRST
+/// app-level navigation on any width >= 600 (tablet compact and wide desktop
+/// alike — no width-band thresholds) so the opened page gets the full width.
+/// It stays collapsed through subsequent navigations until reopened via the
+/// floating menu toggle. The collapse lives in [navRailCollapsedProvider] so
+/// it survives shell remounts: pushed top-level pages such as /closing and
+/// /staff/payroll replace the shell's route match while open, and the shell
+/// must come back collapsed on return.
+///
 /// Content comes from the router's [StatefulNavigationShell]; destinations
 /// switch with goBranch so pages stay alive between navigation (no route
 /// recreation). Logout uses the single existing AuthController flow.
@@ -31,10 +42,16 @@ import 'package:go_router/go_router.dart';
 /// Permission awareness: for a resolved STAFF profile the destination list is
 /// filtered to the granted modules (the router guard remains the hard
 /// boundary — hidden entries alone are never the enforcement). OWNER and
-/// unresolved sessions render the full, original navigation unchanged.
+/// unresolved sessions render every destination.
+///
+/// Owner customization: the display order and the phone main-bar split come
+/// from the persisted [NavArrangement]. It is applied BEFORE the permission
+/// filter, so it can only reorganize what is already reachable — it never
+/// hides, disables, deletes or revokes a feature, and never grants access.
+/// Destination labels stay canonical and are never affected by it.
 /// ---------------------------------------------------------------------------
 
-final class AppShell extends ConsumerWidget {
+final class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.navigationShell});
 
   final StatefulNavigationShell navigationShell;
@@ -42,82 +59,166 @@ final class AppShell extends ConsumerWidget {
   static const double _navigationBreakpoint = 600;
   static const double _extendedSidebarBreakpoint = 1000;
 
-  /// Branch order MUST match AppRoutes.destinations / router branches.
-  static const List<AppNavItem> _navItems = [
-    AppNavItem(
-      label: 'Dashboard',
-      icon: Icons.dashboard_outlined,
-      selectedIcon: Icons.dashboard,
-    ),
-    AppNavItem(
-      label: 'Inventory',
-      icon: Icons.inventory_2_outlined,
-      selectedIcon: Icons.inventory_2,
-    ),
-    AppNavItem(
-      label: 'Billing',
-      icon: Icons.point_of_sale_outlined,
-      selectedIcon: Icons.point_of_sale,
-    ),
-    AppNavItem(
-      label: 'Orders',
-      icon: Icons.receipt_long_outlined,
-      selectedIcon: Icons.receipt_long,
-    ),
-    AppNavItem(
-      label: 'Customers',
-      icon: Icons.people_outline,
-      selectedIcon: Icons.people,
-    ),
-    AppNavItem(
-      label: 'Suppliers',
-      icon: Icons.local_shipping_outlined,
-      selectedIcon: Icons.local_shipping,
-    ),
-    AppNavItem(
-      label: 'Purchases',
-      icon: Icons.shopping_basket_outlined,
-      selectedIcon: Icons.shopping_basket,
-    ),
-    AppNavItem(
-      label: 'Expenses',
-      icon: Icons.payments_outlined,
-      selectedIcon: Icons.payments,
-    ),
-    AppNavItem(
-      label: 'Reports',
-      icon: Icons.insert_chart_outlined,
-      selectedIcon: Icons.insert_chart,
-    ),
-    AppNavItem(
-      label: 'Offers',
-      icon: Icons.local_offer_outlined,
-      selectedIcon: Icons.local_offer,
-    ),
-    AppNavItem(
-      label: 'Settings',
-      icon: Icons.settings_outlined,
-      selectedIcon: Icons.settings,
-    ),
-  ];
-
-  /// Required permission per branch index (aligned with [_navItems]).
-  static const List<Permission> _navPermissions = [
-    Permission.viewDashboard,
-    Permission.viewInventory,
-    Permission.billing,
-    Permission.orders,
-    Permission.customers,
-    Permission.suppliers,
-    Permission.purchases,
-    Permission.expenses,
-    Permission.reports,
-    Permission.offers,
-    Permission.settings,
+  /// Nav entries derived from the canonical [navDestinations] registry (label
+  /// + icon pair), in branch order.
+  ///
+  /// Never hand-maintained: the registry is the single source of truth for the
+  /// label, the icons AND the required permission of every destination. A
+  /// hand-written list next to the router's branch list is what let the two
+  /// drift apart and send the "Staff" entry to Stock.
+  static final List<AppNavItem> _navItems = [
+    for (final destination in navDestinations)
+      AppNavItem(
+        label: destination.label,
+        icon: destination.icon,
+        selectedIcon: destination.selectedIcon,
+      ),
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+/// Shared navigation-rail collapsed state for the app shell.
+///
+/// Provider-level (not widget state) so it survives shell remounts: pushed
+/// top-level pages like /closing and /staff/payroll replace the shell's route
+/// match while open, and a fresh shell must come back collapsed, not reopened.
+final class NavRailCollapsed extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  /// Auto-hide the rail after an app-level navigation (>= 600 width).
+  void collapse() => state = true;
+
+  /// Restore the rail via the floating menu toggle.
+  void reopen() => state = false;
+}
+
+final navRailCollapsedProvider = NotifierProvider<NavRailCollapsed, bool>(
+  NavRailCollapsed.new,
+);
+
+final class _AppShellState extends ConsumerState<AppShell> {
+  StatefulNavigationShell get navigationShell => widget.navigationShell;
+
+  /// Branch the shell already auto-redirected to; prevents re-scheduling the
+  /// same navigation on every build while the branch index settles.
+  int? _lastAutoRedirectBranch;
+
+  /// Set once when a staff profile grants no shell branch at all — the shell
+  /// then hands over to /no-access instead of rendering an empty navigation.
+  bool _redirectedToNoAccess = false;
+
+  /// The router's route-information source, listened to for location changes.
+  /// Every app-level nav (rail taps, context.go quick actions, deep links,
+  /// sub-page pushes) surfaces here once, matching any navigation trigger.
+  late final RouteInformationProvider _routeInfo;
+
+  /// The location the shell mounted at. The first REAL change after that
+  /// collapses the rail on widths >= 600; same-location re-navigations (e.g.
+  /// re-selecting the active branch) never collapse.
+  String? _lastNavLocation;
+
+  /// Shell body width from the most recent [LayoutBuilder] layout — the
+  /// single source for the tablet/desktop decision. Navigation never resizes
+  /// the window, so the route listener safely reuses this instead of reading
+  /// MediaQuery independently.
+  double _layoutWidth = AppShell._extendedSidebarBreakpoint;
+
+  @override
+  void initState() {
+    super.initState();
+    final router = ref.read(appRouterProvider);
+    _routeInfo = router.routeInformationProvider;
+    // Baseline the location AFTER the first frame: around mount, go_router
+    // re-reports the startup/redirect location (and tearing down a previous
+    // scope may emit one last value). All of that is startup noise — only a
+    // real navigation after the shell settles may collapse the rail.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _lastNavLocation = _routeInfo.value.uri.toString();
+    });
+    _routeInfo.addListener(_handleRouteChange);
+    // When the signed-in staff profile's grants change (e.g. an owner re-saves
+    // permissions, or a staff profile arrives while the app is running), never
+    // leave the user on a branch their grants hide: land on the first allowed
+    // destination instead. One-shot per target — the route guard independently
+    // denies direct navigation.
+    ref.listenManual(userProfileProvider, (previous, next) {
+      if (!next.hasValue || next.value == null) return;
+      if (next.value!.role != UserRole.staff) return;
+      _redirectAwayFromHiddenBranch();
+    });
+  }
+
+  @override
+  void dispose() {
+    _routeInfo.removeListener(_handleRouteChange);
+    super.dispose();
+  }
+
+  /// Collapse trigger for the auto-hide rail — the single mechanism for every
+  /// navigation type and both non-phone widths (no threshold-skipping):
+  ///
+  /// The value the shell settles on after its first frame is the baseline
+  /// (cold start stays open). Any subsequent location change while the shell
+  /// renders at >= 600 collapses the shared rail so the opened page reclaims
+  /// the full width. Phone (< 600) keeps its fixed bottom navigation and never
+  /// collapses.
+  void _handleRouteChange() {
+    if (!mounted) return;
+    final current = _routeInfo.value.uri.toString();
+    // No settled baseline yet (mount/startup frame): record and never collapse
+    // — this absorbs redirect/teardown noise around shell creation.
+    if (_lastNavLocation == null) {
+      _lastNavLocation = current;
+      return;
+    }
+    if (current == _lastNavLocation) return;
+    _lastNavLocation = current;
+    if (_layoutWidth >= AppShell._navigationBreakpoint) {
+      ref.read(navRailCollapsedProvider.notifier).collapse();
+    }
+  }
+
+  /// Branches the current session may open, in the owner's customized order.
+  ///
+  /// Reads the permission straight off the canonical registry, so the
+  /// authorization boundary and the navigation list can never disagree. The
+  /// router guard stays the hard boundary — this only decides what is shown.
+  List<int> _allowedBranches(WidgetRef ref) {
+    final authorization = ref.read(authorizationProvider);
+    final arrangement = NavArrangement.fromSettings(
+      ref.read(shopSettingsProvider).value,
+    );
+    return [
+      for (final route in arrangement.order)
+        if (AppRoutes.branchIndexOf(route) >= 0)
+          if (_granted(authorization, route)) AppRoutes.branchIndexOf(route),
+    ];
+  }
+
+  bool _granted(AuthorizationService authorization, String route) {
+    final permission = NavArrangement.permissionOfRoute(route);
+    return permission == null || authorization.can(permission);
+  }
+
+  void _redirectAwayFromHiddenBranch() {
+    final visible = _allowedBranches(ref);
+    if (visible.isEmpty || visible.contains(navigationShell.currentIndex)) {
+      return;
+    }
+    final target = visible.first;
+    if (target == _lastAutoRedirectBranch) return;
+    _lastAutoRedirectBranch = target;
+    Future.microtask(
+      () => navigationShell.goBranch(target, initialLocation: false),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final profile = ref.watch(userProfileProvider).value;
     final filterActive = profile != null && profile.role == UserRole.staff;
     // Staff tablets are single-business: never keep Combined selection.
@@ -130,34 +231,76 @@ final class AppShell extends ConsumerWidget {
       );
     }
 
-    var items = _navItems;
-    var selected = navigationShell.currentIndex;
-    var visible = List<int>.generate(_navItems.length, (index) => index);
+    var items = AppShell._navItems;
+    // The owner's navigation organization: display order plus the phone
+    // main-bar split. Applied BEFORE the permission filter and never widening
+    // it, so it can only reorganize what the session may already open.
+    final arrangement = NavArrangement.fromSettings(
+      ref.watch(shopSettingsProvider).value,
+    );
+
+    // `visible` maps a RENDERED destination position to its router branch.
+    // It is always built in the owner's order, so the highlight must be
+    // resolved through this map — a raw branch index would drift onto
+    // whichever module happens to sit there once the order is customized or
+    // the staff list is filtered.
+    final currentBranch = navigationShell.currentIndex;
+    var visible = [
+      for (final route in arrangement.order) AppRoutes.branchIndexOf(route),
+    ];
     if (filterActive) {
-      final authorization = ref.watch(authorizationProvider);
+      final allowed = _allowedBranches(ref).toSet();
       visible = [
-        for (var i = 0; i < _navItems.length; i++)
-          if (authorization.can(_navPermissions[i])) i,
+        for (final branch in visible)
+          if (allowed.contains(branch)) branch,
       ];
-      items = [for (final i in visible) _navItems[i]];
-      // Highlight the first allowed entry when the current branch is hidden;
-      // the content itself is redirected by the route guard.
-      if (!visible.contains(selected)) {
-        selected = 0;
+    }
+    items = [for (final branch in visible) AppShell._navItems[branch]];
+    var selected = visible.indexOf(currentBranch);
+
+    if (items.isEmpty) {
+      // No shell destination granted: keep the navigation structurally safe
+      // and hand over to /no-access (one-shot) — an empty selection index
+      // cannot be rendered.
+      items = AppShell._navItems;
+      visible = List<int>.generate(items.length, (index) => index);
+      if (!_redirectedToNoAccess) {
+        _redirectedToNoAccess = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) context.go(AppRoutes.noAccess);
+        });
       }
+      selected = 0;
+    } else if (selected < 0) {
+      // Current branch is hidden for this profile: display-highlight the
+      // first allowed destination while the profile change handler lands
+      // there (this build only — no navigation here).
+      selected = 0;
+      if (filterActive) _redirectAwayFromHiddenBranch();
     }
 
+    // Rendered positions that sit in the phone main bar; the rest go to the
+    // "More" sheet. Derived from the arrangement, never from fixed indices.
+    final primaryRoutes = arrangement.primary.toSet();
+    final primaryIndices = [
+      for (var i = 0; i < visible.length; i++)
+        if (primaryRoutes.contains(AppRoutes.destinations[visible[i]])) i,
+    ];
+
     void goTo(int index) {
-      final branch = filterActive ? visible[index] : index;
+      final branch = visible[index];
       navigationShell.goBranch(
         branch,
         initialLocation: branch == navigationShell.currentIndex,
       );
+      // The auto-hide runs in the route listener above — one mechanism covers
+      // rail taps and every other navigation source alike.
     }
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth < _navigationBreakpoint) {
+        _layoutWidth = constraints.maxWidth;
+        if (constraints.maxWidth < AppShell._navigationBreakpoint) {
           return Scaffold(
             appBar: _MobileAppBar(
               appDisplayName: ref
@@ -179,6 +322,7 @@ final class AppShell extends ConsumerWidget {
                     top: false,
                     child: AppBottomNavigation(
                       items: items,
+                      primaryIndices: primaryIndices,
                       selectedIndex: selected.clamp(0, items.length - 1),
                       onDestinationSelected: goTo,
                     ),
@@ -188,78 +332,174 @@ final class AppShell extends ConsumerWidget {
             ),
           );
         }
-        final extended = constraints.maxWidth >= _extendedSidebarBreakpoint;
+        final extended =
+            constraints.maxWidth >= AppShell._extendedSidebarBreakpoint;
+        final collapsed = ref.watch(navRailCollapsedProvider);
+        final settings = ref.watch(shopSettingsProvider).value;
+        final appDisplayName = settings?.appDisplayName;
+        final shopName = settings?.shopName;
+
+        Widget sidebarFooter() => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Owner-only business switcher in the extended sidebar.
+            if (!filterActive && extended) ...[
+              const Padding(
+                padding: EdgeInsets.only(
+                  bottom: AppSpacing.sm,
+                  left: AppSpacing.xs,
+                  right: AppSpacing.xs,
+                ),
+                child: BusinessSwitcher(compact: true),
+              ),
+            ],
+            if (extended)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SyncStatusDot(onDark: true),
+                    const SizedBox(width: 6),
+                    Text(
+                      _syncLabel(ref),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.labelSmall?.copyWith(color: Colors.white54),
+                    ),
+                  ],
+                ),
+              ),
+            if (!extended) const Center(child: SyncStatusDot(onDark: true)),
+            if (!extended) const SizedBox(height: AppSpacing.sm),
+            const _SidebarLogout(),
+          ],
+        );
+
+        Widget sidebar({required bool compact}) => AppSidebar(
+          items: items,
+          selectedIndex: selected.clamp(0, items.length - 1),
+          extended: !compact,
+          // Active business identity from Settings — the sidebar always names
+          // the shop and app being operated, never a hardcoded brand.
+          shopName: shopName,
+          appDisplayName: appDisplayName,
+          onDestinationSelected: goTo,
+          footer: sidebarFooter(),
+        );
+
+        // Non-phone body: a compact rail on tablet (600..999) or an extended
+        // sidebar at wide desktop (>= 1000). After any app-level navigation the
+        // shared state collapses the rail on BOTH widths — one contract, no
+        // threshold-skipping — so the opened page gets the full width. A
+        // floating menu toggle (with sign-out beside it, still one tap away)
+        // reopens the navigation whenever the operator wants it back.
+        //
+        // While collapsed, a reserved gutter (the width of the collapsed rail
+        // slot) keeps page content clear of the floating controls at the top
+        // left corner, and pages can adapt their own layout via
+        // [TabletNavScope.isCollapsed].
+        //
+        // Billing/POS reclaims that gutter: its vertical category rail already
+        // owns the navigation-side inset, so stacking both would squeeze the
+        // shelf. Other destinations keep the gutter.
+        final isBillingBranch =
+            currentBranch == AppRoutes.branchIndexOf(AppRoutes.billing);
+        Widget tabletBody() => Stack(
+          children: [
+            Row(
+              children: [
+                if (!collapsed) sidebar(compact: true),
+                Expanded(
+                  child: TabletNavScope(
+                    collapsed: collapsed,
+                    child: Padding(
+                      padding: collapsed && !isBillingBranch
+                          // 64 = compact rail slot (sm + 48 icon + sm); the
+                          // gutter reads as a consistent content inset on every
+                          // page, never matching the floating controls.
+                          ? const EdgeInsets.only(left: AppSpacing.ultra)
+                          : EdgeInsets.zero,
+                      child: navigationShell,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (collapsed)
+              Positioned(
+                left: AppSpacing.sm,
+                top: AppSpacing.sm,
+                child: SafeArea(
+                  top: false,
+                  right: false,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _NavToggle(
+                        onPressed: () => ref
+                            .read(navRailCollapsedProvider.notifier)
+                            .reopen(),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      const _SidebarLogout(),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+
         return Scaffold(
           body: SafeArea(
             child: Column(
               children: [
                 const ConnectivityBanner(),
                 Expanded(
-                  child: Row(
-                    children: [
-                      AppSidebar(
-                        items: items,
-                        selectedIndex: selected.clamp(0, items.length - 1),
-                        extended: extended,
-                        // Active business identity from Settings — the sidebar
-                        // always names the shop being operated, never a hardcoded
-                        // brand.
-                        shopName: ref
-                            .watch(shopSettingsProvider)
-                            .value
-                            ?.shopName,
-                        onDestinationSelected: goTo,
-                        footer: Column(
-                          mainAxisSize: MainAxisSize.min,
+                  // The extended desktop rail stays put while open; when the
+                  // shell is collapsed (or on tablet) render the collapse-aware
+                  // body regardless of the current width band — the floating
+                  // toggle, gutter and TabletNavScope work everywhere >= 600.
+                  child: !collapsed && extended
+                      ? Row(
                           children: [
-                            // Owner-only business switcher in the extended sidebar.
-                            if (!filterActive && extended) ...[
-                              const Padding(
-                                padding: EdgeInsets.only(
-                                  bottom: AppSpacing.sm,
-                                  left: AppSpacing.xs,
-                                  right: AppSpacing.xs,
-                                ),
-                                child: BusinessSwitcher(compact: true),
-                              ),
-                            ],
-                            if (extended)
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  bottom: AppSpacing.sm,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const SyncStatusDot(onDark: true),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      _syncLabel(ref),
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelSmall
-                                          ?.copyWith(color: Colors.white54),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (!extended)
-                              const Center(child: SyncStatusDot(onDark: true)),
-                            if (!extended)
-                              const SizedBox(height: AppSpacing.sm),
-                            const _SidebarLogout(),
+                            sidebar(compact: false),
+                            Expanded(child: navigationShell),
                           ],
-                        ),
-                      ),
-                      Expanded(child: navigationShell),
-                    ],
-                  ),
+                        )
+                      : tabletBody(),
                 ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+}
+
+/// Floating control shown on non-phone widths while the navigation rail is
+/// auto-hidden: reopening it returns the rail (and its sign-out).
+final class _NavToggle extends StatelessWidget {
+  const _NavToggle({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        decoration: const BoxDecoration(
+          color: AppColors.primaryDark,
+          shape: BoxShape.circle,
+        ),
+        child: IconButton(
+          tooltip: 'Open navigation',
+          icon: const Icon(Icons.menu, color: Colors.white),
+          onPressed: onPressed,
+        ),
+      ),
     );
   }
 }

@@ -14,9 +14,12 @@ final class SalesDao {
 
   final AppDatabase _db;
 
-  /// All sales, newest first.
+  /// All real sales, newest first. Opening-balance rows are ledger-only
+  /// entries (not counter sales) and are excluded so they never contribute
+  /// to any read of the sales list.
   Future<List<Sale>> all({String? shopId}) {
     final query = _db.select(_db.sales)
+      ..where((t) => t.isOpeningBalance.equals(false))
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
     if (shopId != null) {
       query.where((t) => t.shopId.equals(shopId));

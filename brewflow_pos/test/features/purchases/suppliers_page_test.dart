@@ -461,5 +461,37 @@ void main() {
       expect(find.byType(DataTable), findsOneWidget);
       expect(find.text('Acme Supplies'), findsOneWidget);
     });
+
+    testWidgets('wide table is wrapped in a horizontal scroll view', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1440, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeSuppliers.storedSuppliers.add(
+        supplier(
+          's-long',
+          'A Very Long Supplier Name That Keeps Going And Going',
+          email: 'a-very-long-email-address-that-keeps-going@example.com',
+        ),
+      );
+      await pumpAuthenticated(tester);
+      await openSuppliers(tester);
+
+      expect(find.byType(DataTable), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(DataTable),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is SingleChildScrollView &&
+                widget.scrollDirection == Axis.horizontal,
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
   });
 }

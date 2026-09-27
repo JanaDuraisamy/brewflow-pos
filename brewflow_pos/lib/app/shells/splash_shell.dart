@@ -1,4 +1,4 @@
-import 'package:brewflow_pos/core/theme/app_colors.dart';
+import 'package:brewflow_pos/app/widgets/brand_mark.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:flutter/material.dart';
@@ -23,14 +23,10 @@ final class SplashShell extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.local_cafe,
-                size: AppSpacing.ultra,
-                color: AppColors.primary,
-              ),
+              const BrandMark(size: BrandMark.largeSize),
               SizedBox(height: AppSpacing.lg),
               Text(
-                'BrewFlow',
+                'JiggarTea Bill',
                 style: textTheme.displaySmall?.copyWith(
                   color: context.appColors.textPrimary,
                 ),

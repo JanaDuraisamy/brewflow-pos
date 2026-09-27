@@ -92,7 +92,7 @@ void main() {
       expect(find.text('Phone'), findsOneWidget);
       expect(find.text('Email'), findsOneWidget);
       expect(find.text('Address'), findsOneWidget);
-      expect(find.text('BrewFlow POS'), findsOneWidget);
+      expect(find.text('JiggarTea Bill'), findsWidgets);
       expect(find.text('Not set'), findsNWidgets(4));
       expect(find.text('Low Stock Alert'), findsOneWidget);
       expect(find.text('5'), findsOneWidget);

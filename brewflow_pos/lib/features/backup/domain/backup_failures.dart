@@ -14,10 +14,10 @@ sealed class BackupFailure implements Exception {
   final String message;
 }
 
-/// The selected file is not a BrewFlow backup at all.
+/// The selected file is not a JiggarTea Bill backup at all.
 final class InvalidBackupFormatFailure extends BackupFailure {
   const InvalidBackupFormatFailure()
-    : super('This file is not a BrewFlow backup.');
+    : super('This file is not a JiggarTea Bill backup.');
 }
 
 /// The file is damaged or unreadable (bad JSON, missing fields, typed wrong).
@@ -30,7 +30,7 @@ final class CorruptBackupFailure extends BackupFailure {
 final class IncompatibleBackupSchemaFailure extends BackupFailure {
   const IncompatibleBackupSchemaFailure()
     : super(
-        'This backup was created by a different version of BrewFlow and '
+        'This backup was created by a different version of JiggarTea Bill and '
         'cannot be restored here.',
       );
 }

@@ -208,14 +208,24 @@ final class _PosPageState extends ConsumerState<PosPage> {
       }
     }
 
+    // Collapsed tablet Billing reclaims the shell gutter (see AppShell), so
+    // the header owns its own clearance for the floating menu/sign-out.
+    // The shelf row below stays full-width with the vertical rail pinned to
+    // the navigation-side area. Phone and desktop return false here.
+    final tabletCollapsed = TabletNavScope.isCollapsed(context);
     return Padding(
       padding: AppInsets.screen,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const PageHeader(
-            title: 'Billing & POS',
-            subtitle: 'Sell products and complete sales at the counter.',
+          Padding(
+            padding: EdgeInsets.only(
+              left: tabletCollapsed ? AppSpacing.ultra : 0,
+            ),
+            child: const PageHeader(
+              title: 'Billing & POS',
+              subtitle: 'Sell products and complete sales at the counter.',
+            ),
           ),
           const SizedBox(height: AppSpacing.lg),
           _ShelfFilter(categories: categories.value ?? const []),
@@ -223,11 +233,36 @@ final class _PosPageState extends ConsumerState<PosPage> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 900;
+                // The shell keeps this page wide (shelf + cart) even when the
+                // tablet navigation rail collapses below the 600dp threshold,
+                // so the counter never loses the side-by-side selling layout.
+                final wide =
+                    constraints.maxWidth >= 600 ||
+                    TabletNavScope.isCollapsed(context);
                 if (wide) {
+                  final railMode = _useVerticalCategoryRail(
+                    context,
+                    constraints,
+                  );
+                  final cartWidth =
+                      TabletNavScope.isCollapsed(context) &&
+                          constraints.maxWidth < 880
+                      ? 340.0
+                      : 400.0;
+                  final railWidth =
+                      railMode && TabletNavScope.isCollapsed(context)
+                      ? 176.0
+                      : 104.0;
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (railMode) ...[
+                        _CategoryRail(
+                          width: railWidth,
+                          categories: categories.value ?? const [],
+                        ),
+                        const SizedBox(width: AppSpacing.lg),
+                      ],
                       Expanded(
                         child: _ProductShelf(
                           products: products,
@@ -238,7 +273,7 @@ final class _PosPageState extends ConsumerState<PosPage> {
                       ),
                       const SizedBox(width: AppSpacing.xl),
                       SizedBox(
-                        width: 400,
+                        width: cartWidth,
                         child: _CartPanel(
                           cart: cart,
                           selectedCustomer: selectedCustomer,
@@ -299,6 +334,16 @@ final class _PosPageState extends ConsumerState<PosPage> {
   }
 }
 
+/// Whether the POS uses the vertical category rail instead of the horizontal
+/// chips row. Rail mode is purely width-driven (content >= 700dp): tablets
+/// always use the rail, phones keep the chips. Mirrors the rail thresholds in
+/// [PosPage] so the filter bar and the shelf never disagree about which mode
+/// is active.
+bool _useVerticalCategoryRail(
+  BuildContext context,
+  BoxConstraints constraints,
+) => constraints.maxWidth >= 700;
+
 final class _ShelfFilter extends ConsumerStatefulWidget {
   const _ShelfFilter({required this.categories});
 
@@ -324,6 +369,16 @@ final class _ShelfFilterState extends ConsumerState<_ShelfFilter> {
     final filter = ref.watch(posFilterProvider);
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Collapsed tablet Billing owns its filter clearance (shell gutter
+        // reclaimed). Pad inside the LayoutBuilder so the rail threshold keeps
+        // using the full content width and never disagrees with the shelf.
+        final collapsed = TabletNavScope.isCollapsed(context);
+        Widget withClearance(Widget child) => collapsed
+            ? Padding(
+                padding: const EdgeInsets.only(left: AppSpacing.ultra),
+                child: child,
+              )
+            : child;
         final compact = constraints.maxWidth < 600;
         final search = SizedBox(
           width: compact ? double.infinity : 320,
@@ -337,6 +392,18 @@ final class _ShelfFilterState extends ConsumerState<_ShelfFilter> {
         final chips = Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            AppFilterChip(
+              label: 'Frequently Sold',
+              selected: filter.categoryId == kFrequentlySoldCategoryId,
+              onSelected: (selected) {
+                if (selected) {
+                  ref
+                      .read(posFilterProvider.notifier)
+                      .setCategory(kFrequentlySoldCategoryId);
+                }
+              },
+            ),
+            const SizedBox(width: AppSpacing.sm),
             AppFilterChip(
               label: 'All categories',
               selected: filter.categoryId == null,
@@ -358,33 +425,119 @@ final class _ShelfFilterState extends ConsumerState<_ShelfFilter> {
             ],
           ],
         );
-        if (compact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              search,
-              const SizedBox(height: AppSpacing.md),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: chips,
-              ),
-            ],
+        // Vertical-rail mode: the category pills live in the vertical rail,
+        // so the filter bar keeps only the search field.
+        if (_useVerticalCategoryRail(context, constraints)) {
+          return withClearance(
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SizedBox(width: 320, child: search),
+            ),
           );
         }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(width: 320, child: search),
-            const SizedBox(width: AppSpacing.lg),
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: chips,
-              ),
+        if (compact) {
+          return withClearance(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                search,
+                const SizedBox(height: AppSpacing.md),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: chips,
+                ),
+              ],
             ),
-          ],
+          );
+        }
+        return withClearance(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              SizedBox(width: 320, child: search),
+              const SizedBox(width: AppSpacing.lg),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: chips,
+                ),
+              ),
+            ],
+          ),
         );
       },
+    );
+  }
+}
+
+/// Vertical "Frequently Sold" / category picker pinned to the left of the
+/// tablet POS shelf. Each row is a full-width pill; the rail scrolls
+/// when the category list outgrows the shelf height.
+final class _CategoryRail extends ConsumerWidget {
+  const _CategoryRail({required this.width, required this.categories});
+
+  final double width;
+  final List<Category> categories;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final filter = ref.watch(posFilterProvider);
+    // AppFilterChip sizes its inner Row to the label's intrinsic width, so a
+    // tight rail would overflow instead of wrapping. A per-pill horizontal
+    // scroller gives the chip unbounded width (no RenderFlex overflow) while
+    // the rail keeps its fixed navigation-side footprint. filter_chip.dart
+    // itself stays untouched.
+    Widget pill({
+      required String label,
+      required bool selected,
+      required VoidCallback onSelected,
+    }) => SizedBox(
+      width: double.infinity,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: AppFilterChip(
+          label: label,
+          selected: selected,
+          onSelected: (_) => onSelected(),
+        ),
+      ),
+    );
+    final notifier = ref.read(posFilterProvider.notifier);
+    return SizedBox(
+      width: width,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          // Only the rail's own background is tinted, to mark the category
+          // picker as its own area. The pills keep the shared AppFilterChip
+          // styling, so nothing outside the Category area changes.
+          color: context.appColors.softGreen,
+          borderRadius: AppBorderRadius.md,
+        ),
+        child: ListView(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          children: [
+            pill(
+              label: 'Frequently Sold',
+              selected: filter.categoryId == kFrequentlySoldCategoryId,
+              onSelected: () => notifier.setCategory(kFrequentlySoldCategoryId),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            pill(
+              label: 'All categories',
+              selected: filter.categoryId == null,
+              onSelected: () => notifier.setCategory(null),
+            ),
+            for (final category in categories) ...[
+              const SizedBox(height: AppSpacing.xs),
+              pill(
+                label: category.name,
+                selected: filter.categoryId == category.id,
+                onSelected: () => notifier.setCategory(category.id),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -861,87 +1014,89 @@ final class _VariantPickerSheet extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final untracked = product.stockUnit == StockUnit.none;
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              AppInsets.screen.left,
-              0,
-              AppInsets.screen.right,
-              AppSpacing.sm,
-            ),
-            child: Text(
-              'Choose ${product.name}',
-              style: textTheme.titleMedium?.copyWith(
-                color: context.appColors.textPrimary,
-                fontWeight: FontWeight.w700,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppInsets.screen.left,
+                0,
+                AppInsets.screen.right,
+                AppSpacing.sm,
               ),
-            ),
-          ),
-          for (var i = 0; i < variants.length; i++) ...[
-            if (i > 0) const Divider(height: 1),
-            ListTile(
-              enabled: untracked || variants[i].stockQuantity > 0,
-              title: Text(
-                variants[i].name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodyMedium?.copyWith(
+              child: Text(
+                'Choose ${product.name}',
+                style: textTheme.titleMedium?.copyWith(
                   color: context.appColors.textPrimary,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              subtitle: Text(
-                [
-                  if (variants[i].sku != null) 'SKU ${variants[i].sku}',
-                  if (untracked)
-                    'Made to order'
-                  else
-                    'Stock ${variants[i].stockQuantity}',
-                ].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: context.appColors.textSecondary,
+            ),
+            for (var i = 0; i < variants.length; i++) ...[
+              if (i > 0) const Divider(height: 1),
+              ListTile(
+                enabled: untracked || variants[i].stockQuantity > 0,
+                title: Text(
+                  variants[i].name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              trailing: !untracked && variants[i].stockQuantity <= 0
-                  ? Text(
-                      'Sold out',
-                      style: textTheme.bodySmall?.copyWith(
-                        color: AppColors.outOfStock,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    )
-                  : Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          Money.formatPaise(variants[i].sellingPricePaise),
-                          style: textTheme.bodyMedium?.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
+                subtitle: Text(
+                  [
+                    if (variants[i].sku != null) 'SKU ${variants[i].sku}',
+                    if (untracked)
+                      'Made to order'
+                    else
+                      'Stock ${variants[i].stockQuantity}',
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+                trailing: !untracked && variants[i].stockQuantity <= 0
+                    ? Text(
+                        'Sold out',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: AppColors.outOfStock,
+                          fontWeight: FontWeight.w600,
                         ),
-                        if (variants[i].memberPricePaise != null)
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
                           Text(
-                            'Member ${Money.formatPaise(variants[i].memberPricePaise!)}',
-                            style: textTheme.bodySmall?.copyWith(
-                              color: context.appColors.textSecondary,
+                            Money.formatPaise(variants[i].sellingPricePaise),
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                      ],
-                    ),
-              onTap: () {
-                Navigator.of(context).pop();
-                onSelect(variants[i]);
-              },
-            ),
+                          if (variants[i].memberPricePaise != null)
+                            Text(
+                              'Member ${Money.formatPaise(variants[i].memberPricePaise!)}',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: context.appColors.textSecondary,
+                              ),
+                            ),
+                        ],
+                      ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onSelect(variants[i]);
+                },
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -2167,67 +2322,73 @@ final class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
         color: AppColors.success,
       ),
       title: const Text('Sale Complete'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Receipt ${sale.receiptNumber}',
-            style: textTheme.bodyLarge?.copyWith(
-              color: context.appColors.textPrimary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: AppSpacing.xs),
-          Text(
-            notPaid
-                ? '${widget.completed.items.length} item${widget.completed.items.length == 1 ? '' : 's'} '
-                      '· ${Money.formatPaise(sale.totalPaise)} · Not paid'
-                : '${widget.completed.items.length} item${widget.completed.items.length == 1 ? '' : 's'} '
-                      '· ${Money.formatPaise(sale.totalPaise)} · ${_paymentLabel(sale.paymentMethod!)}',
-            style: textTheme.bodyMedium?.copyWith(
-              color: context.appColors.textSecondary,
-            ),
-          ),
-          if (notPaid) ...[
-            SizedBox(height: AppSpacing.xs),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Text(
-              'Added to Customer Due: ${Money.formatPaise(sale.totalPaise)}',
-              style: textTheme.bodyMedium?.copyWith(
-                color: AppColors.warning,
+              'Receipt ${sale.receiptNumber}',
+              style: textTheme.bodyLarge?.copyWith(
+                color: context.appColors.textPrimary,
                 fontWeight: FontWeight.w700,
               ),
             ),
-          ],
-          if (widget.completed.items.isNotEmpty) ...[
-            SizedBox(height: AppSpacing.md),
-            Container(
-              width: 360,
-              decoration: BoxDecoration(
-                color: context.appColors.surfaceVariant,
-                borderRadius: AppBorderRadius.md,
+            SizedBox(height: AppSpacing.xs),
+            Text(
+              notPaid
+                  ? '${widget.completed.items.length} item${widget.completed.items.length == 1 ? '' : 's'} '
+                        '· ${Money.formatPaise(sale.totalPaise)} · Not paid'
+                  : '${widget.completed.items.length} item${widget.completed.items.length == 1 ? '' : 's'} '
+                        '· ${Money.formatPaise(sale.totalPaise)} · ${_paymentLabel(sale.paymentMethod!)}',
+              style: textTheme.bodyMedium?.copyWith(
+                color: context.appColors.textSecondary,
               ),
-              child: Padding(
-                padding: AppInsets.card,
-                child: Column(
-                  children: [
-                    for (var i = 0; i < widget.completed.items.length; i++) ...[
-                      if (i > 0) const Divider(height: AppSpacing.md),
-                      _ReceiptItemRow(item: widget.completed.items[i]),
-                    ],
-                  ],
+            ),
+            if (notPaid) ...[
+              SizedBox(height: AppSpacing.xs),
+              Text(
+                'Added to Customer Due: ${Money.formatPaise(sale.totalPaise)}',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: AppColors.warning,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
+            ],
+            if (widget.completed.items.isNotEmpty) ...[
+              SizedBox(height: AppSpacing.md),
+              Container(
+                width: 360,
+                decoration: BoxDecoration(
+                  color: context.appColors.surfaceVariant,
+                  borderRadius: AppBorderRadius.md,
+                ),
+                child: Padding(
+                  padding: AppInsets.card,
+                  child: Column(
+                    children: [
+                      for (
+                        var i = 0;
+                        i < widget.completed.items.length;
+                        i++
+                      ) ...[
+                        if (i > 0) const Divider(height: AppSpacing.md),
+                        _ReceiptItemRow(item: widget.completed.items[i]),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            SizedBox(height: AppSpacing.sm),
+            Text(
+              'Keep this receipt number for customer reference.',
+              style: textTheme.bodySmall?.copyWith(
+                color: context.appColors.textSecondary,
+              ),
             ),
           ],
-          SizedBox(height: AppSpacing.sm),
-          Text(
-            'Keep this receipt number for customer reference.',
-            style: textTheme.bodySmall?.copyWith(
-              color: context.appColors.textSecondary,
-            ),
-          ),
-        ],
+        ),
       ),
       actions: [
         SecondaryButton(

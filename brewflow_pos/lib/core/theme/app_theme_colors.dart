@@ -23,6 +23,8 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
     required this.outline,
     required this.softGreen,
     required this.lightGray,
+    required this.selectedControlBackground,
+    required this.selectedControlForeground,
   });
 
   /// Near-black heading text in light mode, near-white in dark mode.
@@ -58,6 +60,13 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
   /// Neutral soft fills (search fields, chips).
   final Color lightGray;
 
+  /// Selected-control fill: stronger than [softGreen] so an active chip or
+  /// segment is unmistakable even on bright light surfaces.
+  final Color selectedControlBackground;
+
+  /// Text/icon color paired with [selectedControlBackground].
+  final Color selectedControlForeground;
+
   static const AppThemeColors light = AppThemeColors(
     charcoal: Color(0xFF212121),
     background: Color(0xFFF8FAFC),
@@ -70,6 +79,8 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
     outline: Color(0xFFCBD5E1),
     softGreen: Color(0xFFE8F5E9),
     lightGray: Color(0xFFF4F6F8),
+    selectedControlBackground: Color(0xFFA5D6A7),
+    selectedControlForeground: Color(0xFF1B5E20),
   );
 
   static const AppThemeColors dark = AppThemeColors(
@@ -84,6 +95,8 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
     outline: Color(0xFF475569),
     softGreen: Color(0xFF1B3321),
     lightGray: Color(0xFF1F2937),
+    selectedControlBackground: Color(0xFF1B3321),
+    selectedControlForeground: Color(0xFF66BB6A),
   );
 
   @override
@@ -99,6 +112,8 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
     Color? outline,
     Color? softGreen,
     Color? lightGray,
+    Color? selectedControlBackground,
+    Color? selectedControlForeground,
   }) {
     return AppThemeColors(
       charcoal: charcoal ?? this.charcoal,
@@ -112,6 +127,10 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
       outline: outline ?? this.outline,
       softGreen: softGreen ?? this.softGreen,
       lightGray: lightGray ?? this.lightGray,
+      selectedControlBackground:
+          selectedControlBackground ?? this.selectedControlBackground,
+      selectedControlForeground:
+          selectedControlForeground ?? this.selectedControlForeground,
     );
   }
 
@@ -132,6 +151,16 @@ final class AppThemeColors extends ThemeExtension<AppThemeColors> {
       outline: Color.lerp(outline, other.outline, t)!,
       softGreen: Color.lerp(softGreen, other.softGreen, t)!,
       lightGray: Color.lerp(lightGray, other.lightGray, t)!,
+      selectedControlBackground: Color.lerp(
+        selectedControlBackground,
+        other.selectedControlBackground,
+        t,
+      )!,
+      selectedControlForeground: Color.lerp(
+        selectedControlForeground,
+        other.selectedControlForeground,
+        t,
+      )!,
     );
   }
 }

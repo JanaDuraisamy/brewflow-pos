@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/customers/data/drift_customer_ledger_repository.dart';
@@ -11,6 +12,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
 import '../../sync/presentation/sync_controller.dart';
+import '../../staff/presentation/staff_controller.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Customer Ledger State (Riverpod)
@@ -104,12 +106,17 @@ final class CustomerLedgerController extends AsyncNotifier<CustomerLedgerData> {
   /// Records a payment against [saleId] and refreshes this customer's
   /// bundle. [CustomerLedgerFailure]s pass through untouched; anything
   /// unexpected is logged and rethrown as [UnexpectedLedgerFailure].
+  ///
+  /// Requires the `customerLedger` permission at the session boundary; a
+  /// denied session throws [PermissionDeniedFailure] before touching any
+  /// repository (hiding UI is never the only protection).
   Future<CustomerPayment> recordPayment({
     required String saleId,
     required int amountPaise,
     required PaymentMethod paymentMethod,
     String? note,
   }) async {
+    requirePermission(ref, Permission.customerLedger);
     try {
       final payment = await ref
           .read(customerLedgerRepositoryProvider)
@@ -131,9 +138,96 @@ final class CustomerLedgerController extends AsyncNotifier<CustomerLedgerData> {
       return payment;
     } on CustomerLedgerFailure {
       rethrow;
+    } on PermissionDeniedFailure {
+      rethrow;
     } catch (error, stackTrace) {
       AppLog.error(
         'Failed to record customer payment',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      throw const UnexpectedLedgerFailure();
+    }
+  }
+
+  /// Collects [amountPaise] against the customer's total outstanding in one
+  /// atomic submission, allocated against the oldest open bills first.
+  ///
+  /// [paymentGroupId] identifies this whole submission (the caller — usually
+  /// the dialog — generates it once per collect attempt so a retried save is
+  /// an idempotent replay, never a double charge). Returns the created
+  /// per-bill payment rows and refreshes every derived read model.
+  ///
+  /// Requires the `customerLedger` permission at the session boundary; a
+  /// denied session throws [PermissionDeniedFailure] before touching any
+  /// repository (hiding UI is never the only protection).
+  Future<List<CustomerPayment>> collectPayment({
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    String? note,
+    required String paymentGroupId,
+  }) async {
+    requirePermission(ref, Permission.customerLedger);
+    try {
+      final payments = await ref
+          .read(customerLedgerRepositoryProvider)
+          .collectCustomerPayment(
+            customerId: customerId,
+            paymentGroupId: paymentGroupId,
+            amountPaise: amountPaise,
+            paymentMethod: paymentMethod,
+            note: note,
+          );
+      ref.invalidateSelf();
+      // Same derived-model refresh contract as recordPayment: a collected
+      // bill set to PAID must invalidate every reader of sales.payment_status.
+      ref.invalidate(ordersListProvider);
+      ref.invalidate(orderDetailProvider);
+      ref.invalidate(dashboardControllerProvider);
+      ref.invalidate(reportsControllerProvider);
+      return payments;
+    } on CustomerLedgerFailure {
+      rethrow;
+    } on PermissionDeniedFailure {
+      rethrow;
+    } catch (error, stackTrace) {
+      AppLog.error(
+        'Failed to collect customer payment',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      throw const UnexpectedLedgerFailure();
+    }
+  }
+
+  /// Records [amountPaise] as this customer's opening balance — a pre-billing
+  /// debt, NOT a counter sale (no items, no stock, no receipt, no totals
+  /// exposure). It adds to the outstanding like any open credit bill and is
+  /// paid down by [collectPayment].
+  ///
+  /// Requires the `customerLedger` permission at the session boundary; a
+  /// denied session throws [PermissionDeniedFailure] before touching any
+  /// repository.
+  Future<void> recordOpeningDue({required int amountPaise}) async {
+    requirePermission(ref, Permission.customerLedger);
+    try {
+      await ref
+          .read(customerLedgerRepositoryProvider)
+          .recordOpeningDue(customerId: customerId, amountPaise: amountPaise);
+      ref.invalidateSelf();
+      // The new open bill changes every derived due surface: dashboard due
+      // reminders and reports receivables must re-read.
+      ref.invalidate(dashboardControllerProvider);
+      ref.invalidate(reportsControllerProvider);
+    } on CustomerLedgerFailure {
+      rethrow;
+    } on PermissionDeniedFailure {
+      rethrow;
+    } catch (error, stackTrace) {
+      AppLog.error(
+        'Failed to record opening due',
         tag: tag,
         error: error,
         stackTrace: stackTrace,

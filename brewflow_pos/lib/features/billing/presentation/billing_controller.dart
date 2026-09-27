@@ -20,7 +20,8 @@ import 'package:brewflow_pos/features/reports/presentation/reports_controller.da
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart'
+    show requirePermission;
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -53,6 +54,11 @@ final billingCloudGatewayProvider = Provider<BillingCloudGateway?>((ref) {
   }
 });
 
+/// Sentinel category id selecting the "Frequently Sold" shelf: active
+/// products the counter sells most often this window, ranked by total
+/// quantity instead of plain category membership.
+const kFrequentlySoldCategoryId = '__frequently_sold__';
+
 /// Owns the single billing repository for the application scope.
 final billingRepositoryProvider = Provider<BillingRepository>((ref) {
   return DriftBillingRepository(
@@ -65,12 +71,19 @@ final billingRepositoryProvider = Provider<BillingRepository>((ref) {
 
 /// Holds the POS product filter; changes rebuild [posProductsProvider].
 final class PosFilter {
-  const PosFilter({this.query = '', this.categoryId});
+  const PosFilter({
+    this.query = '',
+    this.categoryId = kFrequentlySoldCategoryId,
+  });
 
   /// Search text matched against product name and SKU.
   final String query;
 
-  /// Restricts the shelf to one category when set.
+  /// Restricts the shelf to one category when set; null shows every category.
+  ///
+  /// Defaults to [kFrequentlySoldCategoryId] so a fresh counter lands on the
+  /// "Frequently Sold" shelf; with no sale history yet the shelf falls back
+  /// to the full product list.
   final String? categoryId;
 
   PosFilter withQuery(String query) =>
@@ -114,12 +127,27 @@ final class PosProductsController extends AsyncNotifier<List<Product>> {
   Future<List<Product>> build() async {
     final filter = ref.watch(posFilterProvider);
     final repository = ref.watch(inventoryRepositoryProvider);
+    final frequentFirst = filter.categoryId == kFrequentlySoldCategoryId;
     try {
-      return await repository.products(
+      final shelf = await repository.products(
         search: filter.query,
-        categoryId: filter.categoryId,
+        categoryId: frequentFirst ? null : filter.categoryId,
         status: ProductStatusFilter.active,
       );
+      // Plain categories and explicit searches keep the repository order.
+      if (!frequentFirst || filter.query.isNotEmpty) return shelf;
+      // "Frequently Sold": rank real counter history first, then the rest of
+      // the shelf (products never sold stay reachable below the ranking). A
+      // ranking failure is best-effort — never block the counter on it.
+      final frequentIds = await _frequentlySoldIds() ?? const <String>[];
+      if (frequentIds.isEmpty) return shelf;
+      final byId = {for (final product in shelf) product.id: product};
+      final ranked = <Product>[];
+      for (final id in frequentIds) {
+        final product = byId.remove(id);
+        if (product != null) ranked.add(product);
+      }
+      return [...ranked, ...byId.values];
     } on InventoryFailure {
       rethrow;
     } catch (error, stackTrace) {
@@ -132,7 +160,30 @@ final class PosProductsController extends AsyncNotifier<List<Product>> {
       throw const UnexpectedInventoryFailure();
     }
   }
+
+  Future<List<String>?> _frequentlySoldIds() async {
+    try {
+      return await ref.read(frequentlySoldIdsProvider.future);
+    } on Exception catch (error, stackTrace) {
+      AppLog.error(
+        'Failed to load frequently sold ranking',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
 }
+
+/// Product ids of the most-sold products in the current rolling window,
+/// ranked by total quantity. Invalidated after every checkout so the shelf
+/// reflects fresh counter history immediately.
+final frequentlySoldIdsProvider = FutureProvider<List<String>>((ref) async {
+  final repository = ref.watch(billingRepositoryProvider);
+  final sinceUtc = DateTime.now().toUtc().subtract(const Duration(days: 30));
+  return repository.frequentlySoldProductIds(sinceUtc: sinceUtc);
+});
 
 /// The current checkout cart. Mutations are synchronous (pure state); only
 /// [CartController.checkout] touches the repository.
@@ -462,6 +513,7 @@ final class CartController extends Notifier<Cart> {
           );
       state = Cart.empty;
       ref.invalidate(posProductsProvider);
+      ref.invalidate(frequentlySoldIdsProvider);
       ref.invalidate(productsProvider);
       ref.invalidate(productMovementsProvider);
       ref.invalidate(dashboardControllerProvider);

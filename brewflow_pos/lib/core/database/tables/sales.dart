@@ -1,7 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
-import 'customers.dart';
 import 'sale_sequences.dart';
 import 'shops.dart';
 
@@ -39,13 +38,14 @@ class Sales extends Table {
   TextColumn get shopId =>
       text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
-  /// Owning customer for customer-linked sales; NULL for walk-ins. Deleting a
-  /// customer with sales history is rejected (RESTRICT).
-  TextColumn get customerId => text().nullable().references(
-    Customers,
-    #id,
-    onDelete: KeyAction.restrict,
-  )();
+  /// Owning customer for customer-linked sales; NULL for walk-ins.
+  ///
+  /// Deliberately NOT a foreign key (schema v25 -> v26). A RESTRICT FK made a
+  /// customer with any billing history impossible to delete, which is the bug
+  /// this column's plain-text form fixes. The id is still written on every
+  /// customer sale so the ledger keeps its attribution; a deleted customer
+  /// simply leaves a dangling id that the UI renders defensively.
+  TextColumn get customerId => text().nullable()();
 
   /// Human-readable receipt reference; unique per shop.
   TextColumn get receiptNumber => text()();
@@ -96,4 +96,16 @@ class Sales extends Table {
 
   /// When the sale was voided; NULL when still active.
   DateTimeColumn get voidedAt => dateTime().nullable()();
+
+  /// True when this row is an opening-balance entry — a customer's pre-billing
+  /// debt recorded by the owner through the ledger, NOT a counter sale.
+  ///
+  /// Opening balances are ledger-only: they carry no sale items (so no stock
+  /// was ever deducted), they never surface in Orders/Reports/Sales totals or
+  /// the receipt history, and yet they still generate due through the exact
+  /// same NOT_PAID derivation as a credit sale, so payments reduce them with
+  /// zero special-casing. Defaults to false so every existing and future sale
+  /// is a real sale.
+  BoolColumn get isOpeningBalance =>
+      boolean().withDefault(const Constant(false))();
 }

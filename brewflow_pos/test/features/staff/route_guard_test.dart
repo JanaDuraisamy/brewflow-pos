@@ -49,9 +49,9 @@ void main() {
       ),
     );
     // Let profile resolution finish; authenticated users land on dashboard.
-    await tester.pumpAndSettle();
+    await _boundedSettle(tester);
     router.go('/reports');
-    await tester.pumpAndSettle();
+    await _boundedSettle(tester);
 
     expect(find.byType(AccessDeniedShell), findsOneWidget);
     expect(find.text('No access to this area'), findsOneWidget);
@@ -88,7 +88,7 @@ void main() {
         child: MaterialApp.router(routerConfig: router),
       ),
     );
-    await tester.pumpAndSettle();
+    await _boundedSettle(tester);
     router.go('/billing');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -96,4 +96,14 @@ void main() {
     expect(find.byType(PosPage), findsOneWidget);
     expect(find.byType(AccessDeniedShell), findsNothing);
   });
+}
+
+/// Pushes frames until no transient callbacks are scheduled, or up to [limit]
+/// iterations — the billing branch carries idle animations, so a strict
+/// [pumpAndSettle] would time out on it.
+Future<void> _boundedSettle(WidgetTester tester, {int limit = 60}) async {
+  for (var i = 0; i < limit; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (tester.binding.transientCallbackCount == 0) return;
+  }
 }

@@ -4,7 +4,7 @@
          manifests already declare this; release needs it here). -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="brewflow_pos"
+        android:label="JiggarTea Bill Beta"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

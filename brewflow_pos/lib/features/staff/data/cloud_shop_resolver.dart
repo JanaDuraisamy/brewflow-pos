@@ -1,4 +1,6 @@
+import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// ---------------------------------------------------------------------------
@@ -26,6 +28,7 @@ final class CloudUserProfile {
     required this.email,
     required this.role,
     required this.isActive,
+    this.permissions = const {},
   });
 
   final String shopId;
@@ -33,6 +36,34 @@ final class CloudUserProfile {
   final String email;
   final String role;
   final bool isActive;
+
+  /// Owner-confirmed fine-grained grants, cloud-authoritative for STAFF.
+  /// Meaningful only for [UserRole.staff]; owners are implied-all.
+  final Set<Permission> permissions;
+}
+
+/// One cloud `user_profiles` row for a given shop, used by the owner roster
+/// backfill so staff created on another device appear locally.
+final class CloudStaffMember {
+  const CloudStaffMember({
+    required this.authUserId,
+    required this.email,
+    required this.role,
+    required this.isActive,
+    this.displayName,
+    this.permissions = const {},
+  });
+
+  final String authUserId;
+  final String email;
+
+  /// Raw cloud db value ('OWNER' | 'STAFF').
+  final String role;
+  final bool isActive;
+  final String? displayName;
+
+  /// Cloud-authoritative grants; empty means "owner never pushed yet".
+  final Set<Permission> permissions;
 }
 
 class CloudShopResolver {
@@ -53,7 +84,7 @@ class CloudShopResolver {
     try {
       final data = await client
           .from('user_profiles')
-          .select('shop_id, email, role, is_active')
+          .select('shop_id, email, role, is_active, permissions')
           .eq('auth_user_id', authUserId)
           .maybeSingle();
       if (data == null) return null;
@@ -80,10 +111,61 @@ class CloudShopResolver {
         email: data['email'] as String,
         role: data['role'] as String,
         isActive: data['is_active'] as bool,
+        permissions: _parsePermissions(data['permissions']),
       );
     } catch (error) {
       AppLog.warning('Cloud profile fetch failed', tag: tag, error: error);
       return null;
+    }
+  }
+
+  /// Parses the cloud `permissions text[]` column into the typed grant set,
+  /// dropping unknown tokens (defensive against schema drift).
+  static Set<Permission> _parsePermissions(Object? raw) {
+    if (raw is! List) return const {};
+    final parsed = <Permission>{};
+    for (final entry in raw) {
+      if (entry is! String) continue;
+      final permission = Permission.fromDbValue(entry);
+      if (permission != null) parsed.add(permission);
+    }
+    return parsed;
+  }
+
+  /// Loads every cloud `user_profiles` row belonging to [shopId].
+  ///
+  /// Used by the signed-in OWNER to mirror the authoritative roster on this
+  /// device (staff added from another device otherwise stay invisible until
+  /// re-created locally). Best-effort: returns an empty roster when Supabase
+  /// is not initialized or the query fails.
+  Future<List<CloudStaffMember>> loadShopStaff(String shopId) async {
+    final client = _client;
+    if (client == null) return const [];
+    try {
+      final data = await client
+          .from('user_profiles')
+          .select(
+            'auth_user_id, email, role, is_active, display_name, permissions',
+          )
+          .eq('shop_id', shopId);
+      return [
+        for (final row in data)
+          CloudStaffMember(
+            authUserId: row['auth_user_id'] as String,
+            email: (row['email'] as String?) ?? '',
+            role: (row['role'] as String?) ?? 'STAFF',
+            isActive: row['is_active'] as bool? ?? true,
+            displayName: row['display_name'] as String?,
+            permissions: _parsePermissions(row['permissions']),
+          ),
+      ];
+    } catch (error) {
+      AppLog.warning(
+        'Cloud staff roster fetch failed (local roster unchanged)',
+        tag: tag,
+        error: error,
+      );
+      return const [];
     }
   }
 
@@ -126,6 +208,113 @@ class CloudShopResolver {
         'Cloud identity push failed (will retry on connectivity)',
         tag: tag,
         error: error,
+      );
+      return false;
+    }
+  }
+
+  /// Persists [permissions] as the cloud-authoritative grant set for the STAFF
+  /// account [authUserId] via the owner-verified `set_staff_permissions` RPC
+  /// (migration 0020). The RPC itself authorizes the caller as an active OWNER
+  /// of the target's shop, so a staff caller is rejected server-side.
+  ///
+  /// Best-effort like [pushIdentity]: returns false on offline/rejection and
+  /// the caller logs; the local device keeps working offline-first.
+  Future<bool> pushStaffPermissions({
+    required String authUserId,
+    required Set<Permission> permissions,
+  }) async {
+    final client = _client;
+    if (client == null) return false;
+    try {
+      await client.rpc<void>(
+        'set_staff_permissions',
+        params: {
+          'p_auth_user_id': authUserId,
+          'p_permissions': [
+            for (final permission in permissions) permission.dbValue,
+          ],
+        },
+      );
+      AppLog.info(
+        'Cloud staff permissions pushed: user=$authUserId '
+        'count=${permissions.length}',
+        tag: tag,
+      );
+      return true;
+    } catch (error) {
+      AppLog.warning(
+        'Cloud staff permission push failed (owner device will retry)',
+        tag: tag,
+        error: error,
+      );
+      return false;
+    }
+  }
+
+  /// Owner-only removal of one staff member's cloud master record.
+  ///
+  /// Deletes the `user_profiles` row, then writes a `STAFF_PROFILE` tombstone
+  /// so every other device for the shop drops the member from its roster too.
+  /// The tombstone is required: a deleted row can never appear in a row-scan
+  /// delta query, so without it peers would keep the member forever.
+  ///
+  /// The tombstone id is the Supabase auth user id, which is what peers match
+  /// their local `users.auth_user_id` on.
+  ///
+  /// Historical payroll is untouched: staff_attendance, staff_advances,
+  /// staff_monthly_salaries and staff_daily_salaries all key staff by a plain
+  /// `staff_user_id text` column with no foreign key to `user_profiles`, so
+  /// removing the profile cannot cascade into (or invalidate) that history.
+  ///
+  /// The Supabase auth account is intentionally left in place — the person can
+  /// still authenticate but resolves to no profile, so they cannot use the app,
+  /// and their address stays reserved against a stale re-invite.
+  ///
+  /// Returns false when there is no cloud client or the delete was rejected;
+  /// the caller must NOT drop the local row in that case, or the local mirror
+  /// and the cloud would silently disagree.
+  Future<bool> deleteStaffProfile({
+    required String authUserId,
+    required String shopId,
+  }) async {
+    final client = _client;
+    if (client == null) return false;
+    try {
+      // Owner protection: never let this path remove an OWNER profile.
+      final target = await client
+          .from('user_profiles')
+          .select('role')
+          .eq('auth_user_id', authUserId)
+          .maybeSingle();
+      if (target == null) return false;
+      if (target['role'] == 'OWNER') {
+        AppLog.warning(
+          'Refused cloud staff delete for an OWNER profile',
+          tag: tag,
+        );
+        return false;
+      }
+      await client
+          .from('user_profiles')
+          .delete()
+          .eq('auth_user_id', authUserId);
+      await client.from('master_deletions').upsert({
+        'entity': MasterEntity.staffProfile.wire,
+        'id': authUserId,
+        'shop_id': shopId,
+      }, onConflict: 'entity,id');
+      AppLog.info(
+        'Cloud staff profile deleted: user=$authUserId shop=$shopId',
+        tag: tag,
+      );
+      return true;
+    } catch (error, stackTrace) {
+      AppLog.error(
+        'Cloud staff profile delete failed',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
       );
       return false;
     }

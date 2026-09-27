@@ -284,4 +284,266 @@ void main() {
       expect(selectBestOffer([]), isNull);
     });
   });
+
+  group('quantity tier offers (buy X for Rs.Y)', () {
+    // The Kulfi ladder from the business example: 1 = 45, 2 = 85, 3 = 120.
+    final kulfi = _offer(
+      id: 'off-tier-1',
+      name: 'Kulfi Tiers',
+      type: OfferType.quantityTier,
+      config: const QuantityTierOfferConfig(
+        productIds: ['kulfi'],
+        tiers: [
+          QuantityTier(quantity: 1, pricePaise: 4500),
+          QuantityTier(quantity: 2, pricePaise: 8500),
+          QuantityTier(quantity: 3, pricePaise: 12000),
+        ],
+      ).toJson(),
+    );
+
+    OfferCalculation? bestFor(int quantity, {int unitPricePaise = 4500}) {
+      final results = calculateLineOffers(
+        line: _line(
+          productId: 'kulfi',
+          quantity: quantity,
+          unitPricePaise: unitPricePaise,
+        ),
+        activeOffers: [kulfi],
+      );
+      return selectBestOffer(results);
+    }
+
+    test('one unit at the single-unit tier gives no discount', () {
+      expect(bestFor(1), isNull);
+    });
+
+    test('two units use the 2-unit tier: 2x4500 shelf, 8500 tier', () {
+      final best = bestFor(2);
+      expect(best, isNotNull);
+      expect(best!.offerType, OfferType.quantityTier);
+      expect(best.discountPaise, 9000 - 8500);
+      expect(best.appliedQuantity, 2);
+    });
+
+    test('three units use the 3-unit tier: 3x4500 shelf, 12000 tier', () {
+      final best = bestFor(3);
+      expect(best, isNotNull);
+      expect(best!.discountPaise, 13500 - 12000);
+      expect(best.appliedQuantity, 3);
+    });
+
+    test('five units decompose into the 3-unit then 2-unit tier', () {
+      // 3 -> 12000 plus 2 -> 8500 = 20500 against a 22500 shelf.
+      final best = bestFor(5);
+      expect(best, isNotNull);
+      expect(best!.discountPaise, 22500 - 20500);
+      expect(best.appliedQuantity, 5);
+    });
+
+    test('four units decompose into the 3-unit then 1-unit tier', () {
+      // 3 -> 12000 plus 1 -> 4500 = 16500 against a 18000 shelf.
+      final best = bestFor(4);
+      expect(best, isNotNull);
+      expect(best!.discountPaise, 18000 - 16500);
+      expect(best.appliedQuantity, 4);
+    });
+
+    test('stamps the real offer id and name', () {
+      final best = bestFor(2);
+      expect(best!.offerId, 'off-tier-1');
+      expect(best.offerName, 'Kulfi Tiers');
+    });
+
+    test('does not apply to another product', () {
+      final results = calculateLineOffers(
+        line: _line(productId: 'other', quantity: 3, unitPricePaise: 4500),
+        activeOffers: [kulfi],
+      );
+      expect(results, isEmpty);
+    });
+
+    test('empty productIds applies to every product', () {
+      final anyProduct = _offer(
+        id: 'off-tier-any',
+        name: 'Any Product Tiers',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: [],
+          tiers: [QuantityTier(quantity: 2, pricePaise: 8500)],
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'whatever', quantity: 2, unitPricePaise: 4500),
+        activeOffers: [anyProduct],
+      );
+      expect(selectBestOffer(results)!.discountPaise, 9000 - 8500);
+    });
+
+    test('a tier that is not cheaper than the shelf price is not applied', () {
+      final badTier = _offer(
+        id: 'off-tier-bad',
+        name: 'Not A Discount',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['kulfi'],
+          tiers: [QuantityTier(quantity: 2, pricePaise: 9500)],
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'kulfi', quantity: 2, unitPricePaise: 4500),
+        activeOffers: [badTier],
+      );
+      expect(results, isEmpty);
+    });
+
+    test(
+      'tiers are honoured in ascending order regardless of config order',
+      () {
+        final unsorted = _offer(
+          id: 'off-tier-unsorted',
+          name: 'Unsorted Tiers',
+          type: OfferType.quantityTier,
+          config: const QuantityTierOfferConfig(
+            productIds: ['kulfi'],
+            tiers: [
+              QuantityTier(quantity: 3, pricePaise: 12000),
+              QuantityTier(quantity: 1, pricePaise: 4500),
+              QuantityTier(quantity: 2, pricePaise: 8500),
+            ],
+          ).toJson(),
+        );
+        final results = calculateLineOffers(
+          line: _line(productId: 'kulfi', quantity: 3, unitPricePaise: 4500),
+          activeOffers: [unsorted],
+        );
+        expect(selectBestOffer(results)!.discountPaise, 13500 - 12000);
+      },
+    );
+
+    test('malformed tiers are ignored instead of throwing', () {
+      final broken = _offer(
+        id: 'off-tier-broken',
+        name: 'Broken Tiers',
+        type: OfferType.quantityTier,
+        config: const {
+          'productIds': ['kulfi'],
+          'tiers': [
+            {'quantity': 0, 'pricePaise': 100},
+            {'quantity': 2},
+            'not-a-map',
+            {'quantity': 2, 'pricePaise': 8500},
+          ],
+        },
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'kulfi', quantity: 2, unitPricePaise: 4500),
+        activeOffers: [broken],
+      );
+      expect(selectBestOffer(results)!.discountPaise, 500);
+    });
+
+    test('an empty tier list applies nothing', () {
+      final empty = _offer(
+        id: 'off-tier-empty',
+        name: 'Empty Tiers',
+        type: OfferType.quantityTier,
+        config: const {
+          'productIds': ['kulfi'],
+          'tiers': <dynamic>[],
+        },
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'kulfi', quantity: 3, unitPricePaise: 4500),
+        activeOffers: [empty],
+      );
+      expect(results, isEmpty);
+    });
+
+    test('member pricing is the shelf the tier is measured against', () {
+      // 2 units at the member price 4000 = 8000 shelf; the 8500 tier is then
+      // not a discount, so no offer applies.
+      final results = calculateLineOffers(
+        line: CartLineContext(
+          productId: 'kulfi',
+          variantId: null,
+          quantity: 2,
+          unitPricePaise: 4500,
+          memberPricePaise: 4000,
+          memberPricing: true,
+        ),
+        activeOffers: [kulfi],
+      );
+      expect(results, isEmpty);
+    });
+
+    test('variant id matches the configured product', () {
+      final results = calculateLineOffers(
+        line: CartLineContext(
+          productId: 'kulfi-parent',
+          variantId: 'kulfi',
+          quantity: 3,
+          unitPricePaise: 4500,
+          memberPricePaise: null,
+          memberPricing: false,
+        ),
+        activeOffers: [kulfi],
+      );
+      expect(selectBestOffer(results)!.discountPaise, 1500);
+    });
+  });
+
+  group('offer priority with quantity tiers', () {
+    test('percentage still outranks a quantity tier', () {
+      final pct = _offer(
+        id: 'pct',
+        name: 'Pct',
+        type: OfferType.percentage,
+        config: const PercentageOfferConfig(
+          percent: 50,
+          productIds: ['p1'],
+        ).toJson(),
+      );
+      final tier = _offer(
+        id: 'tier',
+        name: 'Tier',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['p1'],
+          tiers: [QuantityTier(quantity: 1, pricePaise: 1000)],
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'p1', quantity: 1, unitPricePaise: 10000),
+        activeOffers: [tier, pct],
+      );
+      expect(results.first.offerType, OfferType.percentage);
+    });
+
+    test('a quantity tier outranks combo and buy X get Y', () {
+      final tier = _offer(
+        id: 'tier',
+        name: 'Tier',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['p1'],
+          tiers: [QuantityTier(quantity: 1, pricePaise: 1000)],
+        ).toJson(),
+      );
+      final bogo = _offer(
+        id: 'bogo',
+        name: 'Bogo',
+        type: OfferType.buyXGetY,
+        config: const BuyXGetYOfferConfig(
+          productId: 'p1',
+          buyQty: 2,
+          getQty: 1,
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'p1', quantity: 3, unitPricePaise: 10000),
+        activeOffers: [bogo, tier],
+      );
+      expect(results.first.offerType, OfferType.quantityTier);
+    });
+  });
 }

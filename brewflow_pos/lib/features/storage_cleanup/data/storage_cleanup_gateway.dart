@@ -91,7 +91,18 @@ final class SupabaseStorageCleanupGateway implements StorageCleanupGateway {
   }
 
   StorageCleanupFailure _mapFunctionError(int status, dynamic details) {
-    final code = details is Map ? details['error'] : null;
+    final isMap = details is Map;
+    final code = isMap ? details['error'] : null;
+    // Surface the function's own message when it relayed one (e.g. the edge
+    // function returning 'error' + a human-readable message) so the owner sees
+    // the real reason instead of a generic fallback.
+    final relayedMessage = isMap
+        ? (details['message'] ?? details['error_description'] ?? details['msg'])
+        : null;
+    String? message;
+    if (relayedMessage is String && relayedMessage.trim().isNotEmpty) {
+      message = relayedMessage.trim();
+    }
     switch (status) {
       case 401:
         return const StorageCleanupSessionFailure();
@@ -101,6 +112,7 @@ final class SupabaseStorageCleanupGateway implements StorageCleanupGateway {
       case 500:
       default:
         if (code == 'FORBIDDEN') return const StorageCleanupForbiddenFailure();
+        if (message != null) return StorageCleanupServiceFailure(message);
         return const StorageCleanupServiceFailure();
     }
   }

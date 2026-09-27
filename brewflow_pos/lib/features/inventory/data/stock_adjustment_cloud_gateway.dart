@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/core/network/rpc_timeout.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Cloud-authoritative adapter for one atomic stock adjustment/opening.
@@ -39,16 +40,18 @@ final class SupabaseStockAdjustmentGateway
     required String reason,
     String? note,
   }) async {
-    final res = await _client.rpc<dynamic>(
-      'adjust_stock_atomic',
-      params: {
-        'p_shop_id': shopId,
-        'p_product_id': productId,
-        'p_variant_id': variantId,
-        'p_delta': delta,
-        'p_reason': reason,
-        'p_note': note,
-      },
+    final res = await rpcWithTimeout(
+      () => _client.rpc<dynamic>(
+        'adjust_stock_atomic',
+        params: {
+          'p_shop_id': shopId,
+          'p_product_id': productId,
+          'p_variant_id': variantId,
+          'p_delta': delta,
+          'p_reason': reason,
+          'p_note': note,
+        },
+      ),
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);

@@ -22,6 +22,8 @@ import '../../helpers/fake_staff_repository.dart';
 /// Captures shared content instead of opening the platform share sheet.
 final class FakeShareService implements ShareService {
   final List<({String subject, String text})> calls = [];
+  final List<({String subject, String filePath})> fileCalls = [];
+  final List<({String subject, List<String> filePaths})> filesCalls = [];
 
   @override
   Future<void> shareText({
@@ -30,28 +32,60 @@ final class FakeShareService implements ShareService {
   }) async {
     calls.add((subject: subject, text: text));
   }
+
+  @override
+  Future<void> shareFile({
+    required String subject,
+    required String filePath,
+  }) async {
+    fileCalls.add((subject: subject, filePath: filePath));
+  }
+
+  @override
+  Future<void> shareFiles({
+    required String subject,
+    required List<String> filePaths,
+  }) async {
+    filesCalls.add((subject: subject, filePaths: filePaths));
+  }
 }
 
 /// In-memory [BackupFileStore] so widget tests never touch real disk I/O
 /// (real `dart:io` futures do not resolve under the test's fake-async zone).
 final class _MemoryBackupFileStore implements BackupFileStore {
   final Map<String, String> files = {};
+  final Map<String, List<int>> binaryFiles = {};
 
   static final DateTime _epoch = DateTime(2026, 8, 31, 10, 15);
 
-  @override
-  Future<List<BackupFileInfo>> listFiles() async {
+  List<BackupFileInfo> _infosFor(Map<String, int> sizes) {
     final infos = <BackupFileInfo>[
-      for (final entry in files.entries)
+      for (final entry in sizes.entries)
         BackupFileInfo(
           name: entry.key,
           path: entry.key,
-          sizeBytes: entry.value.length,
+          sizeBytes: entry.value,
           modifiedAt: _epoch,
         ),
     ];
     infos.sort(compareBackupFileInfo);
     return infos;
+  }
+
+  @override
+  Future<List<BackupFileInfo>> listFiles() async {
+    return _infosFor({
+      for (final entry in files.entries)
+        if (entry.key.endsWith('.json')) entry.key: entry.value.length,
+    });
+  }
+
+  @override
+  Future<List<BackupFileInfo>> listPackages() async {
+    return _infosFor({
+      for (final entry in binaryFiles.entries)
+        if (entry.key.endsWith('.zip')) entry.key: entry.value.length,
+    });
   }
 
   @override
@@ -66,6 +100,17 @@ final class _MemoryBackupFileStore implements BackupFileStore {
   }
 
   @override
+  Future<BackupFileInfo> writeBytes(String fileName, List<int> bytes) async {
+    binaryFiles[fileName] = bytes;
+    return BackupFileInfo(
+      name: fileName,
+      path: fileName,
+      sizeBytes: bytes.length,
+      modifiedAt: _epoch,
+    );
+  }
+
+  @override
   Future<String> readFile(String fileName) async {
     final contents = files[fileName];
     if (contents == null) throw const UnexpectedBackupFailure();
@@ -73,8 +118,16 @@ final class _MemoryBackupFileStore implements BackupFileStore {
   }
 
   @override
+  Future<List<int>> readBytes(String fileName) async {
+    final bytes = binaryFiles[fileName];
+    if (bytes == null) throw const UnexpectedBackupFailure();
+    return bytes;
+  }
+
+  @override
   Future<void> deleteFile(String fileName) async {
     files.remove(fileName);
+    binaryFiles.remove(fileName);
   }
 }
 
@@ -256,7 +309,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(share.calls, hasLength(1));
-      expect(share.calls.single.subject, 'BrewFlow backup');
+      expect(share.calls.single.subject, 'JiggarTea Bill backup');
       expect(share.calls.single.text, contents);
     });
 

@@ -411,16 +411,15 @@ void main() {
       // The current sale_items row type requires offer columns (v18); the
       // migrated table only has the v8 columns, so read the preserved
       // columns explicitly.
-      final line = await (db.selectOnly(
-        db.saleItems,
-      )
-            ..addColumns([
-              db.saleItems.variantId,
-              db.saleItems.variantName,
-              db.saleItems.unitPricePaise,
-            ])
-            ..where(db.saleItems.id.equals('si2')))
-          .getSingle();
+      final line =
+          await (db.selectOnly(db.saleItems)
+                ..addColumns([
+                  db.saleItems.variantId,
+                  db.saleItems.variantName,
+                  db.saleItems.unitPricePaise,
+                ])
+                ..where(db.saleItems.id.equals('si2')))
+              .getSingle();
       expect(line.read(db.saleItems.variantId), 'v1');
       expect(line.read(db.saleItems.variantName), '250 ml');
       expect(line.read(db.saleItems.unitPricePaise), 14000);

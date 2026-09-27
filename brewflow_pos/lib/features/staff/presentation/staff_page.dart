@@ -3,12 +3,14 @@ import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
+import 'package:brewflow_pos/core/router/app_routes.dart';
 import 'package:brewflow_pos/features/staff/data/supabase_staff_provisioning.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Staff Management (OWNER only)
@@ -44,6 +46,20 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
         _staff = staff;
         _error = null;
       });
+      // Reconcile the cloud-authoritative grant set (migration 0020). This
+      // both backfills members provisioned before cloud grants existed and
+      // re-affirms the owner's confirmed set for every staff device. The RPC
+      // re-verifies ownership server-side, so failures are safe to ignore.
+      for (final member in staff) {
+        final authUserId = member.authUserId;
+        if (authUserId == null) continue;
+        await ref
+            .read(cloudShopResolverProvider)
+            .pushStaffPermissions(
+              authUserId: authUserId,
+              permissions: member.permissions,
+            );
+      }
     } on StaffFailure catch (failure) {
       if (!mounted) return;
       setState(() => _error = failure.message);
@@ -159,16 +175,64 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
     }
   }
 
+  /// Owner-only removal of a staff member.
+  ///
+  /// Order matters and is cloud-first: the cloud master and its tombstone must
+  /// be gone before the local mirror is archived, otherwise a device failure
+  /// would leave this device showing a member no longer exists anywhere else
+  /// (and the reverse on every other device, which pulls no delta for a
+  /// deletion it never saw).
+  ///
+  /// The local row is archived rather than dropped, because the payroll tables
+  /// reference it with `ON DELETE CASCADE` — see
+  /// [StaffDeletionController.delete]. Attendance, salary and advance history
+  /// are never touched.
+  Future<void> _deleteStaff(UserProfile member) async {
+    if (!mounted) return;
+    final confirmed = await confirmDestructive(
+      context,
+      title: 'Remove staff member?',
+      subject: member.displayName ?? member.email,
+      // Say the history survives — that is the point of the archive.
+      consequence:
+          'They will be removed from this shop on every device. Their '
+          'attendance, salary and advance history is kept for your records.',
+      confirmLabel: 'Remove',
+    );
+    if (!confirmed || !mounted) return;
+    try {
+      await ref.read(staffDeletionProvider.notifier).delete(member);
+      await _reload();
+      if (mounted) {
+        _showMessage('${member.displayName ?? member.email} removed');
+      }
+    } on StaffFailure catch (failure) {
+      _showMessage(failure.message);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final allowed = ref.watch(canProvider(Permission.manageStaff));
+    final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
     if (!allowed) {
       // Hard boundary mirror of the route guard.
       return const Scaffold(body: Center(child: Text('No access')));
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('Staff Management')),
+      appBar: AppBar(
+        leading: BackButton(
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.settings);
+            }
+          },
+        ),
+        title: const Text('Staff Management'),
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addStaff,
         icon: const Icon(Icons.person_add_alt_1),
@@ -206,6 +270,11 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
                   itemBuilder: (context, index) {
                     final member = _staff![index];
                     return ListTile(
+                      // Owner detail page: go() (push() does not resolve
+                      // across navigators here); the page owns back
+                      // navigation back to this list (BackButton + PopScope).
+                      onTap: () =>
+                          context.go(AppRoutes.staffPayroll, extra: member),
                       leading: Icon(
                         member.isActive
                             ? Icons.person_outline
@@ -237,6 +306,15 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
                             icon: const Icon(Icons.tune),
                             onPressed: () => _editPermissions(member),
                           ),
+                          // Owner-only: manageStaff is also granted to some
+                          // staff, but removal is the owner's call alone.
+                          if (isOwner)
+                            IconButton(
+                              tooltip: 'Remove staff member',
+                              icon: const Icon(Icons.delete_outline),
+                              color: AppColors.error,
+                              onPressed: () => _deleteStaff(member),
+                            ),
                           Switch(
                             value: member.isActive,
                             onChanged: (_) => _toggleActive(member),

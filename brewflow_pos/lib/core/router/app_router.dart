@@ -10,7 +10,9 @@ import 'package:brewflow_pos/features/auth/presentation/auth_shell.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_page.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_payroll_page.dart';
 import 'package:brewflow_pos/features/billing/presentation/pos_page.dart';
+import 'package:brewflow_pos/features/closing/presentation/daily_closing_page.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/presentation/customer_detail_page.dart';
 import 'package:brewflow_pos/features/customers/presentation/customer_form_page.dart';
@@ -19,6 +21,7 @@ import 'package:brewflow_pos/features/dashboard/presentation/dashboard_page.dart
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expense_form_page.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_page.dart';
+import 'package:brewflow_pos/features/expenses/presentation/shop_payables_page.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/category_management_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
@@ -87,10 +90,19 @@ GoRouter buildAppRouter({
         name: 'no_access',
         builder: (context, state) => const AccessDeniedShell(),
       ),
+      // Top-level owner screen (not a shell branch, not nested): entries use
+      // go(), and the page itself owns back navigation (explicit BackButton
+      // with a staff-list fallback + PopScope for the system back/gesture),
+      // mirroring StaffPage. push() from shell-branch contexts does not
+      // resolve across navigators here, so nesting is deliberately avoided.
       GoRoute(
-        path: AppRoutes.staff,
-        name: 'staff',
-        builder: (context, state) => const StaffPage(),
+        path: AppRoutes.staffPayroll,
+        name: 'staff_payroll',
+        builder: (context, state) => StaffPayrollPage(
+          staff: state.extra is UserProfile
+              ? state.extra! as UserProfile
+              : null,
+        ),
       ),
       GoRoute(
         path: AppRoutes.storageCleanup,
@@ -106,6 +118,11 @@ GoRouter buildAppRouter({
               : null,
         ),
       ),
+      GoRoute(
+        path: AppRoutes.closing,
+        name: 'closing',
+        builder: (context, state) => const DailyClosingPage(),
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
             AppShell(navigationShell: navigationShell),
@@ -115,6 +132,16 @@ GoRouter buildAppRouter({
               path: AppRoutes.dashboard,
               name: 'dashboard',
               builder: (context, state) => const DashboardPage(),
+            ),
+          ),
+          // Staff Management is a real shell destination (branch index 1) so
+          // its navigation entry always lands here. Branch order must match
+          // AppRoutes.destinations and navDestinations exactly.
+          _branch(
+            GoRoute(
+              path: AppRoutes.staff,
+              name: 'staff',
+              builder: (context, state) => const StaffPage(),
             ),
           ),
           _branch(
@@ -277,6 +304,11 @@ GoRouter buildAppRouter({
                         : null,
                   ),
                 ),
+                GoRoute(
+                  path: 'payables',
+                  name: 'expenses_shop_payables',
+                  builder: (context, state) => const ShopPayablesPage(),
+                ),
               ],
             ),
           ),
@@ -372,13 +404,13 @@ FutureOr<String?> _authorizationRedirect(
     if (location == AppRoutes.noAccess) {
       return null;
     }
-    // /staff lives outside the shell branch list but is still a guarded,
-    // owner-only destination. /storage is the same kind: a pushed, owner-only
-    // screen (storage monitoring + monthly cleanup).
+    // Shell destinations (including /staff) are covered by isProtected, which
+    // also covers their sub-routes. /storage is a pushed, owner-only screen
+    // (storage monitoring + monthly cleanup). /closing is a pushed
+    // expenses-permission screen.
     final isStorage = location.startsWith(AppRoutes.storageCleanup);
-    if (!AppRoutes.isProtected(location) &&
-        location != AppRoutes.staff &&
-        !isStorage) {
+    final isClosing = location == AppRoutes.closing;
+    if (!AppRoutes.isProtected(location) && !isStorage && !isClosing) {
       return AppRoutes.dashboard;
     }
     final container = ProviderScope.containerOf(context, listen: false);
@@ -422,9 +454,11 @@ FutureOr<String?> _authorizationRedirect(
 }
 
 /// The permission a protected location requires. Sub-routes inherit their
-/// module's permission; /staff is owner-gated via [Permission.manageStaff].
+/// module's permission; /staff and /staff/payroll are gated via
+/// [Permission.manageStaff].
 Permission? _requiredPermissionFor(String location) {
   if (location == AppRoutes.dashboard) return Permission.viewDashboard;
+  if (location.startsWith(AppRoutes.staff)) return Permission.manageStaff;
   if (location.startsWith(AppRoutes.inventory)) {
     return Permission.viewInventory;
   }
@@ -437,7 +471,9 @@ Permission? _requiredPermissionFor(String location) {
   if (location == AppRoutes.reports) return Permission.reports;
   if (location == AppRoutes.offers) return Permission.offers;
   if (location == AppRoutes.settings) return Permission.settings;
-  if (location == AppRoutes.staff) return Permission.manageStaff;
+  if (location == AppRoutes.closing) {
+    return Permission.expenses;
+  }
   if (location.startsWith(AppRoutes.storageCleanup)) {
     return Permission.manageStaff;
   }

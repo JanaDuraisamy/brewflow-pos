@@ -6,11 +6,12 @@
 /// values; database details are never exposed to callers.
 ///
 /// Semantics (locked in the Phase 8 architecture):
-/// - Every payment is allocated to exactly one sale ([saleId] is required
-///   here even though the DB column is nullable, reserving null for future
+/// - Every payment row is allocated to exactly one sale ([saleId] is required
+///   in [recordPayment], and a customer-level collection is split into one
+///   row per bill — the DB column stays nullable, reserving null for future
 ///   advance payments).
 /// - Overpayment is rejected transactionally: a payment is written only when
-///   amountPaise <= the sale's remaining due at write time.
+///   it fits the outstanding balance at write time.
 /// - Payments are append-only; no edit, delete or reversal API exists.
 /// - All due/outstanding values are derived (NOT_PAID sales totals minus
 ///   non-reversed payments), never persisted. A PAID sale never creates due.
@@ -99,12 +100,83 @@ abstract interface class CustomerLedgerRepository {
     String? shopId,
   });
 
+  /// Records [amountPaise] as [customerId]'s opening balance — a debt that
+  /// existed before the shop started on BrewFlow, NOT a counter sale.
+  ///
+  /// The entry is ledger-only: it carries no sale items (so no stock is ever
+  /// deducted and no receipt is produced), never appears in Orders, Reports or
+  /// Sales totals, and yet it flows through the exact same NOT_PAID
+  /// derivation as a credit sale — it adds to [summary], [outstandingForCustomer]
+  /// and [dueCustomersSummary], and a [collectCustomerPayment] pays it down
+  /// exactly like any open bill.
+  ///
+  /// Throws [InvalidPaymentAmountFailure] for non-positive amounts and
+  /// [CustomerNotFoundFailure] when the customer is missing. On failure
+  /// nothing is written.
+  Future<void> recordOpeningDue({
+    required String customerId,
+    required int amountPaise,
+    String? shopId,
+  });
+
+  /// Collects [amountPaise] against [customerId]'s total outstanding, in one
+  /// atomic submission.
+  ///
+  /// The amount may be any positive value up to the customer's full
+  /// outstanding balance and is allocated against the OLDEST open (NOT_PAID,
+  /// non-voided) bills first; every touched bill receives one payment row,
+  /// and a bill whose due is cleared is moved to PAID in the same
+  /// transaction. All rows share [paymentGroupId], making the submission one
+  /// idempotent unit: replaying the same group is a no-op returning the
+  /// existing rows, so a retried save can never double-charge.
+  ///
+  /// Throws [InvalidPaymentAmountFailure] for non-positive amounts,
+  /// [CustomerNotFoundFailure] when the customer is missing, and
+  /// [PaymentExceedsDueFailure] when the amount exceeds the total outstanding
+  /// (including under concurrent submissions). On any failure nothing is
+  /// written. Returns the created per-bill payment rows (empty never).
+  Future<List<CustomerPayment>> collectCustomerPayment({
+    required String customerId,
+    required String paymentGroupId,
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    String? note,
+    String? shopId,
+  });
+
   /// Remaining due of one customer across all customer-linked sales.
   Future<int> outstandingForCustomer(String customerId);
+
+  /// Every customer with an outstanding balance and their open bills,
+  /// current (not window-bounded) and read-only.
+  ///
+  /// Only open NOT_PAID, non-voided credit sales generate due; rows keep the
+  /// per-bill drill-down (oldest bill first) so the Receivables report can
+  /// show exactly which bills each customer still owes on. Customers are
+  /// ordered by name. [shopIds] restricts the read to the given businesses;
+  /// when null the whole local database is scanned (single-shop devices).
+  Future<List<CustomerReceivable>> receivables({List<String>? shopIds});
 
   /// Customers with outstanding balances and the total across all of them
   /// (dashboard Due Reminders surface).
   Future<DueCustomersSummary> dueCustomersSummary();
+
+  /// Customer-wise outstanding balances exactly as of [toUtc] (read-only,
+  /// the management report's Customer Outstanding snapshot).
+  ///
+  /// Same sales/payments derivation family as [receivables], but date-bounded:
+  /// only customer-linked, non-voided sales created on/before [toUtc] count,
+  /// and only non-reversed payments recorded on/before [toUtc] offset them —
+  /// so sales created after the snapshot date and payments made after it never
+  /// affect the balance. A credit bill collected in full after [toUtc] keeps
+  /// its whole as-of-date balance; a sale settled at the counter (PAID with no
+  /// payment rows) never generates due. Rows are limited to balances > 0 and
+  /// ordered by customer name. [shopIds] restricts the scan to the given
+  /// businesses; null/empty scans everything locally.
+  Future<List<CustomerOutstandingBalance>> outstandingAsOf({
+    required DateTime toUtc,
+    List<String>? shopIds,
+  });
 
   /// Ids of customers that currently have an outstanding balance (> 0),
   /// derived from the same sales/payments aggregation as

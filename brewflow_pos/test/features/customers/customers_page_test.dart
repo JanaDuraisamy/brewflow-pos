@@ -1,6 +1,10 @@
 import 'package:brewflow_pos/app/app.dart';
+import 'package:brewflow_pos/app/providers.dart'
+    show connectivityServiceProvider;
 import 'package:brewflow_pos/app/widgets/widgets.dart';
+import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
+import 'package:brewflow_pos/core/sharing/share_service.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
@@ -15,22 +19,59 @@ import 'package:brewflow_pos/features/customers/presentation/customers_controlle
 import 'package:brewflow_pos/features/customers/presentation/customers_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_auth_repository.dart';
+import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
+const _cashier = AuthUser(id: 'u2', email: 'cashier@brewflow.example');
+
+/// Records every share attempt so widget tests can assert on the live message
+/// without touching the platform share sheet.
+final class FakeShareService implements ShareService {
+  int calls = 0;
+  String? lastSubject;
+  String? lastText;
+  Object? error;
+
+  @override
+  Future<void> shareText({
+    required String subject,
+    required String text,
+  }) async {
+    calls += 1;
+    lastSubject = subject;
+    lastText = text;
+    if (error != null) throw error!;
+  }
+
+  @override
+  Future<void> shareFile({
+    required String subject,
+    required String filePath,
+  }) async {}
+
+  @override
+  Future<void> shareFiles({
+    required String subject,
+    required List<String> filePaths,
+  }) async {}
+}
 
 void main() {
   late FakeAuthRepository fakeAuth;
   late FakeCustomersRepository fakeCustomers;
   late FakeCustomerLedgerRepository fakeLedger;
+  late FakeShareService fakeShare;
 
   final now = DateTime.now().toUtc();
 
@@ -91,6 +132,7 @@ void main() {
     fakeAuth = FakeAuthRepository();
     fakeCustomers = FakeCustomersRepository();
     fakeLedger = FakeCustomerLedgerRepository();
+    fakeShare = FakeShareService();
   });
 
   Widget app() => ProviderScope(
@@ -100,6 +142,7 @@ void main() {
       customerLedgerRepositoryProvider.overrideWithValue(fakeLedger),
       inventoryRepositoryProvider.overrideWithValue(FakeInventoryRepository()),
       ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+      shareServiceProvider.overrideWithValue(fakeShare),
     ],
     child: const BrewFlowApp(),
   );
@@ -107,6 +150,39 @@ void main() {
   Future<void> pumpAuthenticated(WidgetTester tester) async {
     await tester.pumpWidget(app());
     fakeAuth.emit(_owner);
+    await tester.pumpAndSettle();
+  }
+
+  /// Signs in as a STAFF member granted `customers` but NOT `customerLedger`:
+  /// the module remains reachable while Collect Payment is hidden.
+  Future<void> pumpAsCashier(WidgetTester tester) async {
+    final staffRepo = FakeStaffRepository();
+    await staffRepo.claimOwnership(_owner);
+    await staffRepo.createStaffProfile(
+      identity: _cashier,
+      shopId: 'shop-1',
+      permissions: const {Permission.customers},
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(fakeAuth),
+          customersRepositoryProvider.overrideWithValue(fakeCustomers),
+          customerLedgerRepositoryProvider.overrideWithValue(fakeLedger),
+          inventoryRepositoryProvider.overrideWithValue(
+            FakeInventoryRepository(),
+          ),
+          ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+          staffRepositoryProvider.overrideWithValue(staffRepo),
+          connectivityServiceProvider.overrideWithValue(
+            fakeConnectivityService(),
+          ),
+        ],
+        child: const BrewFlowApp(),
+      ),
+    );
+    fakeAuth.user = _cashier;
+    fakeAuth.emit(_cashier);
     await tester.pumpAndSettle();
   }
 
@@ -138,7 +214,7 @@ void main() {
   }
 
   /// The customer detail page is one long ListView, so ledger sections and the
-  /// Record Payment action only render once scrolled into view.
+  /// Collect Payment action only render once scrolled into view.
   Future<void> scrollDetailTo(WidgetTester tester, Finder finder) async {
     final scrollable = find.descendant(
       of: find.byType(CustomerDetailPage),
@@ -423,7 +499,7 @@ void main() {
       expect(find.text('No payments yet'), findsOneWidget);
       // Nothing is owed, so recording a payment is not offered.
       final record = tester.widget<PrimaryButton>(
-        find.widgetWithText(PrimaryButton, 'Record Payment'),
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
       );
       expect(record.onPressed, isNull, reason: 'no dues yet');
     });
@@ -541,7 +617,7 @@ void main() {
       expect(find.text('₹110.00'), findsOneWidget);
 
       final record = tester.widget<PrimaryButton>(
-        find.widgetWithText(PrimaryButton, 'Record Payment'),
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
       );
       expect(record.onPressed, isNotNull, reason: 'dues exist');
 
@@ -579,14 +655,14 @@ void main() {
 
       await scrollDetailTo(
         tester,
-        find.widgetWithText(PrimaryButton, 'Record Payment'),
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
       );
-      await tester.tap(find.widgetWithText(PrimaryButton, 'Record Payment'));
+      await tester.tap(find.widgetWithText(PrimaryButton, 'Collect Payment'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Bill'), findsOneWidget);
+      expect(find.text('Total outstanding'), findsOneWidget);
       expect(find.text('Save Payment'), findsOneWidget);
-      // Amount is pre-anchored to the remaining due.
+      // Amount is pre-anchored to the full outstanding balance.
       expect(
         tester
             .widget<TextFormField>(find.byType(TextFormField).first)
@@ -623,9 +699,9 @@ void main() {
 
       await scrollDetailTo(
         tester,
-        find.widgetWithText(PrimaryButton, 'Record Payment'),
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
       );
-      await tester.tap(find.widgetWithText(PrimaryButton, 'Record Payment'));
+      await tester.tap(find.widgetWithText(PrimaryButton, 'Collect Payment'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('UPI'));
@@ -654,13 +730,25 @@ void main() {
 
       await scrollDetailTo(
         tester,
-        find.widgetWithText(PrimaryButton, 'Record Payment'),
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
       );
-      await tester.tap(find.widgetWithText(PrimaryButton, 'Record Payment'));
+      await tester.tap(find.widgetWithText(PrimaryButton, 'Collect Payment'));
       await tester.pumpAndSettle();
 
-      fakeLedger.recordPaymentError = const PaymentExceedsDueFailure();
+      // Client-side bound: an amount above the outstanding never leaves the
+      // dialog, so the failure path is exercised through a rejected save.
       await tester.enterText(find.byType(TextFormField).first, '999');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save Payment'));
+      await pumpAsync(tester);
+
+      expect(
+        find.text('Enter an amount up to the total outstanding.'),
+        findsOneWidget,
+      );
+      expect(fakeLedger.storedPayments, isEmpty);
+
+      fakeLedger.collectError = const PaymentExceedsDueFailure();
+      await tester.enterText(find.byType(TextFormField).first, '100');
       await tester.tap(find.widgetWithText(FilledButton, 'Save Payment'));
       await pumpAsync(tester);
 
@@ -671,8 +759,7 @@ void main() {
       expect(find.text('Save Payment'), findsOneWidget, reason: 'dialog stays');
       expect(fakeLedger.storedPayments, isEmpty);
 
-      fakeLedger.recordPaymentError = null;
-      await tester.enterText(find.byType(TextFormField).first, '100');
+      fakeLedger.collectError = null;
       await tester.tap(find.widgetWithText(FilledButton, 'Save Payment'));
       await pumpAsync(tester);
 
@@ -693,9 +780,9 @@ void main() {
 
       await scrollDetailTo(
         tester,
-        find.widgetWithText(PrimaryButton, 'Record Payment'),
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
       );
-      await tester.tap(find.widgetWithText(PrimaryButton, 'Record Payment'));
+      await tester.tap(find.widgetWithText(PrimaryButton, 'Collect Payment'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextFormField).first, 'abc');
@@ -704,6 +791,193 @@ void main() {
 
       expect(find.text('Enter a valid amount (e.g. 149.50)'), findsOneWidget);
       expect(fakeLedger.storedPayments, isEmpty);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('staff without customerLedger permission never sees Collect '
+        'Payment', (tester) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.bills.add(
+        bill(id: 's1', receiptNumber: 'BF-000001', totalPaise: 15000),
+      );
+      await pumpAsCashier(tester);
+      await openDetail(tester, 'Priya');
+
+      // The module itself is reachable with only `customers`.
+      expect(find.text('Financial summary'), findsOneWidget);
+
+      // Scroll past the financial card up to the payment section so the action
+      // area is definitely built.
+      final detailScrollable = find.descendant(
+        of: find.byType(CustomerDetailPage),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.text('Payment history'),
+        150,
+        scrollable: detailScrollable.first,
+      );
+      await tester.pump();
+
+      expect(
+        find.widgetWithText(PrimaryButton, 'Collect Payment'),
+        findsNothing,
+      );
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('adds an opening due which lands in the ledger as a flagged '
+        'entry', (tester) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.knownCustomers.add('c1');
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      await scrollDetailTo(
+        tester,
+        find.widgetWithText(SecondaryButton, 'Add Opening Due'),
+      );
+      await tester.tap(find.widgetWithText(SecondaryButton, 'Add Opening Due'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget, reason: 'dialog');
+      expect(
+        find.textContaining('Record an existing balance Priya owed'),
+        findsOneWidget,
+      );
+
+      await tester.enterText(find.byType(TextFormField).first, '45.50');
+      await tester.tap(find.widgetWithText(FilledButton, 'Add Opening Due'));
+      await pumpAsync(tester);
+
+      expect(find.text('Opening due added.'), findsOneWidget);
+      final added = fakeLedger.bills.single;
+      expect(added.totalPaise, 4550);
+      expect(added.isOpeningBalance, isTrue);
+
+      // The refreshed ledger shows the debt and the distinct label.
+      await pumpAsync(tester);
+      await scrollDetailTo(tester, find.text('Opening Due'));
+      expect(find.text('Opening Due'), findsOneWidget);
+      expect(find.text('₹45.50'), findsNWidgets(2));
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('opening-due purchases get the Opening Due label, regular '
+        'bills keep their receipt number', (tester) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.bills
+        ..add(
+          bill(
+            id: 's1',
+            receiptNumber: 'BF-000001',
+            totalPaise: 15000,
+            createdAt: now.subtract(const Duration(days: 2)),
+          ),
+        )
+        ..add(
+          FakeLedgerBill(
+            id: 's2',
+            customerId: 'c1',
+            receiptNumber: 'BF-000009',
+            createdAt: now.subtract(const Duration(days: 1)),
+            totalPaise: 4550,
+            isOpeningBalance: true,
+          ),
+        );
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      await scrollDetailTo(tester, find.text('Opening Due'));
+      expect(find.text('Opening Due'), findsOneWidget);
+      expect(find.text('Receipt BF-000001'), findsOneWidget);
+      expect(find.text('Receipt BF-000009'), findsNothing);
+      // Both open bills contribute to purchases and outstanding totals.
+      expect(find.text('₹195.50'), findsNWidgets(2));
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('shares the live outstanding balance as a payment reminder', (
+      tester,
+    ) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.bills.add(
+        bill(id: 's1', receiptNumber: 'BF-000001', totalPaise: 15000),
+      );
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      await scrollDetailTo(
+        tester,
+        find.widgetWithText(SecondaryButton, 'Share Due'),
+      );
+      await tester.tap(find.widgetWithText(SecondaryButton, 'Share Due'));
+      await pumpAsync(tester);
+
+      expect(fakeShare.calls, 1);
+      expect(fakeShare.lastSubject, 'Payment reminder');
+      expect(
+        fakeShare.lastText,
+        'Hi Priya, your current outstanding amount is ₹150.00. '
+        'Please settle the pending amount at your convenience. Thank you.',
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Share Due is inert when nothing is owed', (tester) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      await scrollDetailTo(
+        tester,
+        find.widgetWithText(SecondaryButton, 'Share Due'),
+      );
+      final share = tester.widget<SecondaryButton>(
+        find.widgetWithText(SecondaryButton, 'Share Due'),
+      );
+      expect(share.onPressed, isNull, reason: 'no dues, nothing to share');
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('staff without customerLedger permission never sees Opening '
+        'Due or Share Due', (tester) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.bills.add(
+        bill(id: 's1', receiptNumber: 'BF-000001', totalPaise: 15000),
+      );
+      await pumpAsCashier(tester);
+      await openDetail(tester, 'Priya');
+
+      final detailScrollable = find.descendant(
+        of: find.byType(CustomerDetailPage),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.text('Payment history'),
+        150,
+        scrollable: detailScrollable.first,
+      );
+      await tester.pump();
+
+      expect(
+        find.widgetWithText(SecondaryButton, 'Add Opening Due'),
+        findsNothing,
+      );
+      expect(find.widgetWithText(SecondaryButton, 'Share Due'), findsNothing);
+      expect(find.text('Opening Due'), findsNothing);
 
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
@@ -734,6 +1008,38 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.byType(DataTable), findsOneWidget);
       expect(find.text('Priya'), findsOneWidget);
+    });
+
+    testWidgets('wide table is wrapped in a horizontal scroll view', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1440, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeCustomers.storedCustomers.add(
+        customer(
+          'c-long',
+          'A Very Long Customer Name That Keeps Going And Going',
+          email: 'a-very-long-email-address-that-keeps-going@example.com',
+        ),
+      );
+      await pumpAuthenticated(tester);
+      await openCustomers(tester);
+
+      expect(find.byType(DataTable), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(DataTable),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is SingleChildScrollView &&
+                widget.scrollDirection == Axis.horizontal,
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
     });
   });
 }

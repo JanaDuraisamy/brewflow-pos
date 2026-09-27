@@ -45,6 +45,10 @@ class Users extends Table {
   /// Soft switch to block sign-in without deleting the record.
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 
+  /// Locally configured staff salary rate in paise per hour, set by the
+  /// owner. Null until a rate is configured. Device-local; not yet synced.
+  IntColumn get salaryPaisePerHour => integer().nullable()();
+
   /// UTC timestamp of record creation.
   DateTimeColumn get createdAt =>
       dateTime().clientDefault(() => DateTime.now().toUtc())();

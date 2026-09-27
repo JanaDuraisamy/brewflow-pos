@@ -39,13 +39,14 @@ final class ExpensesPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final expenses = ref.watch(expensesProvider);
     final filter = ref.watch(expensesFilterProvider);
+    final hasAny = (ref.watch(expensesCountProvider).value ?? 0) > 0;
     final phone = MediaQuery.sizeOf(context).width < 600;
 
     return Padding(
       padding: AppInsets.screen,
       child: phone
-          ? _buildPhoneLayout(context, ref, expenses, filter)
-          : _buildDesktopLayout(context, ref, expenses, filter),
+          ? _buildPhoneLayout(context, ref, expenses, filter, hasAny)
+          : _buildDesktopLayout(context, ref, expenses, filter, hasAny),
     );
   }
 
@@ -59,6 +60,7 @@ final class ExpensesPage extends ConsumerWidget {
     WidgetRef ref,
     AsyncValue<List<Expense>> expenses,
     ExpensesFilter filter,
+    bool hasAny,
   ) {
     final textTheme = Theme.of(context).textTheme;
     return SingleChildScrollView(
@@ -104,6 +106,10 @@ final class ExpensesPage extends ConsumerWidget {
               final countText = filter.isActive
                   ? '${items.length} ${items.length == 1 ? 'result' : 'results'}'
                   : '${items.length} ${items.length == 1 ? 'expense' : 'expenses'}';
+              // Default-Today is a real filter, but a store with no records at
+              // all should still invite the first expense instead of blaming
+              // the filters for an empty list.
+              final filteredEmpty = filter.isActive && hasAny;
               return [
                 Text(
                   countText,
@@ -119,14 +125,14 @@ final class ExpensesPage extends ConsumerWidget {
                     padding: const EdgeInsets.only(top: AppSpacing.xxxl),
                     child: EmptyState(
                       icon: Icons.payments_outlined,
-                      title: filter.isActive
+                      title: filteredEmpty
                           ? 'No expenses match your filters'
                           : 'No expenses yet',
-                      message: filter.isActive
+                      message: filteredEmpty
                           ? 'Try a different search or clear the filters.'
                           : 'Add your first expense to start tracking '
                                 'spending.',
-                      action: filter.isActive
+                      action: filteredEmpty
                           ? SecondaryButton(
                               label: 'Clear Filters',
                               icon: Icons.filter_alt_off_outlined,
@@ -158,6 +164,7 @@ final class ExpensesPage extends ConsumerWidget {
     WidgetRef ref,
     AsyncValue<List<Expense>> expenses,
     ExpensesFilter filter,
+    bool hasAny,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -206,6 +213,7 @@ final class ExpensesPage extends ConsumerWidget {
               final countText = filter.isActive
                   ? '${items.length} ${items.length == 1 ? 'result' : 'results'}'
                   : '${items.length} ${items.length == 1 ? 'expense' : 'expenses'}';
+              final filteredEmpty = filter.isActive && hasAny;
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -222,14 +230,14 @@ final class ExpensesPage extends ConsumerWidget {
                     child: items.isEmpty
                         ? EmptyState(
                             icon: Icons.payments_outlined,
-                            title: filter.isActive
+                            title: filteredEmpty
                                 ? 'No expenses match your filters'
                                 : 'No expenses yet',
-                            message: filter.isActive
+                            message: filteredEmpty
                                 ? 'Try a different search or clear the filters.'
                                 : 'Add your first expense to start tracking '
                                       'spending.',
-                            action: filter.isActive
+                            action: filteredEmpty
                                 ? SecondaryButton(
                                     label: 'Clear Filters',
                                     icon: Icons.filter_alt_off_outlined,
@@ -276,9 +284,11 @@ final class _HeaderActions extends StatelessWidget {
   }
 }
 
-/// Outstanding shop payable: the sum of active NOT_PAID expenses. Loading
-/// shows a placeholder and failures degrade to '—' (details stay logged);
-/// the list itself still renders normally.
+/// Outstanding shop payable: the sum of active NOT_PAID expenses minus any
+/// payments already recorded against them. Loading shows a placeholder and
+/// failures degrade to '—' (details stay logged); the list itself still
+/// renders normally. Tapping opens the per-payee detail where a payment is
+/// recorded, so the summary is the entry point rather than a dead-end number.
 final class _PayableSummary extends ConsumerWidget {
   const _PayableSummary();
 
@@ -290,6 +300,7 @@ final class _PayableSummary extends ConsumerWidget {
     final highlighted = (amount ?? 0) > 0;
     return AppCard(
       padding: AppInsets.card,
+      onTap: () => context.push(AppRoutes.shopPayables),
       child: Row(
         children: [
           Container(
@@ -338,6 +349,12 @@ final class _PayableSummary extends ConsumerWidget {
                   : context.appColors.textPrimary,
               fontWeight: FontWeight.w700,
             ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Icon(
+            Icons.chevron_right,
+            size: 20,
+            color: context.appColors.textSecondary,
           ),
         ],
       ),
@@ -396,41 +413,7 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
     );
     final statusChips = Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        AppFilterChip(
-          label: 'All',
-          selected: filter.status == ExpenseStatusFilter.all,
-          onSelected: (selected) {
-            if (selected) {
-              ref
-                  .read(expensesFilterProvider.notifier)
-                  .setStatus(ExpenseStatusFilter.all);
-            }
-          },
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        AppFilterChip(
-          label: 'Active',
-          selected: filter.status == ExpenseStatusFilter.active,
-          onSelected: (selected) => ref
-              .read(expensesFilterProvider.notifier)
-              .setStatus(
-                selected ? ExpenseStatusFilter.active : ExpenseStatusFilter.all,
-              ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        AppFilterChip(
-          label: 'Inactive',
-          selected: filter.status == ExpenseStatusFilter.inactive,
-          onSelected: (selected) => ref
-              .read(expensesFilterProvider.notifier)
-              .setStatus(
-                selected
-                    ? ExpenseStatusFilter.inactive
-                    : ExpenseStatusFilter.all,
-              ),
-        ),
-      ],
+      children: _expenseStatusFilterChips(ref, filter),
     );
     final compact = MediaQuery.sizeOf(context).width < 600;
     final dropdownRow = SingleChildScrollView(
@@ -473,28 +456,41 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
               title: 'Filter Expenses',
               onReset: notifier.clear,
               children: [
-                _filterSectionLabel(context, 'Status'),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  runSpacing: AppSpacing.sm,
-                  children: [for (final chip in statusChips.children) chip],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                _filterSectionLabel(context, 'Category'),
-                _CategoryDropdown(selected: filter.category),
-                const SizedBox(height: AppSpacing.md),
-                _filterSectionLabel(context, 'Payment'),
-                _PaymentDropdown(selected: filter.paymentMethod),
-                const SizedBox(height: AppSpacing.md),
-                _filterSectionLabel(context, 'Date'),
-                _DateDropdown(
-                  preset: filter.datePreset,
-                  onChanged: (preset) {
-                    if (preset == OrdersDatePreset.custom) {
-                      _pickCustomRange(preset);
-                      return;
-                    }
-                    ref.read(expensesFilterProvider.notifier).setPreset(preset);
+                Consumer(
+                  builder: (context, ref, child) {
+                    final live = ref.watch(expensesFilterProvider);
+                    final liveNotifier = ref.read(
+                      expensesFilterProvider.notifier,
+                    );
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _filterSectionLabel(context, 'Status'),
+                        Wrap(
+                          spacing: AppSpacing.sm,
+                          runSpacing: AppSpacing.sm,
+                          children: _expenseStatusFilterChips(ref, live),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        _filterSectionLabel(context, 'Category'),
+                        _CategoryDropdown(selected: live.category),
+                        const SizedBox(height: AppSpacing.md),
+                        _filterSectionLabel(context, 'Payment'),
+                        _PaymentDropdown(selected: live.paymentMethod),
+                        const SizedBox(height: AppSpacing.md),
+                        _filterSectionLabel(context, 'Date'),
+                        _DateDropdown(
+                          preset: live.datePreset,
+                          onChanged: (preset) {
+                            if (preset == OrdersDatePreset.custom) {
+                              _pickCustomRange(preset);
+                              return;
+                            }
+                            liveNotifier.setPreset(preset);
+                          },
+                        ),
+                      ],
+                    );
                   },
                 ),
               ],
@@ -1473,7 +1469,7 @@ final class _QuickPinSheetState extends ConsumerState<_QuickPinSheet> {
 
 /// Long-press context menu for an expense card.
 void _showExpenseActions(BuildContext context, WidgetRef ref, Expense expense) {
-  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? true;
+  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? false;
   showContextActionSheet(
     context,
     title: expense.name,
@@ -1564,4 +1560,42 @@ Widget _filterSectionLabel(BuildContext context, String label) {
       ),
     ),
   );
+}
+
+/// Status filter chips for expenses, rebuilt from the live filter so the
+/// phone filter sheet highlights selections while it stays open.
+List<Widget> _expenseStatusFilterChips(WidgetRef ref, ExpensesFilter filter) {
+  return [
+    AppFilterChip(
+      label: 'All',
+      selected: filter.status == ExpenseStatusFilter.all,
+      onSelected: (selected) {
+        if (selected) {
+          ref
+              .read(expensesFilterProvider.notifier)
+              .setStatus(ExpenseStatusFilter.all);
+        }
+      },
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'Active',
+      selected: filter.status == ExpenseStatusFilter.active,
+      onSelected: (selected) => ref
+          .read(expensesFilterProvider.notifier)
+          .setStatus(
+            selected ? ExpenseStatusFilter.active : ExpenseStatusFilter.all,
+          ),
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'Inactive',
+      selected: filter.status == ExpenseStatusFilter.inactive,
+      onSelected: (selected) => ref
+          .read(expensesFilterProvider.notifier)
+          .setStatus(
+            selected ? ExpenseStatusFilter.inactive : ExpenseStatusFilter.all,
+          ),
+    ),
+  ];
 }

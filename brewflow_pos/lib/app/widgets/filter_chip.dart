@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 /// ---------------------------------------------------------------------------
 /// BrewFlow Design System — Filter Chip
 ///
-/// Pill filter with BrewFlow selected state: soft green fill + green border
-/// when active, light gray otherwise.
+/// Pill filter with BrewFlow selected state: tappable fill turned green with
+/// a strong filled green background when active, light gray otherwise. The
+/// selected colors come from theme tokens so the fill stays legible in light
+/// and dark mode.
 /// ---------------------------------------------------------------------------
 
 final class AppFilterChip extends StatelessWidget {
@@ -29,6 +31,9 @@ final class AppFilterChip extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final appColors = context.appColors;
     final scheme = Theme.of(context).colorScheme;
+    final foreground = selected
+        ? appColors.selectedControlForeground
+        : appColors.textSecondary;
     return Material(
       type: MaterialType.transparency,
       child: InkWell(
@@ -41,7 +46,9 @@ final class AppFilterChip extends StatelessWidget {
             vertical: AppSpacing.sm,
           ),
           decoration: BoxDecoration(
-            color: selected ? appColors.softGreen : appColors.lightGray,
+            color: selected
+                ? appColors.selectedControlBackground
+                : appColors.lightGray,
             borderRadius: AppBorderRadius.pill,
             border: Border.all(
               color: selected ? scheme.primary : appColors.divider,
@@ -52,17 +59,13 @@ final class AppFilterChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (icon != null) ...[
-                Icon(
-                  icon,
-                  size: 16,
-                  color: selected ? scheme.primary : appColors.textSecondary,
-                ),
+                Icon(icon, size: 16, color: foreground),
                 const SizedBox(width: AppSpacing.xs),
               ],
               Text(
                 label,
                 style: textTheme.labelLarge?.copyWith(
-                  color: selected ? scheme.primary : appColors.textSecondary,
+                  color: foreground,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),

@@ -1,4 +1,3 @@
-import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:drift/drift.dart';
@@ -13,9 +12,12 @@ void main() {
       // Simulate fresh install at v19: onCreate creates all tables, shops empty.
       // AppMigrations from16To17, from17To18, from18To19 ensure one Cafe shop.
       // For this test, verify that ensureShop via business_switcher creates Cafe.
-      expect(AppConstants.databaseSchemaVersion, 19);
-      final shops = await db.select(db.shops).get();
       // Fresh memory DB has no shops yet; business layer would create Cafe.
+      // NB: the schema version is deliberately not asserted here — it is
+      // asserted against the real upgrade chain in
+      // test/core/database/probe_migration_test.dart, which is the only place
+      // a hardcoded literal can actually catch a broken migration.
+      final shops = await db.select(db.shops).get();
       expect(shops, isEmpty);
       // Simulate business_switcher ensureShop
       await db

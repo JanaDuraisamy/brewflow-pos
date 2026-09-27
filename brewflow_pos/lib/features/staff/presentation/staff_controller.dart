@@ -41,6 +41,13 @@ final cloudShopResolverProvider = Provider<CloudShopResolver>((ref) {
   }
 });
 
+/// The staff roster for the owner-facing Staff Attendance selector. Loads
+/// through the same repository as the staff page, so a hire shows up here
+/// too. STAFF rows only; the owner is never part of the attendance roster.
+final staffRosterProvider = FutureProvider<List<UserProfile>>((ref) {
+  return ref.watch(staffRepositoryProvider).staffMembers();
+});
+
 /// Resolved profile for the signed-in identity; null while signed out or
 /// unprovisioned. Errors carry [ProfileNotProvisionedFailure] /
 /// [OwnerAlreadyClaimedFailure].
@@ -103,11 +110,36 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
               // Re-read profile with the updated shop_id.
               return await repository.profileForAuthUser(authUser.id);
             }
+
+            // Cloud-authoritative grants: when the owner pushed a confirmed
+            // grant set (non-empty) from another device, the local copy is
+            // stale — mirror it so navigation reflects the owner's actual
+            // grants. An empty cloud set means "never pushed yet", so the
+            // local set is kept (pre-0020 installs keep working).
+            if (existing.role == UserRole.staff &&
+                cloudProfile.permissions.isNotEmpty &&
+                !_sameGrants(existing.permissions, cloudProfile.permissions)) {
+              AppLog.info(
+                'Cloud permission grants changed: userId=${existing.id} — '
+                'mirroring ${cloudProfile.permissions.length} grants',
+                tag: tag,
+              );
+              await repository.setPermissions(
+                existing.id,
+                cloudProfile.permissions,
+              );
+              return await repository.profileForAuthUser(authUser.id);
+            }
           }
         } catch (_) {
           // Cloud unavailable — proceed with local profile. Migration
           // will happen on the next successful connectivity check.
         }
+
+        // Step 1b: the OWNER mirrors the cloud roster so staff created from
+        // another device appear on this one. Best-effort — a roster hiccup
+        // must never block authorization.
+        await _backfillStaffRoster(resolver, repository, existing);
 
         return existing;
       }
@@ -120,11 +152,20 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
           cloudProfile.shopId,
           name: cloudProfile.shopName,
         );
-        // Create local user profile linked to the cloud shop.
-        return await repository.claimOwnershipForCloud(
+        // Create local user profile linked to the cloud shop. The cloud role
+        // is authoritative — a STAFF account must NEVER be locally promoted
+        // to OWNER. Pass the cloud role AND the cloud-confirmed grant set so
+        // the local profile mirrors what the owner actually granted.
+        final cloudRole =
+            UserRole.fromDbValue(cloudProfile.role) ?? UserRole.staff;
+        final claimed = await repository.claimOwnershipForCloud(
           authUser,
           shopId: shop.id,
+          role: cloudRole,
+          permissions: cloudProfile.permissions,
         );
+        await _backfillStaffRoster(resolver, repository, claimed);
+        return claimed;
       }
 
       // Step 3: First device ever — claim ownership locally.
@@ -149,6 +190,103 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
 
   /// Refreshes after owner-side staff/profile mutations.
   void reload() => ref.invalidateSelf();
+
+  /// Mirrors the cloud `user_profiles` roster for [profile]'s shop into the
+  /// local database. Only the OWNER performs the pull (the roster is what the
+  /// owner's staff management page reads); staff rows are matched by auth user
+  /// id and never re-type an existing OWNER. Cloud grant sets are applied only
+  /// when the cloud actually carries them, so pre-push installs keep their
+  /// local grants. All failures are swallowed: the roster can always be
+  /// re-pulled on the next login.
+  Future<void> _backfillStaffRoster(
+    CloudShopResolver resolver,
+    StaffRepository repository,
+    UserProfile profile,
+  ) async {
+    if (!profile.isOwner || profile.shopId == null) return;
+    try {
+      final roster = await resolver.loadShopStaff(profile.shopId!);
+      for (final member in roster) {
+        // The owner's own row (and any OTHER cloud OWNER row) is never
+        // re-typed locally as STAFF by a roster pull.
+        if (member.authUserId == profile.authUserId || member.role == 'OWNER') {
+          continue;
+        }
+        await repository.upsertStaffProfile(
+          authUserId: member.authUserId,
+          email: member.email,
+          shopId: profile.shopId!,
+          isActive: member.isActive,
+          permissions: member.permissions,
+          displayName: member.displayName,
+        );
+      }
+    } catch (error, stackTrace) {
+      AppLog.warning(
+        'Cloud roster sync skipped for shop=${profile.shopId}',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+}
+
+/// True when two grant sets contain exactly the same permissions.
+bool _sameGrants(Set<Permission> a, Set<Permission> b) =>
+    a.length == b.length && a.containsAll(b);
+
+/// Owner-only removal of a staff member, cloud-first.
+///
+/// Lives in a controller rather than the page so the owner boundary is enforced
+/// against a real [Ref] (a `WidgetRef` cannot be used by [requireOwner]) — the
+/// Staff page only hides the action, which is never the only guard.
+final staffDeletionProvider = NotifierProvider<StaffDeletionController, void>(
+  StaffDeletionController.new,
+);
+
+final class StaffDeletionController extends Notifier<void> {
+  static const String tag = 'StaffDelete';
+
+  @override
+  void build() {}
+
+  /// Deletes [member]'s cloud master plus its cross-device tombstone, then
+  /// archives the local mirror. Throws [PermissionDeniedFailure] for a
+  /// non-owner session and [StaffDeleteCloudFailure] when the cloud refuses, in
+  /// which case the local copy is deliberately left untouched so both mirrors
+  /// keep agreeing.
+  ///
+  /// No attendance, salary or advance row is touched on either side.
+  Future<void> delete(UserProfile member) async {
+    requireOwner(ref);
+    final authUserId = member.authUserId;
+    final shopId = member.shopId;
+    if (authUserId == null || shopId == null) {
+      throw const StaffDeleteCloudFailure(
+        'This staff member has no cloud identity yet, so they cannot be '
+        'removed yet.',
+      );
+    }
+    final deleted = await ref
+        .read(cloudShopResolverProvider)
+        .deleteStaffProfile(authUserId: authUserId, shopId: shopId);
+    if (!deleted) {
+      AppLog.warning(
+        'Cloud staff delete failed; local mirror left untouched '
+        '(user=$authUserId)',
+        tag: tag,
+      );
+      throw const StaffDeleteCloudFailure();
+    }
+    await ref.read(staffRepositoryProvider).archiveStaffProfile(member.id);
+    ref.invalidate(staffRosterProvider);
+    AppLog.info(
+      'Staff member removed: user=$authUserId shop=$shopId '
+      '(history preserved)',
+      tag: tag,
+    );
+  }
 }
 
 /// Centralized authorization for the whole app: widgets, controllers and

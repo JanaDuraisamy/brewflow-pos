@@ -26,6 +26,24 @@ final class FakeShareService implements ShareService {
     if (failure != null) throw failure;
     calls.add((subject: subject, text: text));
   }
+
+  @override
+  Future<void> shareFile({
+    required String subject,
+    required String filePath,
+  }) async {
+    final failure = error;
+    if (failure != null) throw failure;
+  }
+
+  @override
+  Future<void> shareFiles({
+    required String subject,
+    required List<String> filePaths,
+  }) async {
+    final failure = error;
+    if (failure != null) throw failure;
+  }
 }
 
 void main() {
@@ -99,7 +117,7 @@ void main() {
 
       expect(share.calls.length, 1);
       expect(share.calls.single.subject, 'Receipt BF-000001');
-      expect(share.calls.single.text, contains('BrewFlow POS'));
+      expect(share.calls.single.text, contains('JiggarTea Bill'));
       expect(share.calls.single.text, contains('Filter Coffee'));
       expect(share.calls.single.text, contains('Total: ₹120.00 (Paid)'));
 

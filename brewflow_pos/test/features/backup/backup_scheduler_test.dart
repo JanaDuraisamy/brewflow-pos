@@ -9,6 +9,7 @@ import '../../helpers/fake_backup_repository.dart';
 /// In-memory [BackupFileStore] so scheduler tests run without real disk I/O.
 final class _MemoryBackupFileStore implements BackupFileStore {
   final Map<String, String> files = {};
+  final Map<String, List<int>> binaryFiles = {};
 
   @override
   Future<List<BackupFileInfo>> listFiles() async {
@@ -26,12 +27,26 @@ final class _MemoryBackupFileStore implements BackupFileStore {
   }
 
   @override
+  Future<List<BackupFileInfo>> listPackages() async => const [];
+
+  @override
   Future<BackupFileInfo> write(String fileName, String contents) async {
     files[fileName] = contents;
     return BackupFileInfo(
       name: fileName,
       path: fileName,
       sizeBytes: contents.length,
+      modifiedAt: DateTime.utc(2026, 8, 31),
+    );
+  }
+
+  @override
+  Future<BackupFileInfo> writeBytes(String fileName, List<int> bytes) async {
+    binaryFiles[fileName] = bytes;
+    return BackupFileInfo(
+      name: fileName,
+      path: fileName,
+      sizeBytes: bytes.length,
       modifiedAt: DateTime.utc(2026, 8, 31),
     );
   }
@@ -44,8 +59,16 @@ final class _MemoryBackupFileStore implements BackupFileStore {
   }
 
   @override
+  Future<List<int>> readBytes(String fileName) async {
+    final bytes = binaryFiles[fileName];
+    if (bytes == null) throw const UnexpectedBackupFailure();
+    return bytes;
+  }
+
+  @override
   Future<void> deleteFile(String fileName) async {
     files.remove(fileName);
+    binaryFiles.remove(fileName);
   }
 }
 
@@ -208,10 +231,21 @@ final class _FailingStore implements BackupFileStore {
   Future<List<BackupFileInfo>> listFiles() async => const [];
 
   @override
+  Future<List<BackupFileInfo>> listPackages() async => const [];
+
+  @override
   Future<String> readFile(String fileName) async =>
       throw const UnexpectedBackupFailure();
 
   @override
+  Future<List<int>> readBytes(String fileName) async =>
+      throw const UnexpectedBackupFailure();
+
+  @override
   Future<BackupFileInfo> write(String fileName, String contents) async =>
+      throw const UnexpectedBackupFailure();
+
+  @override
+  Future<BackupFileInfo> writeBytes(String fileName, List<int> bytes) async =>
       throw const UnexpectedBackupFailure();
 }

@@ -143,6 +143,17 @@ Future<void> _selectType(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
 }
 
+/// Taps 'Add tier', scrolling it into view first — the dialog body is a
+/// scrollable and the button sits below the fold in the test viewport once
+/// the product selector is present.
+Future<void> _addTierRow(WidgetTester tester) async {
+  final button = find.widgetWithText(TextButton, 'Add tier');
+  await tester.ensureVisible(button);
+  await tester.pumpAndSettle();
+  await tester.tap(button);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     _inventory = _RecordingInventoryRepository([
@@ -237,6 +248,198 @@ void main() {
       final offer = offers.single;
       final cfg = jsonDecode(offer.configJson) as Map<String, dynamic>;
       expect((cfg['productIds'] as List).toSet(), {'p1', 'p2'});
+    });
+  });
+
+  group('Offer dialog quantity tiers', () {
+    testWidgets('stores the quantity/price ladder for the selected product', (
+      tester,
+    ) async {
+      final container = await _openNewOfferDialog(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name *'),
+        'Kulfi Tiers',
+      );
+      await _selectType(tester, 'Quantity Tier');
+
+      // A starter row is seeded so the owner edits a ladder rather than a
+      // blank list.
+      expect(find.widgetWithText(TextFormField, 'Quantity'), findsOneWidget);
+
+      await tester.tap(find.text('Latte'));
+      await tester.pump();
+      await _addTierRow(tester);
+      await _addTierRow(tester);
+      expect(find.widgetWithText(TextFormField, 'Quantity'), findsNWidgets(3));
+
+      // The seeded row is qty 1; fill in the prices and add the two higher
+      // tiers.
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
+        '4500',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Quantity').at(1),
+        '2',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(1),
+        '8500',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Quantity').at(2),
+        '3',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(2),
+        '12000',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      final offers = await container.read(offersProvider.future);
+      final offer = offers.single;
+      expect(offer.type, OfferType.quantityTier);
+      final cfg = jsonDecode(offer.configJson) as Map<String, dynamic>;
+      expect(cfg['productIds'], ['p1']);
+      // Saved ascending by quantity regardless of the order typed.
+      expect(cfg['tiers'], [
+        {'quantity': 1, 'pricePaise': 4500},
+        {'quantity': 2, 'pricePaise': 8500},
+        {'quantity': 3, 'pricePaise': 12000},
+      ]);
+    });
+
+    testWidgets('rejects duplicate tier quantities and keeps the dialog open', (
+      tester,
+    ) async {
+      final container = await _openNewOfferDialog(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name *'),
+        'Bad Tiers',
+      );
+      await _selectType(tester, 'Quantity Tier');
+      await tester.tap(find.text('Latte'));
+      await tester.pump();
+      await _addTierRow(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
+        '4500',
+      );
+      // Same quantity as the seeded row, which must be rejected.
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Quantity').at(1),
+        '1',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(1),
+        '8500',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Each tier quantity must be unique.'), findsOneWidget);
+      expect(
+        await container.read(offersProvider.future),
+        isEmpty,
+        reason: 'an invalid ladder must not create an offer',
+      );
+    });
+
+    testWidgets('rejects a zero tier quantity', (tester) async {
+      final container = await _openNewOfferDialog(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name *'),
+        'Bad Qty',
+      );
+      await _selectType(tester, 'Quantity Tier');
+      await tester.tap(find.text('Latte'));
+      await tester.pump();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
+        '4500',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Quantity').at(0),
+        '0',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tier quantity must be 1 or more.'), findsOneWidget);
+      expect(await container.read(offersProvider.future), isEmpty);
+    });
+
+    testWidgets('requires a product selection for the tier offer', (
+      tester,
+    ) async {
+      final container = await _openNewOfferDialog(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name *'),
+        'No Product',
+      );
+      await _selectType(tester, 'Quantity Tier');
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
+        '4500',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Select a product.'), findsOneWidget);
+      expect(await container.read(offersProvider.future), isEmpty);
+    });
+
+    testWidgets('reloading an existing tier offer restores the ladder', (
+      tester,
+    ) async {
+      await _offers.createOffer(
+        shopId: 'shop-1',
+        name: 'Kulfi Tiers',
+        type: OfferType.quantityTier,
+        configJson: jsonEncode(
+          const QuantityTierOfferConfig(
+            productIds: ['p1'],
+            tiers: [
+              QuantityTier(quantity: 1, pricePaise: 4500),
+              QuantityTier(quantity: 2, pricePaise: 8500),
+              QuantityTier(quantity: 3, pricePaise: 12000),
+            ],
+          ).toJson(),
+        ),
+      );
+
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kulfi Tiers'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextFormField, 'Quantity'), findsNWidgets(3));
+      expect(
+        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.widgetWithText(TextFormField, 'Quantity').at(1),
+            )
+            .initialValue,
+        '2',
+      );
     });
   });
 }

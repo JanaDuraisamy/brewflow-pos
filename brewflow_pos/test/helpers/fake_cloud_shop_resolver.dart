@@ -12,6 +12,9 @@ final class FakeCloudShopResolver extends CloudShopResolver {
     this.pushIdentityResult = true,
     this.pushIdentityFailures = 0,
     this.fetchThrows = false,
+    this.roster = const [],
+    this.rosterThrows = false,
+    this.deleteStaffResult = true,
   }) : super();
 
   /// The profile [fetchProfile] returns (null = no cloud profile).
@@ -29,6 +32,27 @@ final class FakeCloudShopResolver extends CloudShopResolver {
   /// When true, [fetchProfile] throws (cloud outage), exercising safe fallback.
   final bool fetchThrows;
 
+  /// The shop staff roster [loadShopStaff] returns. Mutable so a test can swap
+  /// the roster between authorization rebuilds.
+  List<CloudStaffMember> roster;
+
+  /// When true, [loadShopStaff] throws (roster outage), exercising the
+  /// "a roster hiccup never blocks authorization" fallback.
+  bool rosterThrows;
+
+  /// Result of [deleteStaffProfile]. False simulates the cloud refusing the
+  /// delete, which must leave the local mirror untouched.
+  final bool deleteStaffResult;
+
+  /// Every auth user id handed to [deleteStaffProfile] (in call order).
+  final List<String> deletedAuthUserIds = [];
+
+  /// Every shop id handed to [deleteStaffProfile] (in call order).
+  final List<String> deletedShopIds = [];
+
+  /// Every shop id handed to [loadShopStaff] (in call order).
+  final List<String> rosterQueries = [];
+
   /// Every shop id handed to [pushIdentity] (in call order).
   final List<String> pushedShopIds = [];
 
@@ -43,6 +67,23 @@ final class FakeCloudShopResolver extends CloudShopResolver {
 
   @override
   Future<bool> shopExists(String shopId) async => shopExistsResult;
+
+  @override
+  Future<List<CloudStaffMember>> loadShopStaff(String shopId) async {
+    rosterQueries.add(shopId);
+    if (rosterThrows) throw Exception('roster unavailable');
+    return roster;
+  }
+
+  @override
+  Future<bool> deleteStaffProfile({
+    required String authUserId,
+    required String shopId,
+  }) async {
+    deletedAuthUserIds.add(authUserId);
+    deletedShopIds.add(shopId);
+    return deleteStaffResult;
+  }
 
   @override
   Future<bool> pushIdentity({

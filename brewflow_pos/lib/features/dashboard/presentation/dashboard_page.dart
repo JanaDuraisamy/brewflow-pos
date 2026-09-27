@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/app/widgets/widgets.dart';
+import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/router/app_routes.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
@@ -15,6 +16,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_status_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -928,7 +930,7 @@ final class _SectionTitle extends StatelessWidget {
   }
 }
 
-final class _ActionGrid extends StatelessWidget {
+final class _ActionGrid extends ConsumerWidget {
   const _ActionGrid();
 
   static const List<(IconData, String, String, String)> _actions = [
@@ -952,8 +954,17 @@ final class _ActionGrid extends StatelessWidget {
     ),
   ];
 
+  static const (IconData, String, String, String) _closingAction = (
+    Icons.nights_stay_outlined,
+    'Daily Closing',
+    'Record end-of-day cash tallies',
+    AppRoutes.closing,
+  );
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canClose = ref.watch(canProvider(Permission.expenses));
+    final actions = [..._actions, if (canClose) _closingAction];
     return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -964,7 +975,7 @@ final class _ActionGrid extends StatelessWidget {
         mainAxisSpacing: AppSpacing.md,
       ),
       children: [
-        for (final (icon, title, subtitle, route) in _actions)
+        for (final (icon, title, subtitle, route) in actions)
           _QuickActionCard(
             icon: icon,
             title: title,
@@ -993,6 +1004,10 @@ final class _QuickActionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return AppCard(
+      // All quick actions go through go(): it resolves from every context
+      // in this router setup (widget-tap push() from a shell branch neither
+      // navigates nor settles). The owner pages own their back navigation
+      // (explicit BackButton + PopScope), mirroring StaffPage.
       onTap: () => context.go(route),
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,

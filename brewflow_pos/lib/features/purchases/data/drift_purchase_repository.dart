@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/purchase_items_dao.dart';
@@ -99,6 +101,11 @@ final class DriftPurchaseRepository implements PurchaseRepository {
           lines: rpcLines,
         );
       } catch (e) {
+        if (e is TimeoutException) {
+          throw const UnexpectedPurchasesFailure(
+            'The server is taking too long to respond. Please try again.',
+          );
+        }
         final msg = e.toString();
         if (msg.contains('EMPTY_PURCHASE')) throw const EmptyPurchaseFailure();
         if (msg.contains('INVALID_QUANTITY'))
@@ -145,17 +152,36 @@ final class DriftPurchaseRepository implements PurchaseRepository {
       );
 
       await _database.transaction(() async {
-        // Increase stock locally to match server
+        // Increase stock locally to match server. The server also backfills
+        // cost_price_paise on receive (migration 0017) — mirror that here so
+        // profit reports reflect the newest cost immediately instead of
+        // waiting for the next product pull.
         for (final line in lines) {
           if (line.variantId != null) {
             await _database.customStatement(
-              'UPDATE product_variants SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
-              [line.quantity, createdAt.toIso8601String(), line.variantId],
+              'UPDATE product_variants SET stock_quantity = stock_quantity + ?, '
+              'cost_price_paise = CASE WHEN ? > 0 THEN ? ELSE cost_price_paise END, '
+              'updated_at = ? WHERE id = ?',
+              [
+                line.quantity,
+                line.unitCostPaise,
+                line.unitCostPaise,
+                createdAt.toIso8601String(),
+                line.variantId,
+              ],
             );
           } else {
             await _database.customStatement(
-              'UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
-              [line.quantity, createdAt.toIso8601String(), line.productId],
+              'UPDATE products SET stock_quantity = stock_quantity + ?, '
+              'cost_price_paise = CASE WHEN ? > 0 THEN ? ELSE cost_price_paise END, '
+              'updated_at = ? WHERE id = ?',
+              [
+                line.quantity,
+                line.unitCostPaise,
+                line.unitCostPaise,
+                createdAt.toIso8601String(),
+                line.productId,
+              ],
             );
           }
         }
@@ -539,6 +565,43 @@ final class DriftPurchaseRepository implements PurchaseRepository {
   @override
   Future<void> voidPurchase(String id) async {
     try {
+      // Cloud-authoritative path when gateway wired. Purchases are created
+      // server-side (receive_purchase_atomic); voiding must commit on the
+      // server first so other devices never re-import a voided purchase. After
+      // it commits we mirror the deletion locally.
+      if (_cloud != null) {
+        if (_connectivity != null) {
+          try {
+            await OnlineGuard(_connectivity!).requireOnline();
+          } on OfflineException catch (e) {
+            throw UnexpectedPurchasesFailure(e.message);
+          }
+        }
+        try {
+          await _cloud!.voidPurchaseAtomic(purchaseId: id);
+        } on TimeoutException {
+          throw const UnexpectedPurchasesFailure(
+            'The server is taking too long to respond. Please try again.',
+          );
+        } catch (e) {
+          final msg = e.toString();
+          if (msg.contains('PURCHASE_NOT_FOUND')) {
+            throw const UnexpectedPurchasesFailure('Purchase not found.');
+          }
+          if (msg.contains('FORBIDDEN')) {
+            throw const UnexpectedPurchasesFailure(
+              'Access denied for this shop.',
+            );
+          }
+          if (msg.contains('SocketException') ||
+              msg.contains('Failed host lookup')) {
+            throw const UnexpectedPurchasesFailure(
+              'Internet connection required. Please check your connection and try again.',
+            );
+          }
+          rethrow;
+        }
+      }
       await _database.transaction(() async {
         final purchase = await _purchases.byId(id);
         if (purchase == null) {

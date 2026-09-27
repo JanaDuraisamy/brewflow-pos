@@ -457,108 +457,108 @@ final class _VariantReceiveSheet extends ConsumerWidget {
     final textTheme = Theme.of(context).textTheme;
     final lines = ref.watch(purchaseFormProvider).lines;
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              AppInsets.screen.left,
-              0,
-              AppInsets.screen.right,
-              AppSpacing.sm,
-            ),
-            child: Text(
-              'Receive ${product.name}',
-              style: textTheme.titleMedium?.copyWith(
-                color: context.appColors.charcoal,
-                fontWeight: FontWeight.w700,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppInsets.screen.left,
+                0,
+                AppInsets.screen.right,
+                AppSpacing.sm,
               ),
-            ),
-          ),
-          for (var i = 0; i < variants.length; i++) ...[
-            if (i > 0) const Divider(height: 1),
-            ListTile(
-              title: Text(
-                variants[i].name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodyMedium?.copyWith(
+              child: Text(
+                'Receive ${product.name}',
+                style: textTheme.titleMedium?.copyWith(
                   color: context.appColors.charcoal,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              subtitle: Text(
-                [
-                  if (variants[i].sku != null) 'SKU: ${variants[i].sku}',
-                  'Stock: ${variants[i].stockQuantity}',
-                  'Cost: ${Money.formatPaise(variants[i].costPricePaise ?? product.costPricePaise ?? 0)}',
-                ].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: context.appColors.textSecondary,
-                ),
-              ),
-              trailing: lines.any((line) => line.keyId == variants[i].id)
-                  ? const Icon(
-                      Icons.check_circle,
-                      size: 20,
-                      color: AppColors.primary,
-                      semanticLabel: 'Already in cart',
-                    )
-                  : FilledButton(
-                      key: Key('add-${variants[i].id}'),
-                      onPressed: submitting
-                          ? null
-                          : () => ref
-                                .read(purchaseFormProvider.notifier)
-                                .addLine(
-                                  product: product,
-                                  variant: variants[i],
-                                  quantity: 1,
-                                  unitCostPaise:
-                                      variants[i].costPricePaise ??
-                                      product.costPricePaise ??
-                                      0,
-                                ),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(0, 36),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.lg,
-                        ),
-                      ),
-                      child: const Text('Add'),
-                    ),
-              onTap: null,
             ),
-          ],
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              AppInsets.screen.left,
-              AppSpacing.sm,
-              AppInsets.screen.right,
-              AppSpacing.sm,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Done'),
+            for (var i = 0; i < variants.length; i++) ...[
+              if (i > 0) const Divider(height: 1),
+              ListTile(
+                title: Text(
+                  variants[i].name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
+                subtitle: Text(
+                  [
+                    if (variants[i].sku != null) 'SKU: ${variants[i].sku}',
+                    'Stock: ${variants[i].stockQuantity}',
+                    'Cost: ${Money.formatPaise(variants[i].costPricePaise ?? product.costPricePaise ?? 0)}',
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+                trailing: lines.any((line) => line.keyId == variants[i].id)
+                    ? const Icon(
+                        Icons.check_circle,
+                        size: 20,
+                        color: AppColors.primary,
+                        semanticLabel: 'Already in cart',
+                      )
+                    : FilledButton(
+                        key: Key('add-${variants[i].id}'),
+                        onPressed: submitting
+                            ? null
+                            : () => ref
+                                  .read(purchaseFormProvider.notifier)
+                                  .addLine(
+                                    product: product,
+                                    variant: variants[i],
+                                    quantity: 1,
+                                    unitCostPaise:
+                                        variants[i].costPricePaise ??
+                                        product.costPricePaise ??
+                                        0,
+                                  ),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 36),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.lg,
+                          ),
+                        ),
+                        child: const Text('Add'),
+                      ),
+                onTap: null,
+              ),
+            ],
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppInsets.screen.left,
+                AppSpacing.sm,
+                AppInsets.screen.right,
+                AppSpacing.sm,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Done'),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-/// The receiving cart: editable lines with live totals, notes and the
-/// Receive Purchase action.
 final class _CartCard extends ConsumerWidget {
   const _CartCard({
     required this.formKey,

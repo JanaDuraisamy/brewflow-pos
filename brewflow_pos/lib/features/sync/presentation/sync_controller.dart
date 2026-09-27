@@ -487,23 +487,34 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
       // restart or connectivity restore can never create a duplicate identity.
       // A failed push is observed (logged) and retried via the connectivity
       // watcher below and on the next app start.
-      identityOk = await _pushCloudIdentity(
-        resolver,
-        shopId: shopId,
-        authUser: authUser,
-      );
-      if (!identityOk) {
-        AppLog.warning('Cloud identity push pending retry', tag: tag);
-      }
+      //
+      // Only OWNER profiles bootstrap cloud identity. Staff profiles are
+      // created by the owner via the create-staff RPC; a staff call to
+      // bootstrap_owner_membership would be rejected server-side, so we skip
+      // it to avoid unnecessary FORBIDDEN errors in the logs.
+      if (profile.isOwner) {
+        identityOk = await _pushCloudIdentity(
+          resolver,
+          shopId: shopId,
+          authUser: authUser,
+        );
+        if (!identityOk) {
+          AppLog.warning('Cloud identity push pending retry', tag: tag);
+        }
 
-      // F3b: if this device previously created a second business, make sure
-      // its cloud OWNER membership exists too — every cloud-authoritative
-      // Food Truck write (billing, purchases) is gated on is_shop_member().
-      await _pushSecondaryShopIdentity(
-        resolver,
-        authUser: authUser,
-        primaryShopId: shopId,
-      );
+        // F3b: if this device previously created a second business, make sure
+        // its cloud OWNER membership exists too — every cloud-authoritative
+        // Food Truck write (billing, purchases) is gated on is_shop_member().
+        await _pushSecondaryShopIdentity(
+          resolver,
+          authUser: authUser,
+          primaryShopId: shopId,
+        );
+      } else {
+        // Staff: cloud identity is managed by the owner. Mark as ok so
+        // the session can proceed; membership checks happen per-RPC.
+        identityOk = true;
+      }
 
       // BFDIAG (temporary): live authorization snapshot against the EXACT
       // gate the cloud writes enforce — pins the user, the shop ids in use,
@@ -604,9 +615,13 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
     required auth.AuthUser authUser,
   }) async {
     try {
+      // Resolve the real shop name from the local shops table instead of
+      // hardcoding 'My Shop' which would overwrite an already-renamed shop.
+      final shopRepo = ref.read(staffRepositoryProvider);
+      final shopRow = await shopRepo.ensureShopWithId(shopId);
       final ok = await resolver.pushIdentity(
         shopId: shopId,
-        shopName: 'My Shop',
+        shopName: shopRow.name,
         authUserId: authUser.id,
         email: authUser.email,
       );

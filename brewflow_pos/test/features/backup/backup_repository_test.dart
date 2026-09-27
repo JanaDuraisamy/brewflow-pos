@@ -124,6 +124,7 @@ void main() {
             paymentStatus: 'PAID',
             voided: false,
             voidedAt: null,
+            isOpeningBalance: false,
             createdAt: at,
             updatedAt: at,
           ).toCompanion(false),

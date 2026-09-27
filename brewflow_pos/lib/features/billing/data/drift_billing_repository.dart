@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/sale_items_dao.dart';
@@ -97,7 +99,25 @@ final class DriftBillingRepository implements BillingRepository {
       }
     }
     try {
-      final resolvedShopId = await resolveWritableShopId(_database, shopId);
+      // The cart carries product/variant ids but no shop scope (the domain
+      // Product model drops shopId). Resolving the write shop purely from the
+      // profile can therefore send a different shop_id than the one owning
+      // the shelf products, and `create_sale_atomic` correctly rejects the
+      // lines with UNAVAILABLE_PRODUCT. Derive the shop from the actual stock
+      // entities instead: every line must belong to one shop, and that shop
+      // becomes the RPC scope. An explicit [shopId] still wins (tests,
+      // callers with context); mixed-shop carts are rejected without
+      // weakening product validation.
+      final entityShopId = await _shopIdForLines(lines);
+      final resolvedShopId = await resolveWritableShopId(
+        _database,
+        shopId ?? entityShopId,
+      );
+      if (entityShopId != null && resolvedShopId != entityShopId) {
+        throw const UnexpectedBillingFailure(
+          'Cart products belong to a different shop.',
+        );
+      }
 
       // Cloud-authoritative path when gateway is wired.
       if (_cloud != null) {
@@ -296,6 +316,11 @@ final class DriftBillingRepository implements BillingRepository {
         lines: rpcLines,
       );
     } catch (e) {
+      if (e is TimeoutException) {
+        throw const UnexpectedBillingFailure(
+          'The server is taking too long to respond. Please try again.',
+        );
+      }
       final msg = e.toString();
       if (msg.contains('INSUFFICIENT_STOCK')) {
         final name = msg.split(':').length > 1
@@ -360,38 +385,74 @@ final class DriftBillingRepository implements BillingRepository {
 
     try {
       await _database.transaction(() async {
-        // Update stock locally to match server deduction (tracked only)
+        // Update stock locally to match server deduction (tracked only).
+        // Each line is best-effort: a missing local row (product not yet
+        // synced) or a stock-unit mismatch never blocks the sale or the
+        // remaining lines. The server RPC is authoritative for stock; local
+        // reconciliation happens via sync pull.
         for (final line in lines) {
-          final isTracked = await _isTracked(line.productId);
-          if (!isTracked) continue;
-          if (line.variantId != null) {
-            await _database.customStatement(
-              'UPDATE product_variants SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
-              [line.quantity, createdAt.toIso8601String(), line.variantId],
+          try {
+            final isTracked = await _isTracked(line.productId);
+            if (!isTracked) continue;
+            int updated = 0;
+            if (line.variantId != null) {
+              updated = await _database.customUpdate(
+                'UPDATE product_variants SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+                variables: [
+                  Variable.withInt(line.quantity),
+                  Variable.withString(createdAt.toIso8601String()),
+                  Variable.withString(line.variantId!),
+                ],
+                updateKind: UpdateKind.update,
+              );
+            } else {
+              updated = await _database.customUpdate(
+                'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+                variables: [
+                  Variable.withInt(line.quantity),
+                  Variable.withString(createdAt.toIso8601String()),
+                  Variable.withString(line.productId),
+                ],
+                updateKind: UpdateKind.update,
+              );
+            }
+            if (updated == 0) {
+              // Row not found locally — skip movement; sync pull will
+              // bring the server-decremented stock on the next cycle.
+              AppLog.info(
+                'Local stock mirror skipped (row not found locally): ${line.productId}',
+                tag: tag,
+              );
+              continue;
+            }
+            // Create local movement entry mirroring server.
+            final stockBefore = await _localStockBefore(line);
+            movementsToInsert.add(
+              db.StockMovementsCompanion.insert(
+                shopId: Value(shopId),
+                productId: line.productId,
+                variantId: Value(line.variantId),
+                movementType: StockMovementType.sale.dbValue,
+                quantity: -line.quantity,
+                stockBefore: stockBefore,
+                stockAfter: stockBefore - line.quantity,
+                referenceType: Value(StockMovementType.sale.dbValue),
+                referenceId: Value(saleId),
+                createdAt: Value(createdAt),
+                updatedAt: Value(createdAt),
+              ),
             );
-          } else {
-            await _database.customStatement(
-              'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
-              [line.quantity, createdAt.toIso8601String(), line.productId],
+          } catch (error, stackTrace) {
+            // Never let a single line's local stock failure abort the
+            // entire mirror. The server RPC already committed the stock
+            // deduction; the next sync pull reconciles any gap.
+            AppLog.warning(
+              'Local stock mirror failed for line ${line.productId}',
+              tag: tag,
+              error: error,
+              stackTrace: stackTrace,
             );
           }
-          // Create local movement entry mirroring server (best-effort stockBefore/After)
-          final stockBefore = await _localStockBefore(line);
-          movementsToInsert.add(
-            db.StockMovementsCompanion.insert(
-              shopId: Value(shopId),
-              productId: line.productId,
-              variantId: Value(line.variantId),
-              movementType: StockMovementType.sale.dbValue,
-              quantity: -line.quantity,
-              stockBefore: stockBefore,
-              stockAfter: stockBefore - line.quantity,
-              referenceType: Value(StockMovementType.sale.dbValue),
-              referenceId: Value(saleId),
-              createdAt: Value(createdAt),
-              updatedAt: Value(createdAt),
-            ),
-          );
         }
 
         await _database
@@ -748,6 +809,52 @@ final class DriftBillingRepository implements BillingRepository {
     return CompletedSale(sale: sale, items: persistedItems);
   }
 
+  /// Shop owning every cart line, derived from the actual stock entities.
+  /// Variant lines are scoped by their variant row, plain lines by their
+  /// product row. Returns null when no row carries a shop (legacy rows) so
+  /// callers fall back to the profile resolver. Throws when lines span more
+  /// than one shop — a mixed cart can never be a single atomic sale.
+  Future<String?> _shopIdForLines(List<CartLine> lines) async {
+    final productIds = lines.map((l) => l.productId).toSet();
+    final productRows = productIds.isEmpty
+        ? const <db.Product>[]
+        : await (_database.select(
+            _database.products,
+          )..where((t) => t.id.isIn(productIds))).get();
+    final productsById = {for (final row in productRows) row.id: row};
+
+    final variantIds = lines
+        .where((l) => l.variantId != null)
+        .map((l) => l.variantId!)
+        .toSet();
+    final variantRows = variantIds.isEmpty
+        ? const <db.ProductVariant>[]
+        : await (_database.select(
+            _database.productVariants,
+          )..where((t) => t.id.isIn(variantIds))).get();
+    final variantsById = {for (final row in variantRows) row.id: row};
+
+    final shops = <String>{};
+    for (final line in lines) {
+      String? shop;
+      final variant = line.variantId == null
+          ? null
+          : variantsById[line.variantId];
+      if (variant != null && variant.shopId != null) {
+        shop = variant.shopId;
+      } else {
+        shop = productsById[line.productId]?.shopId;
+      }
+      if (shop != null && shop.isNotEmpty) shops.add(shop);
+    }
+    if (shops.length > 1) {
+      throw const UnexpectedBillingFailure(
+        'Cart products belong to a different shop.',
+      );
+    }
+    return shops.isEmpty ? null : shops.single;
+  }
+
   /// Loads the stock entities behind every line in one round trip: the
   /// products and (for variant lines) the variants, keyed by the line's
   /// stock-entity id ([CartLine.keyId]). A missing product surfaces as a
@@ -937,6 +1044,43 @@ final class DriftBillingRepository implements BillingRepository {
     }
   }
 
+  @override
+  Future<List<String>> frequentlySoldProductIds({
+    required DateTime sinceUtc,
+    int limit = 10,
+    String? shopId,
+  }) async {
+    try {
+      final resolvedShopId = await resolveWritableShopId(_database, shopId);
+      final rows = await _database
+          .customSelect(
+            'SELECT si.product_id AS product_id, '
+            'SUM(si.quantity) AS sold '
+            'FROM sale_items si '
+            'JOIN sales s ON s.id = si.sale_id '
+            'WHERE si.shop_id = ? AND s.is_opening_balance = ? '
+            'AND s.voided = ? AND s.created_at >= ? '
+            'GROUP BY si.product_id '
+            'ORDER BY sold DESC, si.product_id ASC LIMIT ?',
+            variables: [
+              Variable.withString(resolvedShopId),
+              Variable.withBool(false),
+              Variable.withBool(false),
+              Variable.withDateTime(sinceUtc),
+              Variable.withInt(limit),
+            ],
+          )
+          .get();
+      return [for (final row in rows) row.read<String>('product_id')];
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected(
+        'Failed to load frequently sold products',
+        error,
+        stackTrace,
+      );
+    }
+  }
+
   Never _unexpected(String message, Object error, StackTrace stackTrace) {
     AppLog.error(message, tag: tag, error: error, stackTrace: stackTrace);
     throw const UnexpectedBillingFailure();
@@ -1009,6 +1153,11 @@ final class DriftBillingRepository implements BillingRepository {
         try {
           await _cloud!.voidSaleAtomic(saleId);
         } catch (e) {
+          if (e is TimeoutException) {
+            throw const UnexpectedBillingFailure(
+              'The server is taking too long to respond. Please try again.',
+            );
+          }
           final msg = e.toString();
           if (msg.contains('ALREADY_VOIDED'))
             throw const SaleAlreadyVoidedFailure();

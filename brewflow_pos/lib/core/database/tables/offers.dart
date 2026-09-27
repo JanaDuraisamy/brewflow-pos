@@ -27,12 +27,14 @@ class Offers extends Table {
 
   TextColumn get name => text()();
 
-  /// Offer type wire value: PERCENTAGE | COMBO | BUY_X_GET_Y
+  /// Offer type wire value:
+  /// PERCENTAGE | QUANTITY_TIER | COMBO | BUY_X_GET_Y
   TextColumn get type => text().customConstraint(
-    "CHECK (type IN ('PERCENTAGE','COMBO','BUY_X_GET_Y')) NOT NULL",
+    "CHECK (type IN ('PERCENTAGE','QUANTITY_TIER','COMBO','BUY_X_GET_Y')) NOT NULL",
   )();
 
-  /// JSON config: percentage, combo price, buyXGetY numbers, productIds, etc.
+  /// JSON config: percentage, quantity tiers, combo price, buyXGetY numbers,
+  /// productIds, etc.
   TextColumn get configJson => text().named('config_json')();
 
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();

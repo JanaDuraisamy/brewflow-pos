@@ -17,8 +17,8 @@ void main() {
     test('returns defaults when nothing has been saved', () async {
       final settings = await repository.load();
 
-      expect(settings.shopName, 'BrewFlow POS');
-      expect(settings.appDisplayName, 'BrewFlow');
+      expect(settings.shopName, 'JiggarTea Bill');
+      expect(settings.appDisplayName, 'JiggarTea Bill');
       expect(settings.ownerName, isNull);
       expect(settings.phone, isNull);
       expect(settings.email, isNull);
@@ -54,7 +54,7 @@ void main() {
 
       final settings = await repository.load();
 
-      expect(settings.shopName, 'BrewFlow POS');
+      expect(settings.shopName, 'JiggarTea Bill');
       expect(settings.ownerName, isNull);
       expect(settings.lowStockThreshold, 5);
     });

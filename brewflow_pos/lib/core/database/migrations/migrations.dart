@@ -508,6 +508,326 @@ final class AppMigrations {
           ' ON storage_cleanup_notification (shop_id, kind)',
         );
       },
+      from19To20: (m, schema) async {
+        // Customer collections — purely additive. customer_payments gains the
+        // nullable payment_group_id that groups the split rows of one
+        // customer-level collection (NULL for every legacy per-bill payment)
+        // plus the partial unique index (payment_group_id, sale_id), which is
+        // the idempotent-replay backstop: replaying the same group on any
+        // device can never insert a duplicate row for the same bill.
+        await m.addColumn(
+          schema.customerPayments,
+          schema.customerPayments.paymentGroupId,
+        );
+        await m.createIndex(schema.idxCustomerPaymentsGroup);
+      },
+      from20To21: (m, schema) async {
+        // Opening balances — purely additive. sales gains the
+        // is_opening_balance flag (DEFAULT false from the frozen v21 schema),
+        // so every existing sale stays a real sale. New rows flagged true are
+        // ledger-only entries (no sale items, no stock, no totals exposure);
+        // everything else on the ledger derivation is untouched.
+        await m.addColumn(schema.sales, schema.sales.isOpeningBalance);
+      },
+      from21To22: (m, schema) async {
+        // Staff attendance, staff advances and daily closing records are
+        // three new local-first tables (purely additive), and users gains the
+        // owner-configured hourly salary rate (nullable, so every existing
+        // profile stays unconfigured until the owner sets a rate).
+        await m.createTable(schema.staffAttendance);
+        await m.createIndex(schema.idxStaffAttendanceShopDate);
+        await m.createIndex(schema.idxStaffAttendanceStaffDate);
+        await m.createIndex(schema.idxStaffAttendanceUpdatedAt);
+        await m.createTable(schema.staffAdvances);
+        await m.createIndex(schema.idxStaffAdvancesShopDate);
+        await m.createIndex(schema.idxStaffAdvancesStaffDate);
+        await m.createIndex(schema.idxStaffAdvancesUpdatedAt);
+        await m.createTable(schema.dailyClosings);
+        await m.createIndex(schema.idxDailyClosingsShopDate);
+        await m.createIndex(schema.idxDailyClosingsUpdatedAt);
+        await m.addColumn(schema.users, schema.users.salaryPaisePerHour);
+      },
+      from22To23: (m, schema) async {
+        // Owner-entered manual monthly salary per staff member (purely
+        // additive). Salary is never derived from the legacy hourly rate:
+        // attendance hours stay display-only and final payable is salary
+        // minus advances. The legacy users.salaryPaisePerHour column is
+        // left untouched for migration compatibility (never read anymore).
+        await m.createTable(schema.staffMonthlySalaries);
+        await m.createIndex(schema.idxStaffMonthlySalariesShopMonth);
+        await m.createIndex(schema.idxStaffMonthlySalariesStaffMonth);
+        await m.createIndex(schema.idxStaffMonthlySalariesUpdatedAt);
+      },
+      from23To24: (m, schema) async {
+        // Daily salary amounts per staff per business day (purely additive).
+        // The month's calculated salary is the SUM of these day-level rows
+        // (split shifts on one day still carry a single salary); the owner's
+        // manual monthly salary remains the overridable value. Device-local:
+        // no Supabase schema change is required for v24.
+        await m.createTable(schema.staffDailySalary);
+        await m.createIndex(schema.idxStaffDailySalariesShopDate);
+        await m.createIndex(schema.idxStaffDailySalariesStaffDate);
+        await m.createIndex(schema.idxStaffDailySalariesUpdatedAt);
+      },
+      from24To25: (m, schema) async {
+        // Quantity-tier offers ("buy X quantity for Rs.Y", e.g. 1 = 45,
+        // 2 = 85, 3 = 120) add QUANTITY_TIER to two CHECK constraints:
+        // `offers.type` and the `sale_items.applied_offer_type` snapshot.
+        // SQLite cannot ALTER a CHECK, so both tables are rebuilt: values are
+        // copied into a backup, the old table is dropped, the new definition
+        // is created and the rows are restored.
+        //
+        // Safe without toggling PRAGMA foreign_keys because nothing in the
+        // local schema references `offers` or `sale_items` (both are leaf
+        // tables — the sale FKs point OUT to shops/sales/products and are
+        // recreated by createTable). `PRAGMA foreign_keys` is also a no-op
+        // inside drift's migration transaction, so it could not be used here
+        // even if it were needed.
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'offers',
+          backup: 'offers_bak_v25',
+          columns: const [
+            'id',
+            'shop_id',
+            'name',
+            'type',
+            'config_json',
+            'is_active',
+            'start_at',
+            'end_at',
+            'created_at',
+            'updated_at',
+          ],
+          needsRebuild: await _checkLacksValue(
+            m.database,
+            'offers',
+            'type',
+            'QUANTITY_TIER',
+          ),
+          create: () async {
+            await m.createTable(schema.offers);
+            await m.createIndex(schema.idxOffersShop);
+            await m.createIndex(schema.idxOffersShopActive);
+          },
+        );
+
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'sale_items',
+          backup: 'sale_items_bak_v25',
+          columns: const [
+            'id',
+            'shop_id',
+            'sale_id',
+            'product_id',
+            'variant_id',
+            'product_name',
+            'variant_name',
+            'sku',
+            'unit_price_paise',
+            'quantity',
+            'line_total_paise',
+            'offer_discount_paise',
+            'applied_offer_id',
+            'applied_offer_name',
+            'applied_offer_type',
+          ],
+          needsRebuild: await _checkLacksValue(
+            m.database,
+            'sale_items',
+            'applied_offer_type',
+            'QUANTITY_TIER',
+          ),
+          create: () async {
+            await m.createTable(schema.saleItems);
+            await m.createIndex(schema.idxSaleItemsShop);
+            await m.createIndex(schema.idxSaleItemsSaleId);
+          },
+        );
+      },
+      from25To26: (m, schema) async {
+        // Customer true-delete. `sales.customer_id` and
+        // `customer_payments.customer_id` carried `ON DELETE RESTRICT`, so a
+        // customer with any billing history could never be deleted — the owner
+        // was stuck with a "deleted" row the app had to fake. Both foreign keys
+        // are removed and the id is kept as a plain column, so the ledger keeps
+        // its attribution and a deleted customer simply leaves a dangling id.
+        //
+        // `sales` is a REFERENCED table (`sale_items.sale_id` and
+        // `customer_payments.sale_id` both point at it with RESTRICT), and
+        // `PRAGMA foreign_keys = OFF` is a no-op inside drift's migration
+        // transaction — so enforcement is *deferred* instead of disabled and
+        // re-checked at COMMIT, by which point the copy is complete. Verified
+        // against a populated database in
+        // `test/core/database/customer_delete_migration_test.dart`.
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'sales',
+          backup: 'sales_bak_v26',
+          columns: const [
+            'id',
+            'shop_id',
+            'customer_id',
+            'receipt_number',
+            'subtotal_paise',
+            'total_paise',
+            'offer_discount_paise',
+            'payment_method',
+            'payment_status',
+            'created_at',
+            'updated_at',
+            'voided',
+            'voided_at',
+            'is_opening_balance',
+          ],
+          needsRebuild: await _referencesTable(
+            m.database,
+            'sales',
+            'customers',
+          ),
+          create: () async {
+            await m.createTable(schema.sales);
+            await m.createIndex(schema.idxSalesShop);
+            await m.createIndex(schema.idxSalesCreatedAt);
+            await m.createIndex(schema.idxSalesCustomerId);
+          },
+        );
+
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'customer_payments',
+          backup: 'customer_payments_bak_v26',
+          columns: const [
+            'id',
+            'shop_id',
+            'customer_id',
+            'sale_id',
+            'payment_group_id',
+            'amount_paise',
+            'payment_method',
+            'note',
+            'paid_at',
+            'reversed',
+            'reversed_at',
+            'created_at',
+            'updated_at',
+          ],
+          needsRebuild: await _referencesTable(
+            m.database,
+            'customer_payments',
+            'customers',
+          ),
+          create: () async {
+            await m.createTable(schema.customerPayments);
+            await m.createIndex(schema.idxCustomerPaymentsShop);
+            await m.createIndex(schema.idxCustomerPaymentsCustomerId);
+            await m.createIndex(schema.idxCustomerPaymentsSaleId);
+            await m.createIndex(schema.idxCustomerPaymentsPaidAt);
+            await m.createIndex(schema.idxCustomerPaymentsGroup);
+          },
+        );
+      },
+      from26To27: (m, schema) async {
+        // Shop payables: money actually paid against what the shop owes.
+        //
+        // Purely additive — a new append-only table. No existing expense row is
+        // read, rewritten or dropped, which is the whole point: a payment must
+        // never disturb the expense history it settles. Balances are derived
+        // from `expenses` minus this table at read time (no stored balance
+        // column), so nothing here needs backfilling and every device reaches
+        // the same number from the same rows.
+        await m.createTable(schema.expensePayments);
+        await m.createIndex(schema.idxExpensePaymentsShop);
+        await m.createIndex(schema.idxExpensePaymentsPayee);
+        await m.createIndex(schema.idxExpensePaymentsPaidAt);
+      },
     )(migrator, from, to);
+  }
+
+  /// True when [table] still declares a foreign key pointing at [target], i.e.
+  /// the rebuild is still needed.
+  static Future<bool> _referencesTable(
+    GeneratedDatabase db,
+    String table,
+    String target,
+  ) async {
+    final row = await db
+        .customSelect(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+          variables: [Variable.withString(table)],
+        )
+        .getSingleOrNull();
+    final ddl = row?.data['sql'] as String?;
+    if (ddl == null) return false;
+    return ddl.contains('REFERENCES $target');
+  }
+
+  /// True when [table]'s DDL does not already mention [value], i.e. the CHECK
+  /// still needs widening. A device that already carries the widened CHECK is
+  /// left completely alone — rebuilding a table rewrites every historical
+  /// row, which is not something to do twice.
+  static Future<bool> _checkLacksValue(
+    GeneratedDatabase db,
+    String table,
+    String column,
+    String value,
+  ) async {
+    final row = await db
+        .customSelect(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+          variables: [Variable.withString(table)],
+        )
+        .getSingleOrNull();
+    final ddl = row?.data['sql'] as String?;
+    return ddl == null || !ddl.contains("'$value'");
+  }
+
+  /// Rebuilds [table] through [backup] so a CHECK constraint can be widened or
+  /// a foreign key dropped. [create] recreates the table with the current
+  /// definition plus its indexes.
+  ///
+  /// Two details make this safe on a real device:
+  ///
+  ///  * `PRAGMA defer_foreign_keys = ON` postpones foreign-key enforcement to
+  ///    COMMIT instead of turning it off, because `PRAGMA foreign_keys = OFF`
+  ///    is a no-op inside a transaction and drift runs every step inside one.
+  ///    This is what lets a *referenced* table such as `sales` be dropped and
+  ///    recreated while its children still point at it.
+  ///  * The row copy names its columns explicitly and only carries the ones the
+  ///    backup actually has, instead of `SELECT *`. A bare `SELECT *` aborts the
+  ///    entire migration — leaving the app unable to open — the moment the
+  ///    stored table has a different column set than the current definition.
+  static Future<void> _rebuildTablePreservingRows(
+    Migrator m, {
+    required String table,
+    required String backup,
+    required List<String> columns,
+    required bool needsRebuild,
+    required Future<void> Function() create,
+  }) async {
+    if (!needsRebuild) return;
+
+    await m.database.customStatement('PRAGMA defer_foreign_keys = ON');
+    await m.database.customStatement(
+      'CREATE TABLE $backup AS SELECT * FROM $table',
+    );
+    // Intersect with what the stored table really has so an older or newer
+    // column set can never fail the copy.
+    final info = await m.database
+        .customSelect('PRAGMA table_info($backup)')
+        .get();
+    final present = info.map((r) => r.data['name'] as String).toSet();
+    final shared = columns.where(present.contains).toList();
+
+    await m.database.customStatement('DROP TABLE $table');
+    await create();
+    if (shared.isNotEmpty) {
+      final list = shared.join(',');
+      await m.database.customStatement(
+        'INSERT INTO $table ($list) SELECT $list FROM $backup',
+      );
+    }
+    await m.database.customStatement('DROP TABLE $backup');
   }
 }

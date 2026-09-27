@@ -21,3 +21,4 @@ export 'responsive.dart';
 export 'search_field.dart';
 export 'state_views.dart';
 export 'sync_status_indicator.dart';
+export 'tablet_nav_scope.dart';

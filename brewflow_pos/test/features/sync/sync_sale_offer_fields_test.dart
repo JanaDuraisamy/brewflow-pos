@@ -60,6 +60,30 @@ void main() {
       expect(restored.appliedOfferType, 'PERCENTAGE');
     });
 
+    test('round-trip preserves a QUANTITY_TIER line snapshot', () {
+      final item = SyncSaleItem(
+        id: 'item-2',
+        shopId: 'shop-1',
+        saleId: 'sale-1',
+        productId: 'p1',
+        productName: 'Kulfi',
+        unitPricePaise: 4500,
+        quantity: 3,
+        lineTotalPaise: 13500,
+        offerDiscountPaise: 1500,
+        appliedOfferId: 'off-tier-1',
+        appliedOfferName: 'Kulfi Tiers',
+        appliedOfferType: 'QUANTITY_TIER',
+      );
+
+      final restored = SyncSaleItem.fromJson(item.toJson());
+
+      expect(restored.appliedOfferType, 'QUANTITY_TIER');
+      expect(restored.offerDiscountPaise, 1500);
+      expect(restored.appliedOfferId, 'off-tier-1');
+      expect(restored.appliedOfferName, 'Kulfi Tiers');
+    });
+
     test('legacy payloads without offer fields default to none', () {
       final restored = SyncSaleItem.fromJson({
         'id': 'item-1',

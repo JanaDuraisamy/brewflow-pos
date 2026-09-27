@@ -28,6 +28,11 @@ const String kBackupFormat = 'brewflow.backup';
 /// the envelope shape changes; mismatched versions are rejected on restore.
 const int kBackupVersion = 1;
 
+/// Key carrying the authoritative shop id inside the envelope's `settings`
+/// block. It must always equal the envelope-level [BackupEnvelope.shopId];
+/// legacy backups without it remain accepted for backward compatibility.
+const String kSettingsShopIdKey = 'shopId';
+
 /// The business tables carried by a backup, as the raw row maps produced by
 /// the Drift `toJson()` codecs. Missing keys decode to empty lists so older
 /// envelopes stay readable; wrong-typed values fail as [CorruptBackupFailure].

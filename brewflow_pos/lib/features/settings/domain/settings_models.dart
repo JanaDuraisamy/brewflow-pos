@@ -33,6 +33,8 @@ final class ShopSettings {
     this.lowStockThreshold = defaultLowStockThreshold,
     this.theme = defaultTheme,
     this.membershipEnabled = defaultMembershipEnabled,
+    this.navigationOrder = const [],
+    this.navigationPrimary = const [],
   });
 
   /// Display name of the shop; defaults to the app name on first run.
@@ -60,6 +62,22 @@ final class ShopSettings {
   /// deleted by this switch — turning it back on restores member pricing.
   final bool membershipEnabled;
 
+  /// Owner-chosen navigation organization: destination route paths in display
+  /// order. Empty means "canonical order" (see `NavArrangement.defaults`).
+  ///
+  /// Presentation only — this reorders destinations and splits the phone main
+  /// bar from the "More" sheet. It never hides, disables, deletes or revokes a
+  /// feature, and it never grants access: staff visibility stays filtered by
+  /// the per-destination permission in `navDestinations`.
+  ///
+  /// Routes (not labels or indices) are stored so a saved arrangement can
+  /// never re-point at a different feature when destinations change.
+  final List<String> navigationOrder;
+
+  /// The subset of [navigationOrder] the owner keeps in the phone main bar;
+  /// the rest stay reachable under "More". Empty means the default main bar.
+  final List<String> navigationPrimary;
+
   static const int defaultLowStockThreshold = 5;
   static const ThemePreference defaultTheme = ThemePreference.system;
 
@@ -81,6 +99,8 @@ final class ShopSettings {
     int? lowStockThreshold,
     ThemePreference? theme,
     bool? membershipEnabled,
+    List<String>? navigationOrder,
+    List<String>? navigationPrimary,
   }) => ShopSettings(
     shopName: shopName ?? this.shopName,
     appDisplayName: appDisplayName ?? this.appDisplayName,
@@ -91,5 +111,7 @@ final class ShopSettings {
     lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
     theme: theme ?? this.theme,
     membershipEnabled: membershipEnabled ?? this.membershipEnabled,
+    navigationOrder: navigationOrder ?? this.navigationOrder,
+    navigationPrimary: navigationPrimary ?? this.navigationPrimary,
   );
 }

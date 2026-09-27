@@ -147,6 +147,29 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Like [addVariant] but scrolls the sheet first, so it works even when the
+  /// variant tile sits below the sheet's visible edge.
+  Future<void> addVariantScrollable(
+    WidgetTester tester,
+    String variantName,
+  ) async {
+    await tester.tap(addButtonFor('Filter Coffee'));
+    await tester.pumpAndSettle();
+    final scrollable = find
+        .descendant(
+          of: find.byType(BottomSheet),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text(variantName),
+      100,
+      scrollable: scrollable,
+    );
+    await tester.tap(find.text(variantName).last);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('variant card opens a picker and adding shows the variant line', (
     tester,
   ) async {
@@ -339,6 +362,83 @@ void main() {
 
     expect(find.text('Filter Coffee — Large'), findsOneWidget);
     expect(find.text('₹150.00 × 1'), findsOneWidget);
+    await tester.tap(find.text('New Sale'));
+    await tester.pumpAndSettle();
+    await flushSnackBars(tester);
+  });
+
+  testWidgets('a sheet with many variants scrolls to the last reachable '
+      'line', (tester) async {
+    await pumpPos(
+      tester,
+      variants: [
+        for (var i = 0; i < 12; i++)
+          variant(id: 'v$i', name: 'Variant $i', pricePaise: 9000 + i),
+      ],
+      stock: 100,
+    );
+
+    await tester.tap(addButtonFor('Filter Coffee'));
+    await tester.pumpAndSettle();
+
+    final sheet = find.byType(BottomSheet);
+    final lastVariant = find.text('Variant 11');
+    await tester.scrollUntilVisible(
+      lastVariant,
+      100,
+      scrollable: find
+          .descendant(of: sheet, matching: find.byType(Scrollable))
+          .first,
+    );
+    expect(lastVariant, findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(lastVariant);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Filter Coffee — Variant 11'), findsOneWidget);
+    expect(find.text('1 in cart'), findsOneWidget);
+    await flushSnackBars(tester);
+  });
+
+  testWidgets('a receipt with many lines scrolls without overflow', (
+    tester,
+  ) async {
+    const totalLines = 14;
+    await pumpPos(
+      tester,
+      variants: [
+        for (var i = 0; i < totalLines; i++)
+          variant(id: 'v$i', name: 'Item $i', pricePaise: 1000 * (i + 1)),
+      ],
+      stock: 100,
+    );
+
+    for (var i = 0; i < totalLines; i++) {
+      await addVariantScrollable(tester, 'Item $i');
+    }
+    expect(find.text('$totalLines in cart'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('UPI'));
+    await tester.tap(find.text('UPI'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Complete Sale'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale Complete'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    final dialog = find.byType(Dialog);
+    final lastLine = find.text('Filter Coffee — Item 13');
+    await tester.scrollUntilVisible(
+      lastLine,
+      100,
+      scrollable: find
+          .descendant(of: dialog, matching: find.byType(Scrollable))
+          .first,
+    );
+    expect(lastLine, findsOneWidget);
+
     await tester.tap(find.text('New Sale'));
     await tester.pumpAndSettle();
     await flushSnackBars(tester);

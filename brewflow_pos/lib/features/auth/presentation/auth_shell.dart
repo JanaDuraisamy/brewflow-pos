@@ -1,4 +1,4 @@
-import 'package:brewflow_pos/core/theme/app_colors.dart';
+import 'package:brewflow_pos/app/widgets/brand_mark.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
@@ -101,14 +101,10 @@ final class _AuthShellState extends ConsumerState<AuthShell> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      Icons.local_cafe,
-                      size: AppSpacing.ultra,
-                      color: AppColors.primary,
-                    ),
+                    const BrandMark(size: BrandMark.largeSize),
                     SizedBox(height: AppSpacing.lg),
                     Text(
-                      'BrewFlow',
+                      'JiggarTea Bill',
                       textAlign: TextAlign.center,
                       style: textTheme.displaySmall?.copyWith(
                         color: context.appColors.textPrimary,

@@ -11,7 +11,7 @@ import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
 /// Rules:
 /// - Only active, within-date offers apply.
 /// - Business isolation: offers are pre-filtered by shopId.
-/// - Deterministic priority: Percentage > Combo > Buy X Get Y.
+/// - Deterministic priority: Percentage > Quantity Tier > Combo > Buy X Get Y.
 /// - No double application of the same offer to the same line.
 /// - Never creates negative totals.
 /// - Currency stays integer paise.
@@ -67,7 +67,7 @@ List<OfferCalculation> calculateLineOffers({
     }
   }
 
-  // Sort by priority: Percentage > Combo > Buy X Get Y
+  // Sort by priority: Percentage > Quantity Tier > Combo > Buy X Get Y
   results.sort(
     (a, b) =>
         _offerPriority(b.offerType).compareTo(_offerPriority(a.offerType)),
@@ -85,7 +85,11 @@ OfferCalculation? selectBestOffer(List<OfferCalculation> calculations) {
 }
 
 int _offerPriority(OfferType type) => switch (type) {
-  OfferType.percentage => 3,
+  // Quantity tiers sit directly under percentage: both are single-line price
+  // reductions, and the relative order of the three original types
+  // (percentage > combo > buy X get Y) is unchanged.
+  OfferType.percentage => 4,
+  OfferType.quantityTier => 3,
   OfferType.combo => 2,
   OfferType.buyXGetY => 1,
 };
@@ -98,6 +102,7 @@ OfferCalculation? _calculateForOffer({
 
   return switch (offer.type) {
     OfferType.percentage => _calculatePercentage(line, config),
+    OfferType.quantityTier => _calculateQuantityTier(line, config),
     // Combo is cart-level only — see [calculateComboLineOffers].
     OfferType.combo => null,
     OfferType.buyXGetY => _calculateBuyXGetY(line, config),
@@ -138,6 +143,88 @@ OfferCalculation? _calculatePercentage(
   );
 }
 
+/// Buy-X-for-¥Y pricing tiers for a single line.
+///
+/// The line is decomposed greedily into groups using the LARGEST tier that
+/// fits the remaining quantity; leftover units fall through to a smaller tier
+/// and finally to the shelf price, so a quantity above the top tier still
+/// prices correctly (e.g. tiers 1/2/3 at 45/85/120 rupees, buying 5 gives
+/// 3 -> 120 plus 2 -> 85).
+///
+/// The returned discount is `shelfTotal - tieredTotal`, clamped to
+/// `[0, shelfTotal]`. A tier that does not actually beat the shelf price
+/// yields no offer at all (same convention as combo), so the bill never
+/// inflates and a useless offer is not stamped on the sale line.
+OfferCalculation? _calculateQuantityTier(
+  CartLineContext line,
+  Map<String, dynamic> config,
+) {
+  final productIds =
+      (config['productIds'] as List?)?.cast<String>() ?? const <String>[];
+  final rawTiers = (config['tiers'] as List?) ?? const [];
+
+  final appliesToAll = productIds.isEmpty;
+  final appliesToProduct =
+      appliesToAll ||
+      productIds.contains(line.productId) ||
+      (line.variantId != null && productIds.contains(line.variantId));
+  if (!appliesToProduct) return null;
+
+  // Parse defensively: cloud rows are JSON and may carry junk.
+  final tiers = <(int, int)>[];
+  for (final entry in rawTiers) {
+    if (entry is! Map) continue;
+    final quantity = entry['quantity'];
+    final pricePaise = entry['pricePaise'];
+    if (quantity is! int || pricePaise is! int) continue;
+    if (quantity <= 0 || pricePaise < 0) continue;
+    tiers.add((quantity, pricePaise));
+  }
+  if (tiers.isEmpty) return null;
+  tiers.sort((a, b) => a.$1.compareTo(b.$1));
+
+  final shelfTotal = line.chargedLineTotalPaise;
+  if (shelfTotal == null) return null; // money overflow guard
+
+  final unitPrice = line.chargedUnitPricePaise;
+  var remaining = line.quantity;
+  var tieredTotal = 0;
+  var appliedQuantity = 0;
+  while (remaining > 0) {
+    // Ascending order means the last match is the largest fitting tier.
+    (int, int)? best;
+    for (final tier in tiers) {
+      if (tier.$1 <= remaining) best = tier;
+    }
+    if (best == null) {
+      // No tier left for these units: charge them at the shelf price.
+      final leftover = Money.multiplyPaise(unitPrice, remaining);
+      if (leftover == null) return null;
+      tieredTotal += leftover;
+      appliedQuantity += remaining;
+      break;
+    }
+    final groups = remaining ~/ best.$1;
+    final groupTotal = Money.multiplyPaise(best.$2, groups);
+    if (groupTotal == null) return null;
+    tieredTotal += groupTotal;
+    final used = groups * best.$1;
+    appliedQuantity += used;
+    remaining -= used;
+  }
+
+  final discount = (shelfTotal - tieredTotal).clamp(0, shelfTotal);
+  if (discount <= 0) return null;
+
+  return OfferCalculation(
+    offerId: '', // Filled by caller
+    offerName: '', // Filled by caller
+    offerType: OfferType.quantityTier,
+    discountPaise: discount,
+    appliedQuantity: appliedQuantity,
+  );
+}
+
 /// Cart-level combo evaluation.
 ///
 /// A combo offer sells a fixed set of products for one fixed
@@ -155,7 +242,7 @@ OfferCalculation? _calculatePercentage(
 /// Returns, per cart-line index, the combo calculations applying to that
 /// line. Callers merge these with [calculateLineOffers] results and pick
 /// via [selectBestOffer], preserving the documented priority
-/// (Percentage > Combo > Buy X Get Y).
+/// (Percentage > Quantity Tier > Combo > Buy X Get Y).
 Map<int, List<OfferCalculation>> calculateComboLineOffers({
   required List<CartLineContext> lines,
   required List<Offer> comboOffers,

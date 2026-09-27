@@ -1,4 +1,6 @@
 import 'package:brewflow_pos/core/database/app_database.dart';
+import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart'
+    hide CustomerPayment;
 import 'package:drift/drift.dart';
 
 /// ---------------------------------------------------------------------------
@@ -21,10 +23,14 @@ final class CustomerLedgerDao {
     return (await query.get()).isNotEmpty;
   }
 
-  /// All sales linked to one customer, newest first.
+  /// All non-voided sales linked to one customer, newest first.
+  ///
+  /// Voided sales generate no due (the same `voided = false` premise the
+  /// collection RPC and [openCreditSalesFor] enforce), so they are excluded
+  /// from the ledger's purchase history.
   Future<List<Sale>> salesFor(String customerId) {
     final query = _db.select(_db.sales)
-      ..where((t) => t.customerId.equals(customerId))
+      ..where((t) => t.customerId.equals(customerId) & t.voided.equals(false))
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
     return query.get();
   }
@@ -77,6 +83,10 @@ final class CustomerLedgerDao {
   /// excluded here. Payments recorded on a credit sale move it to PAID via
   /// [DriftCustomerLedgerRepository._recordPaymentCore], dropping it from the
   /// debt total exactly when it is fully settled.
+  ///
+  /// Voided sales are excluded too: the authoritative collection RPC only ever
+  /// aggregates `voided = false` sales, so anything else would make the local
+  /// deadline look higher than what can actually be collected.
   Future<({int count, int totalPaise})?> salesAggregateFor(
     String customerId,
   ) async {
@@ -84,7 +94,8 @@ final class CustomerLedgerDao {
       ..addColumns([_db.sales.id.count(), _db.sales.totalPaise.sum()])
       ..where(
         _db.sales.customerId.equals(customerId) &
-            _db.sales.paymentStatus.equals('NOT_PAID'),
+            _db.sales.paymentStatus.equals('NOT_PAID') &
+            _db.sales.voided.equals(false),
       );
     final row = await query.getSingle();
     final count = row.read(_db.sales.id.count())!;
@@ -125,23 +136,30 @@ final class CustomerLedgerDao {
   /// True when the given payment's sale row is still NOT_PAID (open credit).
   /// Payments on settled (PAID) sales no longer offset any outstanding.
   /// Null `saleId`s (reserved for future advance payments) never offset debt.
+  /// Voided sales never accept collection (same `voided = false` premise as
+  /// the collection RPC and [openCreditSalesFor]), so they are excluded too.
   Expression<bool> _isOpenCreditSale(Column<String> saleId) {
     final salesTable = _db.sales;
     return saleId.isInQuery(
       _db.selectOnly(salesTable)
         ..addColumns([salesTable.id])
-        ..where(salesTable.paymentStatus.equals('NOT_PAID')),
+        ..where(
+          salesTable.paymentStatus.equals('NOT_PAID') &
+              salesTable.voided.equals(false),
+        ),
     );
   }
 
   /// Sum of NOT_PAID (credit) sale totals per customer. PAID sales never
-  /// create debt and are excluded.
+  /// create debt and are excluded, as are voided sales (the collection RPC
+  /// only ever aggregates `voided = false`).
   Future<Map<String, int>> salesTotalsByCustomer() async {
     final query = _db.selectOnly(_db.sales)
       ..addColumns([_db.sales.customerId, _db.sales.totalPaise.sum()])
       ..where(
         _db.sales.customerId.isNotNull() &
-            _db.sales.paymentStatus.equals('NOT_PAID'),
+            _db.sales.paymentStatus.equals('NOT_PAID') &
+            _db.sales.voided.equals(false),
       )
       ..groupBy([_db.sales.customerId]);
     final rows = await query.get();
@@ -172,5 +190,183 @@ final class CustomerLedgerDao {
           _db.customerPayments.amountPaise.sum(),
         )!,
     };
+  }
+
+  /// A customer's open credit bills — NOT_PAID, non-voided — oldest first.
+  ///
+  /// This is the allocation queue for customer-level collections: a
+  /// [DriftCustomerLedgerRepository.collectCustomerPayment] walk orders the
+  /// same way, so due is cleared from the oldest bill before the next.
+  Future<List<Sale>> openCreditSalesFor(String customerId) {
+    final query = _db.select(_db.sales)
+      ..where(
+        (t) =>
+            t.customerId.equals(customerId) &
+            t.paymentStatus.equals('NOT_PAID') &
+            t.voided.equals(false),
+      )
+      ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
+    return query.get();
+  }
+
+  /// Every payment row sharing one [paymentGroupId] (in creation order).
+  ///
+  /// A group is the whole unit of a customer-level collection. It is always
+  /// committed atomically, so the group is either fully present or fully
+  /// absent locally; this query is the idempotent-replay guard.
+  Future<List<CustomerPayment>> paymentsForGroup(String paymentGroupId) {
+    final query = _db.select(_db.customerPayments)
+      ..where((t) => t.paymentGroupId.equals(paymentGroupId))
+      ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
+    return query.get();
+  }
+
+  /// Every customer with an outstanding balance, current (not window-bounded).
+  ///
+  /// Open NOT_PAID, non-voided credit sales generate due; each customer's row
+  /// carries the per-bill drill-down (oldest bill first) so the Receivables
+  /// report section can show exactly which bills are still owed on. [shopIds]
+  /// restricts the scan to the given businesses; null/empty scans everything
+  /// locally (single-shop devices).
+  Future<List<CustomerReceivable>> receivables(List<String>? shopIds) async {
+    final query = _db.select(_db.sales)
+      ..where(
+        (t) =>
+            t.customerId.isNotNull() &
+            t.paymentStatus.equals('NOT_PAID') &
+            t.voided.equals(false) &
+            (shopIds != null && shopIds.isNotEmpty
+                ? t.shopId.isIn(shopIds)
+                : const Constant(true)),
+      )
+      ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
+    final openSales = await query.get();
+    if (openSales.isEmpty) return const [];
+
+    final openIds = openSales.map((s) => s.id);
+    final paidBySale = await paidPerSale(openIds);
+
+    final customerIds = openSales.map((s) => s.customerId!).toSet().toList();
+    final customers = await (_db.select(
+      _db.customers,
+    )..where((t) => t.id.isIn(customerIds))).get();
+    final nameById = {for (final c in customers) c.id: c.name};
+
+    final billsByCustomer = <String, List<CustomerReceivableBill>>{};
+    for (final sale in openSales) {
+      final due = sale.totalPaise - (paidBySale[sale.id] ?? 0);
+      if (due <= 0) continue;
+      billsByCustomer
+          .putIfAbsent(sale.customerId!, () => [])
+          .add(
+            CustomerReceivableBill(
+              saleId: sale.id,
+              receiptNumber: sale.receiptNumber,
+              createdAt: sale.createdAt,
+              totalPaise: sale.totalPaise,
+              duePaise: due,
+              isOpeningBalance: sale.isOpeningBalance,
+            ),
+          );
+    }
+
+    final result = <CustomerReceivable>[
+      for (final entry in billsByCustomer.entries)
+        CustomerReceivable(
+          customerId: entry.key,
+          // A customer-linked sale whose customer row no longer exists: the
+          // customer was genuinely deleted (schema v25 -> v26), while the debt
+          // they left behind stays owed and collectible. Naming the reason is
+          // better than a bare 'Customer', which is indistinguishable from a
+          // blank name and would send an owner hunting for a missing record.
+          customerName: nameById[entry.key] ?? 'Deleted customer',
+          outstandingBillCount: entry.value.length,
+          totalDuePaise: entry.value.fold(
+            0,
+            (sum, bill) => sum + bill.duePaise,
+          ),
+          bills: entry.value,
+        ),
+    ];
+    result.sort((a, b) => a.customerName.compareTo(b.customerName));
+    return result;
+  }
+
+  /// Customer-wise outstanding balances exactly as of [toUtc] — the
+  /// date-bounded variant of [receivables] behind the management report.
+  ///
+  /// Candidate sales are customer-linked, non-voided and created on/before
+  /// [toUtc]. A sale settled at the counter (PAID with no payment rows) never
+  /// generates due. A credit bill — still open (`NOT_PAID`) or since collected
+  /// (carries payment rows) — contributes its total minus the non-reversed
+  /// payments recorded on/before [toUtc]; because a fully-collected bill keeps
+  /// its payment history, a bill settled after [toUtc] still shows the full
+  /// as-of-date amount. Only balances > 0 survive, ordered by customer name.
+  Future<List<CustomerOutstandingBalance>> outstandingAsOf(
+    DateTime toUtc,
+    List<String>? shopIds,
+  ) async {
+    final query = _db.select(_db.sales)
+      ..where(
+        (t) =>
+            t.customerId.isNotNull() &
+            t.voided.equals(false) &
+            t.createdAt.isSmallerOrEqualValue(toUtc) &
+            (shopIds != null && shopIds.isNotEmpty
+                ? t.shopId.isIn(shopIds)
+                : const Constant(true)),
+      );
+    final sales = await query.get();
+    if (sales.isEmpty) return const [];
+
+    final saleIds = sales.map((s) => s.id);
+    final payments = await (_db.select(
+      _db.customerPayments,
+    )..where((t) => t.saleId.isIn(saleIds) & t.reversed.equals(false))).get();
+
+    final paidAsOfBySale = <String, int>{};
+    final collectedSaleIds = <String>{};
+    for (final row in payments) {
+      collectedSaleIds.add(row.saleId!);
+      if (!row.paidAt.isAfter(toUtc)) {
+        paidAsOfBySale.update(
+          row.saleId!,
+          (total) => total + row.amountPaise,
+          ifAbsent: () => row.amountPaise,
+        );
+      }
+    }
+
+    final dueByCustomer = <String, int>{};
+    for (final sale in sales) {
+      final counterSettled =
+          sale.paymentStatus == 'PAID' && !collectedSaleIds.contains(sale.id);
+      if (counterSettled) continue;
+      final due = sale.totalPaise - (paidAsOfBySale[sale.id] ?? 0);
+      if (due <= 0) continue;
+      dueByCustomer.update(
+        sale.customerId!,
+        (total) => total + due,
+        ifAbsent: () => due,
+      );
+    }
+    if (dueByCustomer.isEmpty) return const [];
+
+    final customers = await (_db.select(
+      _db.customers,
+    )..where((t) => t.id.isIn(dueByCustomer.keys))).get();
+    final customerById = {for (final c in customers) c.id: c};
+
+    final result = <CustomerOutstandingBalance>[
+      for (final entry in dueByCustomer.entries)
+        CustomerOutstandingBalance(
+          customerId: entry.key,
+          customerName: customerById[entry.key]?.name ?? 'Customer',
+          phone: customerById[entry.key]?.phone,
+          outstandingPaise: entry.value,
+        ),
+    ];
+    result.sort((a, b) => a.customerName.compareTo(b.customerName));
+    return result;
   }
 }

@@ -58,14 +58,14 @@ void main() {
           ],
         ),
       );
-      expect(find.text('BF'), findsNWidgets(3));
+      expect(find.byType(Image), findsNWidgets(3));
     });
 
     testWidgets('BrewFlowBrand shows wordmark, edition and tagline', (
       tester,
     ) async {
       await pump(tester, const BrewFlowBrand(showEdition: true));
-      expect(find.text('BrewFlow'), findsOneWidget);
+      expect(find.text('JiggarTea Bill'), findsOneWidget);
       expect(find.text('Tea & Jigarthanda Edition'), findsOneWidget);
       expect(find.text('Smart Business. Simple Billing.'), findsOneWidget);
     });
@@ -282,7 +282,7 @@ void main() {
         ),
       );
       expect(find.text('Orders'), findsOneWidget);
-      expect(find.text('BrewFlow'), findsOneWidget);
+      expect(find.text('JiggarTea Bill'), findsWidgets);
       await tester.tap(find.text('Orders'));
       expect(selected, 1);
     });

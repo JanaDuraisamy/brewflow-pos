@@ -6,6 +6,7 @@ import 'package:brewflow_pos/features/customers/data/drift_customer_ledger_repos
 import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_stock_movement_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
+import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -449,6 +450,144 @@ void main() {
       );
       expect(await countSales(), 0);
       expect(await stockOf('p1'), 1000);
+    });
+  });
+
+  group('frequentlySoldProductIds', () {
+    test('ranks by quantity sold, honours the 30-day window, and skips voided '
+        'and opening-balance sales', () async {
+      await seedProduct(id: 'p1', name: 'Chai', stock: 500);
+      await seedProduct(id: 'p2', name: 'Coffee', stock: 500);
+      await seedProduct(id: 'p3', name: 'Cookie', stock: 500);
+      final shopId = await seedShop();
+
+      // p1: 4 sold, p3: 3 sold (later voided), p2: 1 sold.
+      await repository.completeSale(
+        lines: lines([('p1', 2), ('p2', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: shopId,
+      );
+      await repository.completeSale(
+        lines: lines([('p1', 2)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: shopId,
+      );
+      final toVoid = await repository.completeSale(
+        lines: lines([('p3', 3)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: shopId,
+      );
+
+      final since = DateTime.now().toUtc().subtract(const Duration(days: 30));
+      expect(
+        await repository.frequentlySoldProductIds(
+          sinceUtc: since,
+          shopId: shopId,
+        ),
+        ['p1', 'p3', 'p2'],
+      );
+      expect(
+        await repository.frequentlySoldProductIds(
+          sinceUtc: since,
+          limit: 2,
+          shopId: shopId,
+        ),
+        ['p1', 'p3'],
+      );
+
+      // Voiding the p3 sale removes it from the ranking entirely.
+      await repository.voidSale(toVoid.sale.id);
+      expect(
+        await repository.frequentlySoldProductIds(
+          sinceUtc: since,
+          shopId: shopId,
+        ),
+        ['p1', 'p2'],
+      );
+    });
+
+    test('excludes stale and opening-balance sales from the ranking', () async {
+      await seedProduct(id: 'p1', name: 'Chai', stock: 500);
+      await seedProduct(id: 'p2', name: 'Coffee', stock: 500);
+      final shopId = await seedShop();
+
+      // A real sale from 40 days ago: outside the 30-day window.
+      final oldCreatedAt = DateTime.now().toUtc().subtract(
+        const Duration(days: 40),
+      );
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              id: const Value('old-sale'),
+              shopId: Value(shopId),
+              receiptNumber: 'BF-000099',
+              subtotalPaise: 12000,
+              totalPaise: 12000,
+              createdAt: Value(oldCreatedAt),
+              updatedAt: Value(oldCreatedAt),
+            ),
+          );
+      await database
+          .into(database.saleItems)
+          .insert(
+            SaleItemsCompanion.insert(
+              id: const Value('old-item'),
+              shopId: Value(shopId),
+              saleId: 'old-sale',
+              productId: 'p1',
+              productName: 'Chai',
+              quantity: 9,
+              lineTotalPaise: 108000,
+              unitPricePaise: 12000,
+            ),
+          );
+
+      // Stock takeover seeded as an opening-balance sale: never counted as a
+      // sell-through (p2 would otherwise jump far ahead of p1).
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              id: const Value('ob-sale'),
+              shopId: Value(shopId),
+              receiptNumber: 'OB-000001',
+              subtotalPaise: 10000,
+              totalPaise: 10000,
+              isOpeningBalance: const Value(true),
+            ),
+          );
+      await database
+          .into(database.saleItems)
+          .insert(
+            SaleItemsCompanion.insert(
+              id: const Value('ob-item'),
+              shopId: Value(shopId),
+              saleId: 'ob-sale',
+              productId: 'p2',
+              productName: 'Coffee',
+              quantity: 50,
+              lineTotalPaise: 400000,
+              unitPricePaise: 8000,
+            ),
+          );
+
+      // p2 has a real recent sale (1) but the opening balance (+50) must not
+      // count; p1's only recent volume is zero, so with the stale +9 also
+      // excluded nothing ranks above p2.
+      await repository.completeSale(
+        lines: lines([('p2', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: shopId,
+      );
+      final since = DateTime.now().toUtc().subtract(const Duration(days: 30));
+      expect(
+        await repository.frequentlySoldProductIds(
+          sinceUtc: since,
+          shopId: shopId,
+        ),
+        ['p2'],
+      );
     });
   });
 
@@ -1232,6 +1371,55 @@ void main() {
       expect(all[0].paymentMethod, PaymentMethod.upi);
       expect(all[1].paymentMethod, PaymentMethod.cash);
     });
+  });
+
+  group('quantity-tier sale snapshot', () {
+    // Regression: `sale_items.applied_offer_type` is a column CHECK. When
+    // QUANTITY_TIER was added to the offer vocabulary the CHECK was left
+    // behind, so saving any bill that used a quantity-tier offer died on the
+    // sale-item insert ("Checkout failed") even though the cart math was
+    // correct. The snapshot must persist and stay readable.
+    test(
+      'persists a QUANTITY_TIER line and deducts the tiered total',
+      () async {
+        await seedShop();
+        await seedProduct(id: 'p1', name: 'Kulfi', stock: 20, pricePaise: 4500);
+
+        final completed = await repository.completeSale(
+          lines: [
+            CartLine(
+              productId: 'p1',
+              productName: 'Kulfi',
+              sku: null,
+              unitPricePaise: 4500,
+              quantity: 3,
+              maxQuantity: 20,
+              appliedOffer: const AppliedOffer(
+                offerId: 'off-1',
+                offerName: 'Kulfi Tiers',
+                offerType: OfferType.quantityTier,
+                discountPaise: 1500,
+                appliedQuantity: 3,
+              ),
+            ),
+          ],
+          paymentMethod: PaymentMethod.cash,
+        );
+
+        // 3 x 4500 = 13500 shelf, minus 1500 tier discount.
+        expect(completed.sale.totalPaise, 12000);
+        expect(completed.sale.offerDiscountPaise, 1500);
+
+        final items = await (database.select(
+          database.saleItems,
+        )..where((t) => t.saleId.equals(completed.sale.id))).get();
+        expect(items, hasLength(1));
+        expect(items.single.appliedOfferType, 'QUANTITY_TIER');
+        expect(items.single.appliedOfferName, 'Kulfi Tiers');
+        expect(items.single.offerDiscountPaise, 1500);
+        expect(await stockOf('p1'), 17);
+      },
+    );
   });
 
   group('voidSale', () {

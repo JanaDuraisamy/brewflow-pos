@@ -21,11 +21,15 @@ abstract interface class StaffRepository {
   /// owner exists; otherwise throws [OwnerAlreadyClaimedFailure].
   Future<UserProfile> claimOwnership(AuthUser user);
 
-  /// Creates a local OWNER profile linked to an existing cloud [shopId].
+  /// Creates a local profile linked to an existing cloud [shopId].
   /// Idempotent: if a profile for this auth user already exists, returns it.
+  /// The [role] parameter reflects the cloud-side role; the caller must NOT
+  /// supply [UserRole.owner] for a staff account.
   Future<UserProfile> claimOwnershipForCloud(
     AuthUser user, {
     required String shopId,
+    required UserRole role,
+    Set<Permission> permissions = const {},
   });
 
   /// All STAFF profiles for management UI, oldest first.
@@ -65,4 +69,40 @@ abstract interface class StaffRepository {
     String newShopId, [
     String? newShopName,
   ]);
+
+  /// Best-effort cloud roster mirror: creates or refreshes a local STAFF
+  /// profile for a cloud identity, matching by [authUserId].
+  ///
+  /// OWNER rows are never touched (returns null for them) — the cloud pull
+  /// must never re-type an owner. When [permissions] is empty the existing
+  /// local grant set is preserved, because an empty cloud set means the owner
+  /// has not pushed grants yet. Returns the resulting local profile.
+  Future<UserProfile?> upsertStaffProfile({
+    required String authUserId,
+    required String email,
+    required String shopId,
+    required bool isActive,
+    Set<Permission> permissions = const {},
+    String? displayName,
+  });
+
+  /// Archives a STAFF profile after the owner deleted them, by local row id.
+  ///
+  /// The row itself is deliberately RETAINED: staff_attendance,
+  /// staff_daily_salaries, staff_monthly_salaries and staff_advances all
+  /// reference `users.id` with `ON DELETE CASCADE` and `PRAGMA foreign_keys`
+  /// is ON, so deleting the row would silently destroy the member's payroll
+  /// history. Instead the row is re-typed with [kArchivedStaffRole], its
+  /// permissions are dropped and `auth_user_id` is cleared, which removes the
+  /// member from the roster, the Staff page and sign-in while every history row
+  /// keeps pointing at it and stays attributed.
+  ///
+  /// Idempotent. OWNER profiles are refused — [ProfileNotProvisionedFailure] —
+  /// exactly like the other staff write paths. Unknown ids are likewise
+  /// refused. This touches NO attendance, salary or advance row.
+  Future<void> archiveStaffProfile(String localUserId);
+
+  /// [archiveStaffProfile] addressed by the Supabase auth user id, which is
+  /// what a cross-device STAFF_PROFILE tombstone carries.
+  Future<void> archiveStaffProfileByAuthUserId(String authUserId);
 }

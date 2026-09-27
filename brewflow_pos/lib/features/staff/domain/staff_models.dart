@@ -10,6 +10,26 @@ library;
 
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 
+/// Local role marker for a staff member the owner has deleted.
+///
+/// Deleting a staff member must NOT remove their historical attendance,
+/// salary or advance rows, and the local payroll tables reference
+/// `Users.id` with `ON DELETE CASCADE`. The row is therefore kept purely as a
+/// foreign-key anchor and re-typed with this marker, which drops it from every
+/// `'STAFF'` query (so it leaves the roster, the Staff page and navigation)
+/// while each history row keeps pointing at it and stays correctly attributed.
+///
+/// It is intentionally NOT a `UserRole`: the row is no longer a person who can
+/// sign in, so no authorization decision may ever resolve to it.
+const String kArchivedStaffRole = 'DELETED';
+
+/// Builds the collision-proof tombstone email written when a staff member is
+/// archived. The local `users.email` column is NOT NULL and unique, so the
+/// original address is released for re-invite while the row stays addressable
+/// for history.
+String archivedStaffEmail(String localUserId) =>
+    'deleted-$localUserId@removed.invalid';
+
 final class UserProfile {
   const UserProfile({
     required this.id,
@@ -128,5 +148,19 @@ final class DuplicateStaffEmailFailure extends StaffFailure {
 final class UnexpectedAuthFailure extends StaffFailure {
   const UnexpectedAuthFailure([
     super.message = 'Authorization service unavailable. Please try again.',
+  ]);
+}
+
+/// The cloud staff master could not be deleted, so the local copy was
+/// deliberately left untouched to keep the two mirrors in agreement.
+///
+/// Deleting locally first would remove the member from this device while the
+/// cloud profile survived and the other devices kept them, which is worse than
+/// a failed delete the owner can simply retry.
+final class StaffDeleteCloudFailure extends StaffFailure {
+  const StaffDeleteCloudFailure([
+    super.message =
+        'Could not remove this staff member from the cloud. Check your '
+        'connection and try again.',
   ]);
 }

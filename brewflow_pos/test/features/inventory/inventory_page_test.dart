@@ -1,4 +1,5 @@
 import 'package:brewflow_pos/app/app.dart';
+import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
@@ -10,6 +11,7 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/product_form_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +20,8 @@ import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
+import '../../helpers/fake_connectivity_service.dart';
+import '../../helpers/fake_staff_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -62,7 +66,10 @@ void main() {
     fakeInventory = FakeInventoryRepository();
   });
 
-  Widget app() => ProviderScope(
+  /// [staff] is only supplied by owner-gated tests. The default empty roster
+  /// keeps every other test a non-owner, which is what the owner-only delete
+  /// actions rely on to stay hidden.
+  Widget app({FakeStaffRepository? staff}) => ProviderScope(
     overrides: [
       authRepositoryProvider.overrideWithValue(fakeAuth),
       inventoryRepositoryProvider.overrideWithValue(fakeInventory),
@@ -70,12 +77,29 @@ void main() {
       customerLedgerRepositoryProvider.overrideWithValue(
         FakeCustomerLedgerRepository(),
       ),
+      staffRepositoryProvider.overrideWithValue(staff ?? FakeStaffRepository()),
+      // Offline, so UserProfileController takes the local fast path instead of
+      // reaching for the cloud identity resolver.
+      connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
     ],
     child: const BrewFlowApp(),
   );
 
   Future<void> pumpAuthenticated(WidgetTester tester) async {
     await tester.pumpWidget(app());
+    fakeAuth.emit(_owner);
+    await tester.pumpAndSettle();
+  }
+
+  /// Pumps an authenticated session whose profile really is the OWNER, so
+  /// owner-gated actions render.
+  Future<void> pumpAuthenticatedAsOwner(WidgetTester tester) async {
+    final staffRepo = FakeStaffRepository();
+    await staffRepo.claimOwnership(_owner);
+    // [FakeAuthRepository.emit] only pushes the stream event; UserProfileController
+    // reads `currentUser` synchronously, so it has to be set as well.
+    fakeAuth.user = _owner;
+    await tester.pumpWidget(app(staff: staffRepo));
     fakeAuth.emit(_owner);
     await tester.pumpAndSettle();
   }
@@ -519,7 +543,8 @@ void main() {
       fakeInventory.storedProducts.add(
         product('p1', 'Milk 1L', categoryId: 'c1'),
       );
-      await pumpAuthenticated(tester);
+      // Deletion is OWNER-only, so this test needs a real owner profile.
+      await pumpAuthenticatedAsOwner(tester);
       await openCategories(tester);
 
       await tester.tap(find.byTooltip('Delete category'));
@@ -535,6 +560,20 @@ void main() {
 
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('a non-owner is offered no category delete action', (
+      tester,
+    ) async {
+      fakeInventory.storedCategories.add(category('c1', 'Beverages'));
+      fakeInventory.storedProducts.add(
+        product('p1', 'Milk 1L', categoryId: 'c1'),
+      );
+      await pumpAuthenticated(tester);
+      await openCategories(tester);
+
+      expect(find.byTooltip('Delete category'), findsNothing);
+      expect(fakeInventory.storedCategories, hasLength(1));
     });
   });
 

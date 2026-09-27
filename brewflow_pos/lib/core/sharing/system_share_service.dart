@@ -14,4 +14,22 @@ final class SystemShareService implements ShareService {
   }) async {
     await Share.share(text, subject: subject);
   }
+
+  @override
+  Future<void> shareFile({
+    required String subject,
+    required String filePath,
+  }) async {
+    await Share.shareXFiles([XFile(filePath)], subject: subject);
+  }
+
+  @override
+  Future<void> shareFiles({
+    required String subject,
+    required List<String> filePaths,
+  }) async {
+    await Share.shareXFiles([
+      for (final path in filePaths) XFile(path),
+    ], subject: subject);
+  }
 }

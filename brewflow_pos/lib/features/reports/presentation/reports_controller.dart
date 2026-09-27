@@ -1,6 +1,8 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/domain/customer_ledger_repository.dart';
+import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
@@ -118,6 +120,7 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     final orders = ref.watch(ordersRepositoryProvider);
     final expenses = ref.watch(expensesRepositoryProvider);
     final inventory = ref.watch(inventoryRepositoryProvider);
+    final ledger = ref.watch(customerLedgerRepositoryProvider);
     final businessContext = ref.watch(businessSwitcherProvider);
     // Read scope from the business context (owner phone). This is read-only;
     // reports never write.
@@ -266,6 +269,19 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         partialCosts = false;
       }
 
+      // Receivables and payables are current balances — never window-bounded.
+      final receivables = await ledger.receivables(shopIds: shopIds);
+      final shopPayables = await expenses.shopPayables(shopIds: shopIds);
+      final totalReceivablePaise = receivables.fold(
+        0,
+        (sum, row) => sum + row.totalDuePaise,
+      );
+      // Remaining, not gross: a partial payment already reduces what is owed.
+      final totalPayablePaise = shopPayables.fold(
+        0,
+        (sum, row) => sum + row.remainingPaise,
+      );
+
       return ReportsSnapshot(
         range: range,
         sales: SalesSummary(
@@ -297,6 +313,10 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         ),
         topProducts: topProducts,
         categoryPerformance: categoryPerformance,
+        customerReceivables: receivables,
+        totalReceivablePaise: totalReceivablePaise,
+        shopPayables: shopPayables,
+        totalPayablePaise: totalPayablePaise,
         businessBreakdown: showBreakdown
             ? _businessBreakdown(window, labelsById)
             : const [],
@@ -306,6 +326,8 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     } on ExpensesFailure {
       rethrow;
     } on InventoryFailure {
+      rethrow;
+    } on CustomerLedgerFailure {
       rethrow;
     } on PermissionDeniedFailure {
       rethrow;
@@ -424,6 +446,9 @@ String reportsErrorMessage(Object error, {String? fallback}) {
     return error.message;
   }
   if (error is InventoryFailure) {
+    return error.message;
+  }
+  if (error is CustomerLedgerFailure) {
     return error.message;
   }
   return fallback ?? 'Something went wrong. Please try again.';

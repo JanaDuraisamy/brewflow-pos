@@ -6,6 +6,7 @@ import 'package:brewflow_pos/features/offers/data/drift_offers_repository.dart';
 import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
 import 'package:brewflow_pos/features/offers/domain/offers_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 
 final offersRepositoryProvider = Provider<OffersRepository>((ref) {
@@ -102,7 +103,10 @@ final class OffersController {
     );
   }
 
+  /// Owner-only: an offer can change what every counter sells, so removal is
+  /// guarded here and not only by hiding the UI action.
   Future<void> delete(String id) async {
+    requireOwner(ref);
     await ref.read(offersRepositoryProvider).deleteOffer(id);
     ref.invalidate(offersProvider);
   }

@@ -1,7 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
-import 'customers.dart';
 import 'sales.dart';
 import 'shops.dart';
 
@@ -31,6 +30,10 @@ import 'shops.dart';
 )
 @TableIndex(name: 'idx_customer_payments_sale_id', columns: {#saleId})
 @TableIndex(name: 'idx_customer_payments_paid_at', columns: {#shopId, #paidAt})
+@TableIndex(
+  name: 'idx_customer_payments_group',
+  columns: {#paymentGroupId, #saleId},
+)
 class CustomerPayments extends Table {
   /// Local UUID v4 identifier, generated on this device.
   TextColumn get id => text().clientDefault(() => Uuid().v4())();
@@ -42,14 +45,25 @@ class CustomerPayments extends Table {
   TextColumn get shopId =>
       text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
-  /// Owning customer. Deleting a customer with payments is rejected.
-  TextColumn get customerId =>
-      text().references(Customers, #id, onDelete: KeyAction.restrict)();
+  /// Owning customer.
+  ///
+  /// Deliberately NOT a foreign key (schema v25 -> v26): a RESTRICT FK made a
+  /// customer with any payment impossible to delete. The id is preserved on
+  /// every payment so the ledger keeps its attribution, and a deleted customer
+  /// simply leaves a dangling id that the UI renders defensively. The [saleId]
+  /// foreign key is unaffected — a payment still cannot outlive its sale.
+  TextColumn get customerId => text()();
 
   /// Sale the payment is allocated to; NULL is reserved for future
   /// advance/whole-balance payments (the repository requires allocation).
   TextColumn get saleId =>
       text().nullable().references(Sales, #id, onDelete: KeyAction.restrict)();
+
+  /// Groups the split rows of one customer-level collection; NULL for legacy
+  /// per-bill payments. A collection is allocated across the customer's open
+  /// bills oldest-first, so its total is naturally one row per touched bill —
+  /// every row shares this id, making the submission one idempotent unit.
+  TextColumn get paymentGroupId => text().nullable()();
 
   /// Amount paid in paise. Must be >= 0; the repository requires > 0.
   IntColumn get amountPaise =>

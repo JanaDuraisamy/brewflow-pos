@@ -12,8 +12,17 @@ final class FakeStaffRepository implements StaffRepository {
   final Map<String, UserProfile> profilesByAuthId = {};
   final List<UserProfile> storedProfiles = [];
 
+  /// Local row ids of members the owner deleted. The Drift implementation
+  /// re-types these rows out of `'STAFF'` and keeps them only as foreign-key
+  /// anchors, so the fake models the same thing as a set and filters the
+  /// roster the same way [staffMembers] does.
+  final Set<String> archivedProfileIds = {};
+
   Shop? shop;
   Object? claimError;
+
+  /// Thrown by the archive paths when set, to exercise delete failures.
+  Object? archiveError;
 
   int _sequence = 0;
 
@@ -39,7 +48,9 @@ final class FakeStaffRepository implements StaffRepository {
 
   @override
   Future<List<UserProfile>> staffMembers({String? shopId}) async {
-    var staff = storedProfiles.where((p) => p.role == UserRole.staff);
+    var staff = storedProfiles.where(
+      (p) => p.role == UserRole.staff && !archivedProfileIds.contains(p.id),
+    );
     if (shopId != null) {
       staff = staff.where((p) => p.shopId == shopId);
     }
@@ -109,13 +120,16 @@ final class FakeStaffRepository implements StaffRepository {
   Future<UserProfile> claimOwnershipForCloud(
     AuthUser user, {
     required String shopId,
+    required UserRole role,
+    Set<Permission> permissions = const {},
   }) async {
     final existing = profilesByAuthId[user.id];
     if (existing != null) return existing;
     return _insert(
       email: user.email,
       authUserId: user.id,
-      role: UserRole.owner,
+      role: role,
+      permissions: permissions,
       shopId: shopId,
     );
   }
@@ -127,6 +141,91 @@ final class FakeStaffRepository implements StaffRepository {
     String? newShopName,
   ]) async {
     shop = Shop(id: newShopId, name: newShopName ?? shop?.name ?? 'My Shop');
+  }
+
+  @override
+  Future<UserProfile?> upsertStaffProfile({
+    required String authUserId,
+    required String email,
+    required String shopId,
+    required bool isActive,
+    Set<Permission> permissions = const {},
+    String? displayName,
+  }) async {
+    final existing = profilesByAuthId[authUserId];
+    // OWNER rows are never re-typed by a cloud roster pull.
+    if (existing != null && existing.role == UserRole.owner) return null;
+    if (existing != null) {
+      final updated = UserProfile(
+        id: existing.id,
+        email: existing.email,
+        authUserId: existing.authUserId,
+        shopId: shopId,
+        displayName: displayName ?? existing.displayName,
+        role: existing.role,
+        isActive: isActive,
+        permissions: permissions.isEmpty ? existing.permissions : permissions,
+      );
+      final index = storedProfiles.indexWhere((p) => p.id == existing.id);
+      storedProfiles[index] = updated;
+      profilesByAuthId[authUserId] = updated;
+      return updated;
+    }
+    final created = _insert(
+      email: email,
+      authUserId: authUserId,
+      role: UserRole.staff,
+      permissions: permissions,
+      displayName: displayName,
+      shopId: shopId,
+    );
+    final index = storedProfiles.indexWhere((p) => p.id == created.id);
+    storedProfiles[index] = UserProfile(
+      id: created.id,
+      email: created.email,
+      authUserId: created.authUserId,
+      shopId: created.shopId,
+      displayName: created.displayName,
+      role: created.role,
+      isActive: isActive,
+      permissions: created.permissions,
+    );
+    profilesByAuthId[authUserId] = storedProfiles[index];
+    return storedProfiles[index];
+  }
+
+  @override
+  Future<void> archiveStaffProfile(String localUserId) async {
+    final error = archiveError;
+    if (error != null) throw error;
+    final index = storedProfiles.indexWhere((p) => p.id == localUserId);
+    if (index == -1 || storedProfiles[index].role != UserRole.staff) {
+      throw const ProfileNotProvisionedFailure();
+    }
+    final member = storedProfiles[index];
+    archivedProfileIds.add(member.id);
+    // Sign-in can no longer resolve the row: the auth link is released.
+    if (member.authUserId != null) {
+      profilesByAuthId.remove(member.authUserId);
+    }
+    storedProfiles[index] = UserProfile(
+      id: member.id,
+      email: archivedStaffEmail(member.id),
+      authUserId: null,
+      shopId: member.shopId,
+      displayName: null,
+      role: member.role,
+      isActive: false,
+      permissions: const {},
+    );
+  }
+
+  @override
+  Future<void> archiveStaffProfileByAuthUserId(String authUserId) async {
+    final member = profilesByAuthId[authUserId];
+    if (member == null) return;
+    if (member.role != UserRole.staff) return;
+    await archiveStaffProfile(member.id);
   }
 
   UserProfile _insert({

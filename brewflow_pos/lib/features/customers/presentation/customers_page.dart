@@ -210,51 +210,7 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
         );
         final chips = Row(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            AppFilterChip(
-              label: 'All',
-              selected: filter.status == CustomerStatusFilter.all,
-              onSelected: (selected) {
-                if (selected) {
-                  ref
-                      .read(customersFilterProvider.notifier)
-                      .setStatus(CustomerStatusFilter.all);
-                }
-              },
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            AppFilterChip(
-              label: 'Active',
-              selected: filter.status == CustomerStatusFilter.active,
-              onSelected: (selected) => ref
-                  .read(customersFilterProvider.notifier)
-                  .setStatus(
-                    selected
-                        ? CustomerStatusFilter.active
-                        : CustomerStatusFilter.all,
-                  ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            AppFilterChip(
-              label: 'Inactive',
-              selected: filter.status == CustomerStatusFilter.inactive,
-              onSelected: (selected) => ref
-                  .read(customersFilterProvider.notifier)
-                  .setStatus(
-                    selected
-                        ? CustomerStatusFilter.inactive
-                        : CustomerStatusFilter.all,
-                  ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            AppFilterChip(
-              label: 'With Due',
-              selected: filter.dueOnly,
-              onSelected: (selected) => ref
-                  .read(customersFilterProvider.notifier)
-                  .setDueOnly(selected),
-            ),
-          ],
+          children: _statusFilterChips(ref, filter),
         );
         if (compact) {
           final notifier = ref.read(customersFilterProvider.notifier);
@@ -273,10 +229,15 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
                   title: 'Filter Customers',
                   onReset: notifier.clear,
                   children: [
-                    Wrap(
-                      spacing: AppSpacing.sm,
-                      runSpacing: AppSpacing.sm,
-                      children: [for (final chip in chips.children) chip],
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final live = ref.watch(customersFilterProvider);
+                        return Wrap(
+                          spacing: AppSpacing.sm,
+                          runSpacing: AppSpacing.sm,
+                          children: _statusFilterChips(ref, live),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -323,7 +284,15 @@ final class _CustomerList extends ConsumerWidget {
       );
     }
     if (width >= 800) {
-      return SingleChildScrollView(child: _CustomerTable(customers: customers));
+      return Scrollbar(
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: _CustomerTable(customers: customers),
+          ),
+        ),
+      );
     }
     return ListView.builder(
       itemCount: customers.length,
@@ -596,7 +565,7 @@ void _showCustomerActions(
   WidgetRef ref,
   Customer customer,
 ) {
-  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? true;
+  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? false;
   showContextActionSheet(
     context,
     title: customer.name,
@@ -678,7 +647,7 @@ Future<void> _deleteCustomer(
         content: Text(
           result == CustomerDeleteResult.deactivated
               ? 'Customer has ledger history — deactivated instead.'
-              : 'Customer deleted.',
+              : 'Customer deleted. Past bills and payments are kept.',
         ),
       ),
     );
@@ -688,4 +657,49 @@ Future<void> _deleteCustomer(
       context,
     ).showSnackBar(SnackBar(content: Text(error.message)));
   }
+}
+
+/// Status filter chips for customers, rebuilt from the live filter so the
+/// phone filter sheet highlights selections while it stays open.
+List<Widget> _statusFilterChips(WidgetRef ref, CustomersFilter filter) {
+  return [
+    AppFilterChip(
+      label: 'All',
+      selected: filter.status == CustomerStatusFilter.all,
+      onSelected: (selected) {
+        if (selected) {
+          ref
+              .read(customersFilterProvider.notifier)
+              .setStatus(CustomerStatusFilter.all);
+        }
+      },
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'Active',
+      selected: filter.status == CustomerStatusFilter.active,
+      onSelected: (selected) => ref
+          .read(customersFilterProvider.notifier)
+          .setStatus(
+            selected ? CustomerStatusFilter.active : CustomerStatusFilter.all,
+          ),
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'Inactive',
+      selected: filter.status == CustomerStatusFilter.inactive,
+      onSelected: (selected) => ref
+          .read(customersFilterProvider.notifier)
+          .setStatus(
+            selected ? CustomerStatusFilter.inactive : CustomerStatusFilter.all,
+          ),
+    ),
+    const SizedBox(width: AppSpacing.sm),
+    AppFilterChip(
+      label: 'With Due',
+      selected: filter.dueOnly,
+      onSelected: (selected) =>
+          ref.read(customersFilterProvider.notifier).setDueOnly(selected),
+    ),
+  ];
 }

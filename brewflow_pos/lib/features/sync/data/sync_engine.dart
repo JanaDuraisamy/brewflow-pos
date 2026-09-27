@@ -210,6 +210,10 @@ final class SyncEngine {
         }
       case MasterEntity.customer:
         if (entry.operation == 'DELETE') {
+          // Remove the row in the cloud FIRST, then broadcast the tombstone.
+          // Order matters: a peer that pulls in between must find the row gone,
+          // and a device that never had the row must not be able to re-pull it.
+          await _gateway.deleteCustomer(entry.entityId);
           await _gateway.recordDeletion(_deletionOf(entry));
         } else {
           await _gateway.upsertCustomers([
@@ -245,6 +249,13 @@ final class SyncEngine {
         await _gateway.upsertCustomerPayments([
           SyncCustomerPayment.fromJson(decodePayload(entry.payload)),
         ]);
+      case MasterEntity.expensePayment:
+        if (entry.operation == 'DELETE') {
+          throw StateError('EXPENSE_PAYMENT supports UPSERT sync only');
+        }
+        await _gateway.upsertExpensePayments([
+          SyncExpensePayment.fromJson(decodePayload(entry.payload)),
+        ]);
       case MasterEntity.offer:
         if (entry.operation == 'DELETE') {
           await _gateway.recordDeletion(_deletionOf(entry));
@@ -253,6 +264,15 @@ final class SyncEngine {
             SyncOffer.fromJson(decodePayload(entry.payload)),
           ]);
         }
+      case MasterEntity.staffProfile:
+        // Staff removal is cloud-first and writes its own tombstone
+        // (CloudShopResolver.deleteStaffProfile) before the local mirror is
+        // archived, so it never reaches the outbox. Reaching here means a
+        // future caller tried to queue it, which would resurrect a row that is
+        // deliberately not re-creatable.
+        throw StateError(
+          'STAFF_PROFILE is deleted cloud-first, not via outbox',
+        );
     }
     await _sync.markDone(entry.id);
   }
@@ -335,6 +355,7 @@ final class SyncEngine {
       await _drainSaleItems(since),
       await _drainExpenses(since),
       await _drainCustomerPayments(since),
+      await _drainExpensePayments(since),
       await _drainOffers(since),
       await _drainDeletions(since),
     ];
@@ -419,6 +440,16 @@ final class SyncEngine {
     pull: (since, limit) =>
         _gateway.pullCustomerPayments(since: since, limit: limit),
     apply: (rows, at) => _applier.applyCustomerPaymentPage(rows, at),
+  );
+
+  /// Drained after expenses so a device that has just learned about a new
+  /// unpaid expense in the same cycle can also apply payments for it, keeping
+  /// the derived payable balance correct on the very first cycle.
+  Future<DateTime> _drainExpensePayments(DateTime since) => _drainPage(
+    since,
+    pull: (since, limit) =>
+        _gateway.pullExpensePayments(since: since, limit: limit),
+    apply: (rows, at) => _applier.applyExpensePaymentPage(rows, at),
   );
 
   Future<DateTime> _drainOffers(DateTime since) => _drainPage(

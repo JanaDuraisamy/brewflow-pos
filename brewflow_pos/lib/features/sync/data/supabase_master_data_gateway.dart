@@ -347,6 +347,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'voided': row.voided,
     'voided_at': row.voidedAt?.toIso8601String(),
     'offer_discount_paise': row.offerDiscountPaise,
+    'is_opening_balance': row.isOpeningBalance,
     'client_created_at': row.createdAt.toIso8601String(),
   };
 
@@ -364,6 +365,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     voidedAt: json['voided_at'] != null ? _utc(json['voided_at']) : null,
     // Tolerant: rows written before the offer-columns migration lack this.
     offerDiscountPaise: json['offer_discount_paise'] as int? ?? 0,
+    // Tolerant: rows written before the opening-balance migration lack this.
+    isOpeningBalance: json['is_opening_balance'] as bool? ?? false,
   );
 
   // ---- Sale Items ------------------------------------------------------------
@@ -490,6 +493,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'shop_id': row.shopId,
     'customer_id': row.customerId,
     'sale_id': row.saleId,
+    'payment_group_id': row.paymentGroupId,
     'amount_paise': row.amountPaise,
     'payment_method': row.paymentMethod,
     'note': row.note,
@@ -505,6 +509,57 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
         shopId: json['shop_id'] as String,
         customerId: json['customer_id'] as String,
         saleId: json['sale_id'] as String?,
+        paymentGroupId: json['payment_group_id'] as String?,
+        amountPaise: json['amount_paise'] as int,
+        paymentMethod: json['payment_method'] as String,
+        note: json['note'] as String?,
+        paidAt: _utc(json['paid_at']),
+        reversed: json['reversed'] as bool,
+        reversedAt: json['reversed_at'] != null
+            ? _utc(json['reversed_at'])
+            : null,
+        createdAt: _utc(json['client_created_at']),
+      );
+
+  // ---- Expense payments ---------------------------------------------------------
+
+  @override
+  Future<void> upsertExpensePayments(List<SyncExpensePayment> rows) => _upsert(
+    'expense_payments',
+    [for (final row in rows) _expensePaymentToServer(row)],
+  );
+
+  @override
+  Future<PullPage<SyncExpensePayment>> pullExpensePayments({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'expense_payments',
+    since: since,
+    limit: limit,
+    fromRow: _expensePaymentFromServer,
+  );
+
+  Map<String, dynamic> _expensePaymentToServer(SyncExpensePayment row) => {
+    'id': row.id,
+    'shop_id': row.shopId,
+    'payee_key': row.payeeKey,
+    'payee_name': row.payeeName,
+    'amount_paise': row.amountPaise,
+    'payment_method': row.paymentMethod,
+    'note': row.note,
+    'paid_at': row.paidAt.toIso8601String(),
+    'reversed': row.reversed,
+    'reversed_at': row.reversedAt?.toIso8601String(),
+    'client_created_at': row.createdAt.toIso8601String(),
+  };
+
+  SyncExpensePayment _expensePaymentFromServer(Map<String, dynamic> json) =>
+      SyncExpensePayment(
+        id: json['id'] as String,
+        shopId: json['shop_id'] as String,
+        payeeKey: json['payee_key'] as String,
+        payeeName: json['payee_name'] as String?,
         amountPaise: json['amount_paise'] as int,
         paymentMethod: json['payment_method'] as String,
         note: json['note'] as String?,
@@ -559,6 +614,20 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
   );
 
   // ---- Deletions -------------------------------------------------------------------
+
+  /// Hard-deletes the customer row. See [deleteCustomer] on the interface: the
+  /// tombstone alone would still self-heal peers (deletions drain last in the
+  /// pull), but the row would linger in `customers` and be re-pulled by every
+  /// fresh device on every first sync.
+  ///
+  /// No `.is_active = false` fallback and no soft delete: `sales.customer_id` and
+  /// `customer_payments.customer_id` no longer reference `customers` (migration
+  /// 0030), so history cannot block this. The delete is scoped to the row id,
+  /// which is shop-scoped by RLS.
+  @override
+  Future<void> deleteCustomer(String id) async {
+    await _client.from('customers').delete().eq('id', id);
+  }
 
   @override
   Future<void> recordDeletion(SyncDeletion deletion) async {

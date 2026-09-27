@@ -265,68 +265,74 @@ final class _PurchaseTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    return SingleChildScrollView(
-      child: DataTable(
-        columnSpacing: 32,
-        horizontalMargin: 12,
-        columns: const [
-          DataColumn(label: Text('Purchase No.')),
-          DataColumn(label: Text('Date')),
-          DataColumn(label: Text('Supplier')),
-          DataColumn(label: Text('Total')),
-        ],
-        rows: [
-          for (final row in rows)
-            DataRow(
-              cells: [
-                DataCell(
-                  InkWell(
-                    onTap: () => context.push(
-                      AppRoutes.purchaseDetail,
-                      extra: row.purchase,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Text(
-                        row.purchase.purchaseNumber,
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w600,
+    return Scrollbar(
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columnSpacing: 32,
+            horizontalMargin: 12,
+            columns: const [
+              DataColumn(label: Text('Purchase No.')),
+              DataColumn(label: Text('Date')),
+              DataColumn(label: Text('Supplier')),
+              DataColumn(label: Text('Total')),
+            ],
+            rows: [
+              for (final row in rows)
+                DataRow(
+                  cells: [
+                    DataCell(
+                      InkWell(
+                        onTap: () => context.push(
+                          AppRoutes.purchaseDetail,
+                          extra: row.purchase,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Text(
+                            row.purchase.purchaseNumber,
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                DataCell(
-                  InkWell(
-                    onTap: () => context.push(
-                      AppRoutes.purchaseDetail,
-                      extra: row.purchase,
+                    DataCell(
+                      InkWell(
+                        onTap: () => context.push(
+                          AppRoutes.purchaseDetail,
+                          extra: row.purchase,
+                        ),
+                        child: Text(formatDateTime(row.purchase.createdAt)),
+                      ),
                     ),
-                    child: Text(formatDateTime(row.purchase.createdAt)),
-                  ),
-                ),
-                DataCell(
-                  InkWell(
-                    onTap: () => context.push(
-                      AppRoutes.purchaseDetail,
-                      extra: row.purchase,
+                    DataCell(
+                      InkWell(
+                        onTap: () => context.push(
+                          AppRoutes.purchaseDetail,
+                          extra: row.purchase,
+                        ),
+                        child: Text(row.supplierName ?? 'Walk-in'),
+                      ),
                     ),
-                    child: Text(row.supplierName ?? 'Walk-in'),
-                  ),
-                ),
-                DataCell(
-                  InkWell(
-                    onTap: () => context.push(
-                      AppRoutes.purchaseDetail,
-                      extra: row.purchase,
+                    DataCell(
+                      InkWell(
+                        onTap: () => context.push(
+                          AppRoutes.purchaseDetail,
+                          extra: row.purchase,
+                        ),
+                        child: Text(Money.formatPaise(row.purchase.totalPaise)),
+                      ),
                     ),
-                    child: Text(Money.formatPaise(row.purchase.totalPaise)),
-                  ),
+                  ],
                 ),
-              ],
-            ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -476,7 +482,7 @@ void _showPurchaseActions(
   WidgetRef ref,
   Purchase purchase,
 ) {
-  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? true;
+  final isOwner = ref.read(userProfileProvider).value?.isOwner ?? false;
   showContextActionSheet(
     context,
     title: purchase.purchaseNumber,

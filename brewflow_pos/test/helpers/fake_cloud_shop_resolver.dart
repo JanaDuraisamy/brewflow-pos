@@ -14,8 +14,11 @@ final class FakeCloudShopResolver extends CloudShopResolver {
     this.fetchThrows = false,
     this.roster = const [],
     this.rosterThrows = false,
+    this.managedShops = const [],
+    this.managedShopsThrows = false,
     this.deleteStaffResult = true,
-  }) : super();
+    Map<String, String>? staffProfileRoles,
+  }) : staffProfileRoles = staffProfileRoles ?? {};
 
   /// The profile [fetchProfile] returns (null = no cloud profile).
   final CloudUserProfile? profile;
@@ -33,22 +36,46 @@ final class FakeCloudShopResolver extends CloudShopResolver {
   final bool fetchThrows;
 
   /// The shop staff roster [loadShopStaff] returns. Mutable so a test can swap
-  /// the roster between authorization rebuilds.
+  /// the roster between authorization rebuilds. Used as the fallback for any
+  /// shop that has no entry in [rostersByShop].
   List<CloudStaffMember> roster;
+
+  /// Per-shop rosters keyed by shop id, consulted by [loadShopStaff] before
+  /// [roster]. Lets a test model an owner who manages two businesses with
+  /// different staff on each.
+  Map<String, List<CloudStaffMember>> rostersByShop = {};
+
+  /// Shop ids whose roster fetch should fail, so a test can prove one
+  /// unreachable business does not block the others.
+  Set<String> rosterThrowsFor = {};
 
   /// When true, [loadShopStaff] throws (roster outage), exercising the
   /// "a roster hiccup never blocks authorization" fallback.
   bool rosterThrows;
 
+  /// The memberships [listManagedShops] returns — the clear-data recovery
+  /// source. Empty means "no second business exists in the cloud".
+  List<CloudManagedShop> managedShops;
+
+  /// When true, [listManagedShops] throws (cloud outage), exercising the
+  /// "recovery fails, fall back to create" path.
+  bool managedShopsThrows;
+
+  /// Number of times [listManagedShops] has been called.
+  int managedShopQueries = 0;
+
   /// Result of [deleteStaffProfile]. False simulates the cloud refusing the
   /// delete, which must leave the local mirror untouched.
   final bool deleteStaffResult;
 
+  /// Simulated cloud `user_profiles.role` by auth user id. When empty, every
+  /// delete uses [deleteStaffResult] for backward compatibility. When
+  /// populated, only an explicit `'STAFF'` entry can succeed, mirroring the
+  /// server RPC's OWNER refusal and unknown-target failure.
+  final Map<String, String> staffProfileRoles;
+
   /// Every auth user id handed to [deleteStaffProfile] (in call order).
   final List<String> deletedAuthUserIds = [];
-
-  /// Every shop id handed to [deleteStaffProfile] (in call order).
-  final List<String> deletedShopIds = [];
 
   /// Every shop id handed to [loadShopStaff] (in call order).
   final List<String> rosterQueries = [];
@@ -71,17 +98,26 @@ final class FakeCloudShopResolver extends CloudShopResolver {
   @override
   Future<List<CloudStaffMember>> loadShopStaff(String shopId) async {
     rosterQueries.add(shopId);
-    if (rosterThrows) throw Exception('roster unavailable');
-    return roster;
+    if (rosterThrows || rosterThrowsFor.contains(shopId)) {
+      throw Exception('roster unavailable');
+    }
+    return rostersByShop[shopId] ?? roster;
   }
 
   @override
-  Future<bool> deleteStaffProfile({
-    required String authUserId,
-    required String shopId,
-  }) async {
+  Future<List<CloudManagedShop>> listManagedShops() async {
+    managedShopQueries++;
+    if (managedShopsThrows) throw Exception('cloud unavailable');
+    return managedShops;
+  }
+
+  @override
+  Future<bool> deleteStaffProfile({required String authUserId}) async {
     deletedAuthUserIds.add(authUserId);
-    deletedShopIds.add(shopId);
+    if (staffProfileRoles.isNotEmpty &&
+        staffProfileRoles[authUserId] != 'STAFF') {
+      return false;
+    }
     return deleteStaffResult;
   }
 

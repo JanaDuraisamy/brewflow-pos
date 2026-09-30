@@ -134,4 +134,84 @@ void main() {
     );
     expect(await saleShop(completed.sale.id), 'shop-product');
   });
+
+  group('explicit session scope (staff checkout)', () {
+    Future<void> seedScopelessProduct() async {
+      await db
+          .into(db.products)
+          .insert(
+            ProductsCompanion.insert(
+              id: const Value('p-loose'),
+              shopId: const Value(null),
+              categoryId: 'cat-1',
+              name: 'Loose product',
+              sellingPricePaise: 6500,
+              stockQuantity: const Value(10),
+              isActive: const Value(true),
+            ),
+          );
+    }
+
+    CartLine looseLine() => const CartLine(
+      productId: 'p-loose',
+      productName: 'Loose product',
+      sku: null,
+      unitPricePaise: 6500,
+      quantity: 1,
+      maxQuantity: 99,
+    );
+
+    test(
+      'explicit shop pins a scopeless product instead of the owner fallback',
+      () async {
+        // The seeded OWNER profile points at shop-profile. A scopeless cart
+        // line would resolve there — a shop the staff caller may hold no
+        // membership for. The controller therefore pins staff sales to the
+        // staff shop explicitly; the repository must honor that outright.
+        await seedScopelessProduct();
+        final completed = await repo.completeSale(
+          lines: [looseLine()],
+          paymentStatus: PaymentStatus.paid,
+          paymentMethod: PaymentMethod.cash,
+          shopId: 'shop-product',
+        );
+        expect(await saleShop(completed.sale.id), 'shop-product');
+      },
+    );
+
+    test(
+      'explicit shop with foreign products fails closed without writing',
+      () async {
+        await seedProduct(
+          id: 'p-1',
+          shopId: 'shop-product',
+          categoryId: 'cat-1',
+        );
+        expect(
+          () => repo.completeSale(
+            lines: [line('p-1')],
+            paymentStatus: PaymentStatus.paid,
+            paymentMethod: PaymentMethod.cash,
+            shopId: 'shop-b',
+          ),
+          throwsA(isA<UnexpectedBillingFailure>()),
+        );
+        expect(
+          await db.select(db.sales).get(),
+          isEmpty,
+          reason: 'a cross-shop attempt must persist nothing',
+        );
+      },
+    );
+
+    test('no explicit shop keeps deriving from the lines', () async {
+      await seedProduct(id: 'p-1', shopId: 'shop-product', categoryId: 'cat-1');
+      final completed = await repo.completeSale(
+        lines: [line('p-1')],
+        paymentStatus: PaymentStatus.paid,
+        paymentMethod: PaymentMethod.cash,
+      );
+      expect(await saleShop(completed.sale.id), 'shop-product');
+    });
+  });
 }

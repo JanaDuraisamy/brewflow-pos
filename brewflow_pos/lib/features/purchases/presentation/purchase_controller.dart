@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/purchases/data/purchases_cloud_gateway.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -150,12 +151,24 @@ final class PurchasesController extends AsyncNotifier<List<PurchaseRow>> {
 
   Future<void> voidPurchase(String id) async {
     requireOwner(ref);
+    // Voiding reverses every stock movement a receive added, so it is the
+    // other half of the receive trace: a void with no matching
+    // `purchase.received` is exactly the "stock never came back" case.
+    AppTrace.event('purchase.void', {'purchaseRef': AppTrace.userRef(id)});
     try {
       await ref.read(purchasesRepositoryProvider).voidPurchase(id);
+      AppTrace.event('purchase.voided', {'purchaseRef': AppTrace.userRef(id)});
       ref.invalidateSelf();
-    } on PurchasesFailure {
+    } on PurchasesFailure catch (failure) {
+      AppTrace.warn('purchase.void_reject', {
+        'purchaseRef': AppTrace.userRef(id),
+        'failure': failure.runtimeType.toString(),
+      });
       rethrow;
     } catch (error, stackTrace) {
+      AppTrace.fail('purchase.void_fail', error, stackTrace, {
+        'purchaseRef': AppTrace.userRef(id),
+      });
       AppLog.error(
         'Failed to void purchase',
         tag: tag,
@@ -356,17 +369,44 @@ final class PurchaseFormController extends Notifier<PurchaseFormState> {
     final current = state;
     if (current.submitting) return null;
     if (current.lines.isEmpty) {
+      AppTrace.warn('purchase.receive', {
+        'stage': 'validation',
+        'reason': 'empty_cart',
+      });
       throw const EmptyPurchaseFailure();
     }
     for (final line in current.lines) {
       if (line.quantity < 1) {
+        AppTrace.warn('purchase.receive', {
+          'stage': 'validation',
+          'reason': 'invalid_quantity',
+          'lines': current.lines.length,
+        });
         throw const InvalidPurchaseQuantityFailure();
       }
       if (line.unitCostPaise < 0) {
+        AppTrace.warn('purchase.receive', {
+          'stage': 'validation',
+          'reason': 'invalid_cost',
+          'lines': current.lines.length,
+        });
         throw const InvalidPurchaseCostFailure();
       }
     }
     state = state.copyWith(submitting: true);
+    // Receiving is the counterpart to a sale: it adds stock and reverses on
+    // void, so the line count and total cost are what a stock discrepancy
+    // report has to be reconciled against.
+    final stopwatch = Stopwatch()..start();
+    AppTrace.event('purchase.receive', {
+      'stage': 'submit',
+      'lines': current.lines.length,
+      'totalPaise': current.lines.fold<int>(
+        0,
+        (sum, line) => sum + (line.unitCostPaise * line.quantity),
+      ),
+      'supplierRef': AppTrace.userRef(current.supplierId),
+    });
     try {
       final purchase = await ref
           .read(purchasesRepositoryProvider)
@@ -383,6 +423,12 @@ final class PurchaseFormController extends Notifier<PurchaseFormState> {
             supplierId: current.supplierId,
             notes: notes,
           );
+      stopwatch.stop();
+      AppTrace.event('purchase.received', {
+        'purchaseRef': AppTrace.userRef(purchase.id),
+        'lines': current.lines.length,
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       state = state.copyWith(submitting: false, lines: const []);
       ref.invalidate(purchasesProvider);
       ref.invalidate(productsProvider);
@@ -391,11 +437,24 @@ final class PurchaseFormController extends Notifier<PurchaseFormState> {
       ref.invalidate(dashboardControllerProvider);
       ref.invalidate(reportsControllerProvider);
       return purchase;
-    } on PurchasesFailure {
+    } on PurchasesFailure catch (failure) {
+      stopwatch.stop();
       state = state.copyWith(submitting: false);
+      AppTrace.fail('purchase.receive_fail', failure, null, {
+        'stage': 'repository',
+        'lines': current.lines.length,
+        'draftCleared': state.lines.isEmpty,
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       rethrow;
     } catch (error, stackTrace) {
+      stopwatch.stop();
       state = state.copyWith(submitting: false);
+      AppTrace.fail('purchase.receive_fail', error, stackTrace, {
+        'stage': 'repository',
+        'lines': current.lines.length,
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       AppLog.error(
         'Failed to receive purchase',
         tag: tag,

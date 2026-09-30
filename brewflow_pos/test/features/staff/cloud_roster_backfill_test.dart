@@ -244,4 +244,237 @@ void main() {
       expect(staff.storedProfiles.length, 1);
     });
   });
+
+  // The owner manages two businesses. The roster pull used to mirror only the
+  // primary shop, so anyone the owner staffed under the Food Truck from another
+  // device never appeared on this one.
+  group('multi-business roster backfill', () {
+    const cafeId = 'shop-1';
+    const truckId = 'truck-uuid-0002';
+
+    CloudStaffMember staff_(String id, String email, {String role = 'STAFF'}) =>
+        CloudStaffMember(
+          authUserId: id,
+          email: email,
+          role: role,
+          isActive: true,
+        );
+
+    /// Container bootstrapped as OWNER of the Cafe, with the Food Truck also
+    /// present in the cloud memberships.
+    (ProviderContainer, FakeStaffRepository, FakeCloudShopResolver)
+    ownerWithBoth() {
+      final (container, staff, resolver) = build(
+        user: _owner,
+        roster: const [],
+      );
+      resolver.managedShops = [
+        const CloudManagedShop(
+          shopId: cafeId,
+          shopName: 'Cafe',
+          role: 'OWNER',
+          isActive: true,
+        ),
+        const CloudManagedShop(
+          shopId: truckId,
+          shopName: 'Food Truck',
+          role: 'OWNER',
+          isActive: true,
+        ),
+      ];
+      return (container, staff, resolver);
+    }
+
+    test('rosters for BOTH businesses are mirrored on login', () async {
+      final (container, staff, resolver) = ownerWithBoth();
+      staff.ensureShop();
+      await staff.claimOwnership(_owner);
+      resolver.rostersByShop = {
+        cafeId: [staff_('cafe-ava', 'ava@brewflow.example')],
+        truckId: [staff_('truck-leo', 'leo@brewflow.example')],
+      };
+
+      await container.read(userProfileProvider.future);
+
+      final byEmail = {for (final m in await staff.staffMembers()) m.email: m};
+      expect(byEmail['ava@brewflow.example']!.shopId, cafeId);
+      expect(byEmail['leo@brewflow.example']!.shopId, truckId);
+      expect(
+        resolver.rosterQueries,
+        [cafeId, truckId],
+        reason: 'the primary is mirrored first so shared members bind stably',
+      );
+    });
+
+    test('a secondary business gets a local shop row to attach to', () async {
+      final (container, staff, resolver) = ownerWithBoth();
+      staff.ensureShop();
+      await staff.claimOwnership(_owner);
+      resolver.rostersByShop = {
+        truckId: [staff_('truck-leo', 'leo@brewflow.example')],
+      };
+
+      await container.read(userProfileProvider.future);
+
+      expect(
+        staff.ensureShopCalls.map((call) => call.id),
+        contains(truckId),
+        reason: 'the roster upsert needs a local row for the recovered shop',
+      );
+      expect(
+        staff.ensureShopCalls.firstWhere((call) => call.id == truckId).name,
+        'Food Truck',
+      );
+    });
+
+    test(
+      'an OWNER row in a secondary roster is not mirrored as STAFF',
+      () async {
+        final (container, staff, resolver) = ownerWithBoth();
+        staff.ensureShop();
+        await staff.claimOwnership(_owner);
+        resolver.rostersByShop = {
+          truckId: [
+            staff_('a-owner-2', 'owner2@brewflow.example', role: 'OWNER'),
+            staff_('truck-leo', 'leo@brewflow.example'),
+          ],
+        };
+
+        await container.read(userProfileProvider.future);
+
+        expect((await staff.staffMembers()).map((m) => m.email), [
+          'leo@brewflow.example',
+        ]);
+      },
+    );
+
+    test(
+      'staff shared across both businesses keeps the primary binding',
+      () async {
+        final (container, staff, resolver) = ownerWithBoth();
+        staff.ensureShop();
+        await staff.claimOwnership(_owner);
+        // Same person staffed in both businesses.
+        resolver.rostersByShop = {
+          cafeId: [staff_('shared-1', 'sam@brewflow.example')],
+          truckId: [staff_('shared-1', 'sam@brewflow.example')],
+        };
+
+        await container.read(userProfileProvider.future);
+
+        // The local schema binds a profile to one shop, so the row must not be
+        // re-pointed on every login and flip the member's authorization.
+        final sam = (await staff.staffMembers()).singleWhere(
+          (m) => m.email == 'sam@brewflow.example',
+        );
+        expect(sam.shopId, cafeId);
+      },
+    );
+
+    test('one unreachable business does not block the other', () async {
+      final (container, staff, resolver) = ownerWithBoth();
+      staff.ensureShop();
+      await staff.claimOwnership(_owner);
+      resolver.rostersByShop = {
+        cafeId: [staff_('cafe-ava', 'ava@brewflow.example')],
+      };
+      resolver.rosterThrowsFor = {truckId};
+
+      final profile = await container.read(userProfileProvider.future);
+
+      expect(profile!.isOwner, isTrue);
+      expect(
+        (await staff.staffMembers()).map((m) => m.email),
+        ['ava@brewflow.example'],
+        reason: 'the Cafe roster still mirrors despite the truck outage',
+      );
+      expect(resolver.rosterQueries, [cafeId, truckId]);
+    });
+
+    test(
+      'a managed-shop lookup failure still mirrors the primary shop',
+      () async {
+        final (container, staff, resolver) = ownerWithBoth();
+        staff.ensureShop();
+        await staff.claimOwnership(_owner);
+        resolver.managedShopsThrows = true;
+        resolver.roster = [staff_('cafe-ava', 'ava@brewflow.example')];
+
+        await container.read(userProfileProvider.future);
+
+        expect(
+          (await staff.staffMembers()).map((m) => m.email),
+          ['ava@brewflow.example'],
+          reason: 'offline-first: the primary must not go dark',
+        );
+        expect(resolver.rosterQueries, [cafeId]);
+      },
+    );
+
+    test('a duplicate membership does not double-mirror the primary', () async {
+      final (container, staff, resolver) = ownerWithBoth();
+      staff.ensureShop();
+      await staff.claimOwnership(_owner);
+      // The RPC echoes the primary back; it must be de-duplicated.
+      resolver.managedShops = [
+        const CloudManagedShop(
+          shopId: cafeId,
+          shopName: 'Cafe',
+          role: 'OWNER',
+          isActive: true,
+        ),
+        const CloudManagedShop(
+          shopId: cafeId,
+          shopName: 'Cafe',
+          role: 'OWNER',
+          isActive: true,
+        ),
+        const CloudManagedShop(
+          shopId: truckId,
+          shopName: 'Food Truck',
+          role: 'OWNER',
+          isActive: true,
+        ),
+      ];
+      resolver.rostersByShop = {
+        cafeId: [staff_('cafe-ava', 'ava@brewflow.example')],
+      };
+
+      await container.read(userProfileProvider.future);
+
+      expect(resolver.rosterQueries, [cafeId, truckId]);
+    });
+
+    test('a STAFF session pulls no roster at all', () async {
+      final (container, staff, resolver) = build(
+        user: const AuthUser(id: 's-1', email: 'leo@brewflow.example'),
+        roster: const [],
+      );
+      await staff.ensureShop();
+      // A STAFF who already exists locally takes the login fast path, so the
+      // only place a roster pull could happen is the OWNER-only backfill.
+      await staff.createStaffProfile(
+        identity: const AuthUser(id: 's-1', email: 'leo@brewflow.example'),
+        shopId: 'shop-1',
+      );
+      resolver.managedShops = [
+        const CloudManagedShop(
+          shopId: 'shop-1',
+          shopName: 'Cafe',
+          role: 'OWNER',
+          isActive: true,
+        ),
+      ];
+
+      final profile = await container.read(userProfileProvider.future);
+
+      expect(profile!.isOwner, isFalse);
+      expect(
+        resolver.managedShopQueries,
+        0,
+        reason: 'only the OWNER mirrors rosters',
+      );
+      expect(resolver.rosterQueries, isEmpty);
+    });
+  });
 }

@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
+import 'package:brewflow_pos/features/inventory/data/drift_shop_product_stock_repository.dart';
+import 'package:brewflow_pos/features/inventory/domain/shop_product_stock_repository.dart';
+import 'package:brewflow_pos/features/inventory/presentation/food_truck_stock_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// ---------------------------------------------------------------------------
@@ -54,4 +57,29 @@ final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
     }),
   );
   return service;
+});
+
+/// Owns the Food Truck shelf overlay controller.
+///
+/// The per-business stock overlay, built from the one app-scoped database.
+///
+/// Exposed as its own provider (rather than only reaching for the database
+/// inside each controller) so every read surface that projects effective stock
+/// shares ONE source, and a test can substitute a fake overlay in a single
+/// override instead of standing up a real database.
+final shopProductStockRepositoryProvider = Provider<ShopProductStockRepository>(
+  (ref) => DriftShopProductStockRepository(ref.watch(appDatabaseProvider)),
+);
+
+/// The Food Truck shelf editor.
+///
+/// The repository is built from the app-scoped [appDatabaseProvider] so this
+/// shares the one database connection instead of opening a second one, and
+/// tests can override either this provider or the database.
+final foodTruckStockControllerProvider = Provider<FoodTruckStockController>((
+  ref,
+) {
+  return FoodTruckStockController(
+    ref.watch(shopProductStockRepositoryProvider),
+  );
 });

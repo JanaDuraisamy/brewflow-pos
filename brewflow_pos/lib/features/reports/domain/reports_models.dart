@@ -78,26 +78,39 @@ final class SalesSummary {
       orderCount == 0 ? null : totalPaise ~/ orderCount;
 }
 
-/// Receipt totals split by payment method.
+/// Receipt totals split across the three payment summary categories.
+///
+/// BANK is deliberately not a category: it is a retired till method that the
+/// counter can no longer record, so a "how was this range paid" report has
+/// nothing to say about it. Its historical money is folded into [cashPaise]
+/// (see `PaymentAttribution`) and credit money is reported honestly as
+/// [notPaidPaise] instead of being dropped for having no method.
 final class PaymentBreakdown {
   const PaymentBreakdown({
-    required this.byMethodPaise,
+    required this.cashPaise,
+    required this.upiPaise,
+    required this.notPaidPaise,
     required this.totalPaise,
   });
 
-  /// Totals per payment method; methods without sales are absent.
-  final Map<PaymentMethod, int> byMethodPaise;
+  /// Settled counter money, including any retired-BANK history.
+  final int cashPaise;
 
-  /// Same as the sales total, kept here so shares never divide by zero.
+  /// Settled UPI money.
+  final int upiPaise;
+
+  /// Credit money still owed inside the range: the total of every NOT_PAID
+  /// sale in the window.
+  final int notPaidPaise;
+
+  /// The range's sales total, kept here so shares never divide by zero.
   final int totalPaise;
 
-  int paiseOf(PaymentMethod method) => byMethodPaise[method] ?? 0;
-
-  /// Whole-percent share of the window total; null when there is no sales
+  /// Whole-percent share of the range total; null when there is no sales
   /// total (the UI then shows '—').
-  int? shareOf(PaymentMethod method) {
+  int? shareOf(int paise) {
     if (totalPaise <= 0) return null;
-    return (paiseOf(method) * 100) ~/ totalPaise;
+    return (paise * 100) ~/ totalPaise;
   }
 }
 

@@ -18,6 +18,7 @@ final class ProductsDao {
   ///
   /// [search] matches product name or SKU (case-insensitive substring).
   /// [active] restricts to active/inactive items when non-null.
+  /// [shopId] when provided restricts to products for that shop.
   Future<List<Product>> query({
     String? search,
     String? categoryId,
@@ -40,6 +41,45 @@ final class ProductsDao {
     if (shopId != null) {
       query.where((t) => t.shopId.equals(shopId));
     }
+    return query.get();
+  }
+
+  /// Products filtered and sorted in SQL, scoped to a business shop with
+  /// optional shared‑product visibility from the catalog owner.
+  ///
+  /// When [shopId] and [catalogOwnerShopId] are the same (Cafe mode) the
+  /// second clause is a no‑op and the query reduces to “own products only”,
+  /// preserving existing Cafe behaviour.
+  Future<List<Product>> queryForBusiness({
+    String? search,
+    String? categoryId,
+    bool? active,
+    required String shopId,
+    required String catalogOwnerShopId,
+  }) {
+    final query = _db.select(_db.products)
+      ..orderBy([(t) => OrderingTerm.asc(t.name)]);
+
+    final text = search?.trim();
+    if (text != null && text.isNotEmpty) {
+      query.where((t) => t.name.contains(text) | t.sku.contains(text));
+    }
+    if (categoryId != null) {
+      query.where((t) => t.categoryId.equals(categoryId));
+    }
+    if (active != null) {
+      query.where((t) => t.isActive.equals(active));
+    }
+    // Owned by the active shop, OR shared from the catalog owner when
+    // visibleInShops is true. These must be a single OR expression: successive
+    // where() calls are combined with AND, which asked for one row to be owned
+    // by two different shops at once and matched nothing for the Food Truck.
+    query.where(
+      (t) =>
+          t.shopId.equals(shopId) |
+          (t.shopId.equals(catalogOwnerShopId) & t.visibleInShops),
+    );
+
     return query.get();
   }
 
@@ -73,6 +113,23 @@ final class ProductsDao {
       query.where((t) => t.shopId.equals(shopId));
     }
     return query.getSingleOrNull();
+  }
+
+  /// Whether [id] is a row the caller is allowed to mutate.
+  ///
+  /// The Food Truck can *see* a Cafe master product because the Cafe shared it,
+  /// but seeing is not owning: an ID-only deactivate or delete would strip the
+  /// Cafe's catalogue. [shopIds] is the explicit allow-set of shops whose rows
+  /// may change. Null keeps the historical unscoped behaviour, an empty list
+  /// matches nothing, and a legacy null-`shop_id` row stays claimable so an
+  /// upgrade does not orphan pre-existing products.
+  Future<bool> isOwnedBy(String id, List<String>? shopIds) async {
+    if (shopIds == null) return true;
+    if (shopIds.isEmpty) return false;
+    final row = await byId(id);
+    if (row == null) return false;
+    final owner = row.shopId;
+    return owner == null || shopIds.contains(owner);
   }
 
   Future<void> update(String id, ProductsCompanion companion) async {

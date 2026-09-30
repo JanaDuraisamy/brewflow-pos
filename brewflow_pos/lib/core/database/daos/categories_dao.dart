@@ -32,6 +32,55 @@ final class CategoriesDao {
     return query.watch();
   }
 
+  /// Categories reachable from the active business.
+  ///
+  /// Two sources, and the difference matters:
+  ///
+  ///  * Categories the business OWNS are always listed, even when currently
+  ///    empty, so a freshly created category is immediately selectable.
+  ///  * Categories belonging to the catalog owner are listed ONLY when a
+  ///    product the business may actually see sits in them. Deriving this from
+  ///    the product table rather than from the category's own `shop_id` is what
+  ///    stops a hidden product from leaking the shape of the Cafe's catalogue:
+  ///    an unshared product's category must not appear as an empty filter on the
+  ///    truck's screen.
+  ///
+  /// The visibility rule mirrors `ProductsDao.queryForBusiness` exactly — own
+  /// rows, plus the owner's rows when `visibleInShops` is set — so the filter
+  /// list and the product list can never disagree.
+  Future<List<Category>> queryForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+  }) async {
+    final products = _db.products;
+    final sharedCategoryIds =
+        await (_db.selectOnly(products)
+              ..addColumns([products.categoryId])
+              ..where(
+                products.shopId.equals(catalogOwnerShopId) &
+                    products.visibleInShops &
+                    products.categoryId.isNotNull(),
+              ))
+            .get();
+    // Deduped here rather than in SQL: the row count here is bounded by the
+    // shared catalogue, and a plain Set keeps the query portable across
+    // SQLite versions whose DISTINCT support in subqueries varies.
+    final reachable = sharedCategoryIds
+        .map((row) => row.read(products.categoryId))
+        .whereType<String>()
+        .toSet();
+
+    final categories = await getAll();
+    return categories
+        .where(
+          (category) =>
+              category.shopId == shopId ||
+              (category.shopId == catalogOwnerShopId &&
+                  reachable.contains(category.id)),
+        )
+        .toList();
+  }
+
   Future<Category?> getById(String id) => (_db.select(
     _db.categories,
   )..where((t) => t.id.equals(id))).getSingleOrNull();
@@ -63,6 +112,22 @@ final class CategoriesDao {
 
   Future<Category> insert(CategoriesCompanion companion) =>
       _db.into(_db.categories).insertReturning(companion);
+
+  /// Whether [id] is a row the caller is allowed to mutate.
+  ///
+  /// Null means "no business context" and every row qualifies, matching the
+  /// unscoped callers. A non-empty list is an explicit allow-set: a row owned by
+  /// another shop must not be touched through an ID-only call. A legacy row with
+  /// a null `shop_id` predates multi-shop and stays claimable, otherwise an
+  /// upgrade would orphan the user's existing categories.
+  Future<bool> isOwnedBy(String id, List<String>? shopIds) async {
+    if (shopIds == null) return true;
+    if (shopIds.isEmpty) return false;
+    final row = await getById(id);
+    if (row == null) return false;
+    final owner = row.shopId;
+    return owner == null || shopIds.contains(owner);
+  }
 
   Future<void> updateName(String id, String name) async {
     await (_db.update(_db.categories)..where((t) => t.id.equals(id))).write(

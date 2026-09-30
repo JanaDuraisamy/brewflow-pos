@@ -21,6 +21,12 @@ final class FakeStaffRepository implements StaffRepository {
   Shop? shop;
   Object? claimError;
 
+  /// Every `(id, name)` pair handed to [ensureShop] / [ensureShopWithId], in
+  /// call order. Lets a test prove which shop identity was actually adopted
+  /// (e.g. that a cloud-recovered Food Truck id was used instead of a
+  /// freshly minted uuid).
+  final List<({String id, String name})> ensureShopCalls = [];
+
   /// Thrown by the archive paths when set, to exercise delete failures.
   Object? archiveError;
 
@@ -107,12 +113,14 @@ final class FakeStaffRepository implements StaffRepository {
   @override
   Future<Shop> ensureShop({String name = 'My Shop'}) async {
     shop ??= Shop(id: 'shop-1', name: name);
+    ensureShopCalls.add((id: shop!.id, name: name));
     return shop!;
   }
 
   @override
   Future<Shop> ensureShopWithId(String id, {String name = 'My Shop'}) async {
     shop = Shop(id: id, name: name);
+    ensureShopCalls.add((id: id, name: name));
     return shop!;
   }
 

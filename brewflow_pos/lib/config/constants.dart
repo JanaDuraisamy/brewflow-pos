@@ -37,10 +37,19 @@ final class AppConstants {
   static const String databaseFileName = 'brewflow_pos.db';
 
   /// Current schema version. Bump on every database migration.
-  static const int databaseSchemaVersion = 27;
+  static const int databaseSchemaVersion = 30;
 
-  /// Prefix for human-readable receipt numbers (e.g. 'BF-000042').
-  static const String receiptPrefix = 'BF-';
+  /// Receipt prefix stamped onto a newly created business (e.g. 'BF-000042').
+  ///
+  /// This is only a DEFAULT for `shops.receipt_prefix` — the value written when
+  /// a shop row is created. Receipts are labelled from the shop's own column,
+  /// never from this constant, so a second business on the same device can
+  /// carry a different label without disturbing the first one's numbering.
+  static const String defaultShopReceiptPrefix = 'BF-';
+
+  /// Receipt prefix for the Food Truck business (e.g. 'FT-000042'), so truck
+  /// receipts never look like Cafe receipts on the same till roll.
+  static const String foodTruckReceiptPrefix = 'FT-';
 
   /// Prefix for human-readable purchase numbers (e.g. 'PUR-000012').
   static const String purchaseNumberPrefix = 'PUR-';

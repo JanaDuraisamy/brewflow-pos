@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_stock_movement_repository.dart';
@@ -224,6 +225,10 @@ final class VariantMovementsController
 /// Shared adjustment pipeline: run the repository call, then refresh the
 /// affected state. [StockMovementFailure]s pass through untouched; anything
 /// unexpected is logged and rethrown as [UnexpectedStockMovementFailure].
+///
+/// This is the one place every stock adjustment passes through, so it is where
+/// the mutation is traced: a manual edit and the two automatic deductions
+/// (sale, purchase receive) are then distinguishable by `source` in logcat.
 Future<StockMovement> _adjustAndRefresh(
   Ref ref, {
   required String productId,
@@ -231,6 +236,7 @@ Future<StockMovement> _adjustAndRefresh(
   required int delta,
   required StockAdjustmentReason reason,
   String? note,
+  String source = 'manual_adjust',
 }) async {
   try {
     final movement = await ref
@@ -242,11 +248,31 @@ Future<StockMovement> _adjustAndRefresh(
           reason: reason,
           note: note,
         );
+    AppTrace.event('stock.adjust', {
+      'source': source,
+      'productRef': AppTrace.userRef(productId),
+      'variant': variantId != null,
+      'delta': delta,
+      'reason': reason.name,
+      'balance': movement.stockAfter,
+    });
     _refreshAfterMutation(ref);
     return movement;
-  } on StockMovementFailure {
+  } on StockMovementFailure catch (failure) {
+    AppTrace.warn('stock.adjust', {
+      'source': source,
+      'productRef': AppTrace.userRef(productId),
+      'delta': delta,
+      'outcome': 'rejected',
+      'failure': failure.runtimeType.toString(),
+    });
     rethrow;
   } catch (error, stackTrace) {
+    AppTrace.fail('stock.adjust_fail', error, stackTrace, {
+      'source': source,
+      'productRef': AppTrace.userRef(productId),
+      'delta': delta,
+    });
     AppLog.error(
       'Failed to adjust stock',
       tag: 'StockMovement',
@@ -270,11 +296,23 @@ Future<StockMovement> _recordOpeningAndRefresh(
     final movement = await ref
         .read(stockMovementRepositoryProvider)
         .recordOpening(productId: productId, quantity: quantity, note: note);
+    AppTrace.event('stock.opening', {
+      'productRef': AppTrace.userRef(productId),
+      'quantity': quantity,
+    });
     _refreshAfterMutation(ref);
     return movement;
-  } on StockMovementFailure {
+  } on StockMovementFailure catch (failure) {
+    AppTrace.warn('stock.opening', {
+      'productRef': AppTrace.userRef(productId),
+      'outcome': 'rejected',
+      'failure': failure.runtimeType.toString(),
+    });
     rethrow;
   } catch (error, stackTrace) {
+    AppTrace.fail('stock.opening_fail', error, stackTrace, {
+      'productRef': AppTrace.userRef(productId),
+    });
     AppLog.error(
       'Failed to record opening stock',
       tag: 'StockMovement',

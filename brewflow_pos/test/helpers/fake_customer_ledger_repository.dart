@@ -253,13 +253,23 @@ final class FakeCustomerLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
-  Future<List<CustomerReceivable>> receivables({List<String>? shopIds}) async {
+  Future<List<CustomerReceivable>> receivables({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) async {
     final error = dueSummaryError;
     if (error != null) {
       throw error;
     }
+    final scoped = shopIds != null && shopIds.isNotEmpty;
     final groupings = <String, List<CustomerReceivableBill>>{};
     for (final bill in bills) {
+      // Mirrors the DAO: candidate bills are bounded by the requested window
+      // (inclusive, on the bill's own createdAt) and by the read scope.
+      if (fromUtc != null && bill.createdAt.isBefore(fromUtc)) continue;
+      if (toUtc != null && bill.createdAt.isAfter(toUtc)) continue;
+      if (scoped && !shopIds.contains(bill.shopId)) continue;
       final due = bill.totalPaise - _paidFor(bill.id);
       if (due <= 0) {
         continue;

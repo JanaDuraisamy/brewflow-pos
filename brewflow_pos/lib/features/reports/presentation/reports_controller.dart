@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
+import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
@@ -42,8 +43,14 @@ final reportsRangeProvider =
     );
 
 final class ReportsRangeController extends Notifier<ReportRange> {
+  /// Reports open on **Today**. This is a reporting window over completed
+  /// sales, not a lifetime ledger: opening on Last 30 days showed a range
+  /// the owner never asked for. [ReportRange.datePreset] also drives which
+  /// chip renders selected, so the default is correct on both the bounds and
+  /// the highlight. Every other preset still works through [setPreset] and
+  /// [setCustomRange].
   @override
-  ReportRange build() => _boundsFor(OrdersDatePreset.last30, DateTime.now());
+  ReportRange build() => _boundsFor(OrdersDatePreset.today, DateTime.now());
 
   /// Applies a named preset computed from the current time. Presets that do
   /// not describe a window ([custom], [all]) are ignored here.
@@ -160,19 +167,18 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
       final daily = _dailySales(range, window);
       var salesTotal = 0;
       var itemTotal = 0;
-      final paymentSplit = <PaymentMethod, int>{};
+      // Cash + UPI + Not Paid, attributed from the existing payment-status
+      // model (credit sales carry no method, split sales store their legs in
+      // sale_payments) so the three rows reconcile with the range total.
+      final paymentSplit = attributePayments(
+        window,
+        legsBySaleId: await orders.paymentLegsFor(
+          window.map((order) => order.id),
+        ),
+      );
       for (final order in window) {
         salesTotal += order.totalPaise;
         itemTotal += order.itemCount;
-        // NOT_PAID credit sales carry no method; they still count in revenue
-        // and profit, just not in the method breakdown.
-        final method = order.paymentMethod;
-        if (method == null) continue;
-        paymentSplit.update(
-          method,
-          (total) => total + order.totalPaise,
-          ifAbsent: () => order.totalPaise,
-        );
       }
 
       final byProduct = <(String, String?), List<int>>{};
@@ -269,8 +275,20 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         partialCosts = false;
       }
 
-      // Receivables and payables are current balances — never window-bounded.
-      final receivables = await ledger.receivables(shopIds: shopIds);
+      // Receivables are bounded by the SELECTED RANGE: only credit bills
+      // created inside [fromUtc]..[toUtc] that are still outstanding count,
+      // and the open-bill counts are scoped the same way. This card used to
+      // read the all-time ledger balance, so a "Today" report displayed every
+      // historical due (e.g. an all-time ₹9,047) and a customer's open-bill
+      // count that had nothing to do with the range on screen.
+      //
+      // `null` bounds only happen for the All-time preset, where an
+      // all-time balance is the honest answer.
+      final receivables = await ledger.receivables(
+        shopIds: shopIds,
+        fromUtc: fromUtc,
+        toUtc: toUtc,
+      );
       final shopPayables = await expenses.shopPayables(shopIds: shopIds);
       final totalReceivablePaise = receivables.fold(
         0,
@@ -291,7 +309,9 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
           dailySalesPaise: daily,
         ),
         payments: PaymentBreakdown(
-          byMethodPaise: paymentSplit,
+          cashPaise: paymentSplit.cashPaise,
+          upiPaise: paymentSplit.upiPaise,
+          notPaidPaise: paymentSplit.notPaidPaise,
           totalPaise: salesTotal,
         ),
         expenses: ExpenseSummary(

@@ -1,6 +1,5 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
-import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// ---------------------------------------------------------------------------
@@ -64,6 +63,28 @@ final class CloudStaffMember {
 
   /// Cloud-authoritative grants; empty means "owner never pushed yet".
   final Set<Permission> permissions;
+}
+
+/// One cloud `user_shop_memberships` row the CALLER holds, as returned by the
+/// `list_my_managed_shops` RPC (migration 0034).
+///
+/// This exists because a shop's cloud identity is not recoverable any other
+/// way from the client: `user_shop_memberships` is RLS-enabled with zero
+/// policies and reachable only through security-definer RPCs.
+final class CloudManagedShop {
+  const CloudManagedShop({
+    required this.shopId,
+    required this.shopName,
+    required this.role,
+    required this.isActive,
+  });
+
+  final String shopId;
+  final String shopName;
+
+  /// Raw cloud db value ('OWNER' | 'STAFF').
+  final String role;
+  final bool isActive;
 }
 
 class CloudShopResolver {
@@ -169,10 +190,61 @@ class CloudShopResolver {
     }
   }
 
+  /// Lists every shop the CALLER currently holds an active membership in, via
+  /// the `list_my_managed_shops` RPC (migration 0034).
+  ///
+  /// This is the clear-data recovery path. The Food Truck's shop id was only
+  /// ever kept in SharedPreferences, which "Clear app data" destroys; without
+  /// this the app mints a brand-new UUID and points at an empty phantom shop
+  /// while the real Food Truck sits unreachable in the cloud — the second
+  /// business appears to have lost all its staff, products and sales.
+  ///
+  /// The RPC returns only rows where `auth_user_id = auth.uid()`, so this can
+  /// never surface another owner's businesses.
+  ///
+  /// Best-effort like the other calls here: returns an empty list when Supabase
+  /// is not initialized or the call fails, and the caller must then fall back
+  /// to its offline-first behaviour.
+  Future<List<CloudManagedShop>> listManagedShops() async {
+    final client = _client;
+    if (client == null) return const [];
+    try {
+      final data = await client.rpc<List<dynamic>>('list_my_managed_shops');
+      return [
+        for (final row in data)
+          if (row is Map)
+            () {
+              final shopId = row['shop_id'] as String?;
+              if (shopId == null || shopId.isEmpty) {
+                return null;
+              }
+              return CloudManagedShop(
+                shopId: shopId,
+                shopName:
+                    (row['shop_name'] as String?)?.trim().isNotEmpty ?? false
+                    ? (row['shop_name'] as String).trim()
+                    : 'My Shop',
+                role: (row['role'] as String?) ?? 'STAFF',
+                isActive: row['is_active'] as bool? ?? true,
+              );
+            }()
+          else
+            null,
+      ].whereType<CloudManagedShop>().toList(growable: false);
+    } catch (error) {
+      AppLog.warning(
+        'Cloud managed-shop lookup failed (local prefs still authoritative)',
+        tag: tag,
+        error: error,
+      );
+      return const [];
+    }
+  }
+
   /// Pushes a shop, owner profile and — critically — the caller's OWNER
   /// `user_shop_memberships` row to the cloud in ONE server-side call
-  /// (migration 0013 `bootstrap_owner_membership`). The membership row is what
-  /// every `is_shop_member(shop_id)`-gated RPC (checkout, void, purchases,
+  /// (`bootstrap_owner_membership`, with the Food Truck reactivation repair in
+  /// migration 0032). The membership row is what every `is_shop_member(shop_id)`-gated RPC (checkout, void, purchases,
   /// receipts) and the create-staff boundary authorize against; without it the
   /// cloud rejects every OWNER write with FORBIDDEN. Idempotent: re-pushes are
   /// safe (replays mint no duplicates), which keeps first-boot races safe.
@@ -254,13 +326,12 @@ class CloudShopResolver {
 
   /// Owner-only removal of one staff member's cloud master record.
   ///
-  /// Deletes the `user_profiles` row, then writes a `STAFF_PROFILE` tombstone
-  /// so every other device for the shop drops the member from its roster too.
-  /// The tombstone is required: a deleted row can never appear in a row-scan
-  /// delta query, so without it peers would keep the member forever.
-  ///
-  /// The tombstone id is the Supabase auth user id, which is what peers match
-  /// their local `users.auth_user_id` on.
+  /// Delegates to the server-side `delete_staff_profile_atomic` RPC
+  /// (migration 0032) instead of deleting tables directly. The function runs
+  /// profile deletion, STAFF membership deactivation and STAFF_PROFILE
+  /// tombstone creation in one transaction, derives the target's shop
+  /// server-side, authorizes the caller against that same shop, and refuses
+  /// OWNER targets before writing anything.
   ///
   /// Historical payroll is untouched: staff_attendance, staff_advances,
   /// staff_monthly_salaries and staff_daily_salaries all key staff by a plain
@@ -274,41 +345,24 @@ class CloudShopResolver {
   /// Returns false when there is no cloud client or the delete was rejected;
   /// the caller must NOT drop the local row in that case, or the local mirror
   /// and the cloud would silently disagree.
-  Future<bool> deleteStaffProfile({
-    required String authUserId,
-    required String shopId,
-  }) async {
+  Future<bool> deleteStaffProfile({required String authUserId}) async {
     final client = _client;
     if (client == null) return false;
     try {
-      // Owner protection: never let this path remove an OWNER profile.
-      final target = await client
-          .from('user_profiles')
-          .select('role')
-          .eq('auth_user_id', authUserId)
-          .maybeSingle();
-      if (target == null) return false;
-      if (target['role'] == 'OWNER') {
+      final deleted = await client.rpc<bool>(
+        'delete_staff_profile_atomic',
+        params: {'p_auth_user_id': authUserId},
+      );
+      if (deleted) {
+        AppLog.info('Cloud staff profile deleted: user=$authUserId', tag: tag);
+      } else {
         AppLog.warning(
-          'Refused cloud staff delete for an OWNER profile',
+          'Cloud staff delete refused or failed; local mirror left untouched '
+          '(user=$authUserId)',
           tag: tag,
         );
-        return false;
       }
-      await client
-          .from('user_profiles')
-          .delete()
-          .eq('auth_user_id', authUserId);
-      await client.from('master_deletions').upsert({
-        'entity': MasterEntity.staffProfile.wire,
-        'id': authUserId,
-        'shop_id': shopId,
-      }, onConflict: 'entity,id');
-      AppLog.info(
-        'Cloud staff profile deleted: user=$authUserId shop=$shopId',
-        tag: tag,
-      );
-      return true;
+      return deleted;
     } catch (error, stackTrace) {
       AppLog.error(
         'Cloud staff profile delete failed',

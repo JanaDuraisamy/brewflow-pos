@@ -8,6 +8,8 @@
 /// ---------------------------------------------------------------------------
 library;
 
+import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+
 import 'orders_models.dart';
 
 /// Base for all orders failures. Every subtype carries a user-safe message.
@@ -49,4 +51,15 @@ abstract interface class OrdersRepository {
   /// Full details (header + snapshot items) of one completed sale; throws
   /// [MissingOrderFailure] when the sale does not exist.
   Future<Order> orderById(String id);
+
+  /// Split-payment legs per sale: `{saleId: {method: paise}}`.
+  ///
+  /// A split sale stores a NULL `sales.payment_method` and one
+  /// `sale_payments` row per leg, so payment summaries need these rows to
+  /// attribute split money to Cash/UPI. Sales paid with a single method have
+  /// no legs and are absent from the map. Returns an empty map for an empty
+  /// [saleIds].
+  Future<Map<String, Map<PaymentMethod, int>>> paymentLegsFor(
+    Iterable<String> saleIds,
+  );
 }

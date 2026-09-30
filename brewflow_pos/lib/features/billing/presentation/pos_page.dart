@@ -10,6 +10,7 @@ import 'package:brewflow_pos/core/utils/dates.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_repository.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/core/sharing/share_service.dart';
 import 'package:brewflow_pos/features/printing/data/unverified_printer_service.dart';
 import 'package:brewflow_pos/features/billing/domain/receipt_document.dart';
@@ -22,6 +23,7 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/inventory/presentation/product_thumbnail.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -47,6 +49,56 @@ final class _PosPageState extends ConsumerState<PosPage> {
   PaymentMethod? _payment;
   PaymentStatus _paymentStatus = PaymentStatus.paid;
   bool _checkingOut = false;
+  bool _splitMode = false;
+  final _splitCash = TextEditingController();
+  final _splitUpi = TextEditingController();
+
+  /// The exact split the cashier confirmed in the sheet, or null when nothing
+  /// has been confirmed yet. This is the single input to the Complete Sale
+  /// gate in split mode: a split is a payment in its own right, so requiring
+  /// the single-method picker to be non-null (it is deliberately nulled while
+  /// split mode is on) left the button permanently disabled.
+  SplitPaymentDraft? _splitDraft;
+
+  /// The only instruments a NEW sale may be paid with.
+  ///
+  /// [PaymentMethod.bank] exists in the enum because historical sales and the
+  /// receipt renderer must keep reading it, but it is not a till option and the
+  /// picker never offers it. Gating on "some method is set" instead of this
+  /// predicate let a resumed legacy BANK bill satisfy the Complete Sale gate and
+  /// authorise a fresh BANK sale, which is not something the counter can do.
+  static const Set<PaymentMethod> _newSaleMethods = {
+    PaymentMethod.cash,
+    PaymentMethod.upi,
+  };
+
+  /// Whether [_payment] is a method the counter is allowed to sell with. Null
+  /// (nothing chosen yet) and BANK both fail, so Complete Sale stays disabled
+  /// until an explicit CASH or UPI selection exists.
+  bool get _hasValidSingleMethod =>
+      _payment != null && _newSaleMethods.contains(_payment);
+
+  /// Drops every payment decision this page is holding. Used when the shop
+  /// changes underneath us and when a checkout succeeds, so no half-finished
+  /// payment can be carried into a different till or the next bill.
+  ///
+  /// [_splitCash] and [_splitUpi] are cleared too: [_checkout] re-reads that
+  /// text to rebuild the draft, so leftover characters could otherwise be
+  /// resubmitted as a split the cashier never confirmed.
+  ///
+  /// The paid/not-paid choice is reset for the same reason. It is a payment
+  /// decision about a cart, and leaving "Not Paid" latched after a credit sale
+  /// would silently push the *next* cart into credit too, and would carry that
+  /// choice into another shop on a switch. [PaymentStatus.paid] is the state a
+  /// freshly opened till starts in, so each bill begins from the same place.
+  void _resetPaymentState() {
+    _splitCash.clear();
+    _splitUpi.clear();
+    _splitDraft = null;
+    _payment = null;
+    _paymentStatus = PaymentStatus.paid;
+    _splitMode = false;
+  }
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)
@@ -63,6 +115,77 @@ final class _PosPageState extends ConsumerState<PosPage> {
   }
 
   Future<void> _checkout() async {
+    if (_splitMode) {
+      final total = ref.read(cartProvider).chargedTotalPaise;
+      if (total == null) {
+        _showMessage('Cart total exceeds the safe ceiling.');
+        return;
+      }
+      if (_splitDraft == null) {
+        // Unreachable while the button gate holds; kept so a programmatic
+        // submit fails with an actionable message instead of an empty sale.
+        _showMessage('Confirm the split amounts first.');
+        return;
+      }
+      // The cashier types rupees; the draft converts once, here. Re-read from
+      // the live text rather than trusting [_splitDraft] so a cart edit after
+      // confirming cannot commit a stale total.
+      final draft = SplitPaymentDraft.fromRupeeInput(
+        cash: _splitCash.text,
+        upi: _splitUpi.text,
+        totalPaise: total,
+      );
+      // Traced at submit rather than per keystroke: this is where the rupee
+      // text becomes paise, and it is the only step where a mis-typed amount
+      // turns into a wrong sale. `cashRupees`/`upiRupees` stay as typed so a
+      // bad parse is distinguishable from a bad total.
+      final legs = draft.toPayments();
+      AppTrace.event('payment.split_input', {
+        'totalPaise': total,
+        'cashRupees': _splitCash.text,
+        'upiRupees': _splitUpi.text,
+        'state': draft.state.name,
+        'legs': legs.length,
+        'submitted': draft.canSubmit,
+      });
+      if (!draft.canSubmit) {
+        AppTrace.warn('payment.split_input_reject', {
+          'state': draft.state.name,
+          'totalPaise': total,
+        });
+        _showMessage(draft.problem ?? 'Split payments do not match the total.');
+        return;
+      }
+      setState(() => _checkingOut = true);
+      CompletedSale? completed;
+      try {
+        completed = await ref
+            .read(cartProvider.notifier)
+            .checkout(null, paymentStatus: _paymentStatus, payments: legs);
+      } on BillingFailure catch (error) {
+        if (mounted) {
+          _showMessage('Sale not completed. ${error.message}');
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _checkingOut = false);
+        }
+      }
+      if (completed == null || !mounted) return;
+      // The sale exists now, so the payment decision that authorised it is
+      // spent. Clear it before the receipt so the next bill starts from
+      // nothing — a cashier who rings up a second item must choose again.
+      setState(_resetPaymentState);
+      await _showReceipt(completed);
+      return;
+    }
+    // Re-check the single-method gate here as well as in the button, so a
+    // programmatic submit of a null or BANK method fails loudly instead of
+    // writing a sale the counter is not allowed to write.
+    if (_paymentStatus == PaymentStatus.paid && !_hasValidSingleMethod) {
+      _showMessage('Select Cash or UPI to complete the sale.');
+      return;
+    }
     setState(() => _checkingOut = true);
     CompletedSale? completed;
     try {
@@ -79,7 +202,50 @@ final class _PosPageState extends ConsumerState<PosPage> {
       }
     }
     if (completed == null || !mounted) return;
+    // Same for a single-method sale: the chosen method is consumed by the sale
+    // it paid for and must not silently carry into the next one.
+    setState(_resetPaymentState);
     await _showReceipt(completed);
+  }
+
+  Future<void> _showSplitSheet() async {
+    final total = ref.read(cartProvider).chargedTotalPaise;
+    if (total == null) {
+      _showMessage('Cart total exceeds the safe ceiling.');
+      return;
+    }
+    final draft = await showModalBottomSheet<SplitPaymentDraft>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => _SplitPaymentSheet(
+        totalPaise: total,
+        cashController: _splitCash,
+        upiController: _splitUpi,
+      ),
+    );
+    if (!mounted) return;
+    if (draft != null) {
+      setState(() => _splitDraft = draft);
+      return;
+    }
+    // Dismissed without confirming (drag, back, scrim). "Cancelling split
+    // clears the draft" — so drop it and the typed text. Returning here without
+    // clearing would leave a previously confirmed draft live while the cashier
+    // believes they abandoned it, and Complete Sale would stay enabled.
+    //
+    // Split mode is also left. Turning split on is a two-step action (enable,
+    // then confirm in the sheet), so abandoning the sheet abandons the whole
+    // attempt. Staying in split mode with no draft would hide the
+    // single-method selector behind an empty split the cashier never
+    // completed, so the way back to Cash/UPI would be a second tap on Split
+    // for no visible reason.
+    setState(() {
+      _splitCash.clear();
+      _splitUpi.clear();
+      _splitDraft = null;
+      _splitMode = false;
+    });
   }
 
   Future<void> _showReceipt(CompletedSale completed) async {
@@ -152,7 +318,11 @@ final class _PosPageState extends ConsumerState<PosPage> {
         .resumeHeldBill(bill.id);
     if (resumed == null || !mounted) return false;
     setState(() {
-      _payment = resumed.paymentMethod;
+      // A held bill remembers the method it was held with. BANK is only ever
+      // historical, so restoring it would re-arm the Complete Sale gate for a
+      // method the picker does not offer; fall back to "choose again" instead.
+      final held = resumed.paymentMethod;
+      _payment = _newSaleMethods.contains(held) ? held : null;
       _paymentStatus = resumed.paymentStatus;
     });
     return true;
@@ -188,6 +358,18 @@ final class _PosPageState extends ConsumerState<PosPage> {
 
   @override
   Widget build(BuildContext context) {
+    // A business switch moves the till to a different shop. The chosen method
+    // and any confirmed split belong to the shop being left, so they must not
+    // survive the move: keeping them would leave a payment decision made for
+    // products the cashier can no longer see. The cart is dropped by
+    // CartController itself (it is app-global, and this page is not always the
+    // one mounted when the switch happens); this listener only clears the
+    // payment state this page owns. Mirrors the scope-reset convention in
+    // staff_page.dart.
+    ref.listen(businessSwitcherProvider, (_, _) {
+      if (!mounted) return;
+      setState(_resetPaymentState);
+    });
     final cart = ref.watch(cartProvider);
     final heldBills = ref.watch(heldBillsProvider);
     final products = ref.watch(posProductsProvider);
@@ -296,6 +478,24 @@ final class _PosPageState extends ConsumerState<PosPage> {
                           heldCount: heldBills.length,
                           onHold: _holdBill,
                           onOpenHeldBills: _openHeldBills,
+                          splitMode: _splitMode,
+                          splitReady: _splitDraft != null,
+                          onSplitTapped: () {
+                            setState(() {
+                              _splitMode = !_splitMode;
+                              if (_splitMode) {
+                                // No single method applies to a split, and a
+                                // half-typed draft must never gate a submit.
+                                _payment = null;
+                                _splitDraft = null;
+                              } else {
+                                _splitCash.clear();
+                                _splitUpi.clear();
+                                _splitDraft = null;
+                              }
+                            });
+                            if (_splitMode) _showSplitSheet();
+                          },
                         ),
                       ),
                     ],
@@ -324,6 +524,32 @@ final class _PosPageState extends ConsumerState<PosPage> {
                   heldCount: heldBills.length,
                   onHold: _holdBill,
                   onOpenHeldBills: _openHeldBills,
+                  splitMode: _splitMode,
+                  splitReady: _splitDraft != null,
+                  onSplitTapped: () {
+                    setState(() {
+                      _splitMode = !_splitMode;
+                      // Identical to the wide layout on purpose. This branch
+                      // used to clear only the single method on the way in and
+                      // only the text on the way out, so a draft confirmed
+                      // earlier survived both: the cashier could tap Split,
+                      // dismiss the editor, and still have Complete Sale enabled
+                      // by a split they had abandoned.
+                      if (_splitMode) {
+                        // No single method applies to a split, and a half-typed
+                        // draft must never gate a submit.
+                        _payment = null;
+                        _splitDraft = null;
+                        _splitCash.clear();
+                        _splitUpi.clear();
+                      } else {
+                        _splitCash.clear();
+                        _splitUpi.clear();
+                        _splitDraft = null;
+                      }
+                    });
+                    if (_splitMode) _showSplitSheet();
+                  },
                 );
               },
             ),
@@ -562,6 +788,9 @@ final class _NarrowLayout extends StatefulWidget {
     required this.heldCount,
     required this.onHold,
     required this.onOpenHeldBills,
+    this.splitMode = false,
+    this.splitReady = false,
+    this.onSplitTapped,
   });
 
   final AsyncValue<List<Product>> products;
@@ -582,6 +811,9 @@ final class _NarrowLayout extends StatefulWidget {
   final int heldCount;
   final VoidCallback onHold;
   final VoidCallback onOpenHeldBills;
+  final bool splitMode;
+  final bool splitReady;
+  final VoidCallback? onSplitTapped;
 
   @override
   State<_NarrowLayout> createState() => _NarrowLayoutState();
@@ -693,6 +925,9 @@ final class _NarrowLayoutState extends State<_NarrowLayout> {
                   onHold: widget.onHold,
                   onOpenHeldBills: widget.onOpenHeldBills,
                   phone: phone,
+                  splitMode: widget.splitMode,
+                  splitReady: widget.splitReady,
+                  onSplitTapped: widget.onSplitTapped,
                 )
               : _ProductShelf(
                   products: widget.products,
@@ -1246,6 +1481,9 @@ final class _CartPanel extends StatelessWidget {
     required this.onHold,
     required this.onOpenHeldBills,
     this.phone = false,
+    this.splitMode = false,
+    this.splitReady = false,
+    this.onSplitTapped,
   });
 
   final Cart cart;
@@ -1263,9 +1501,14 @@ final class _CartPanel extends StatelessWidget {
   final int heldCount;
   final VoidCallback onHold;
   final VoidCallback onOpenHeldBills;
-
-  /// Phone layout: taller Complete Sale and large-touch quantity controls.
   final bool phone;
+  final bool splitMode;
+
+  /// True once the cashier has confirmed an exact split. In split mode this
+  /// replaces the single-method requirement: a split is its own payment, and
+  /// [payment] is deliberately null while the mode is on.
+  final bool splitReady;
+  final VoidCallback? onSplitTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -1277,10 +1520,21 @@ final class _CartPanel extends StatelessWidget {
         membershipEnabled &&
         cart.lines.any((line) => line.memberPricePaise != null);
     final notPaid = paymentStatus == PaymentStatus.notPaid;
+    // A paid bill needs proof of payment. In split mode that proof is the
+    // confirmed, exact draft — NOT [payment], which is null by design while
+    // split mode is on. Keying the gate on [payment] alone is what made
+    // "Complete Sale" permanently disabled for every split sale.
+    //
+    // Outside split mode the method must be one the till can actually take, so
+    // this is a membership test rather than a null test: a resumed legacy BANK
+    // bill must not unlock a new BANK sale.
+    final paidProof = splitMode
+        ? splitReady
+        : payment == PaymentMethod.cash || payment == PaymentMethod.upi;
     final canComplete =
         cart.isNotEmpty &&
         !checkingOut &&
-        (notPaid ? selectedCustomer != null : payment != null);
+        (notPaid ? selectedCustomer != null : paidProof);
 
     return AppCard(
       padding: AppInsets.card,
@@ -1438,6 +1692,8 @@ final class _CartPanel extends StatelessWidget {
                         _PaymentPicker(
                           selected: payment,
                           onChanged: onPaymentChanged,
+                          splitSelected: splitMode,
+                          onSplitTapped: onSplitTapped ?? () {},
                         ),
                     ],
                   ),
@@ -1758,10 +2014,25 @@ final class _NotPaidCustomerHint extends StatelessWidget {
 }
 
 final class _PaymentPicker extends StatelessWidget {
-  const _PaymentPicker({required this.selected, required this.onChanged});
+  const _PaymentPicker({
+    required this.selected,
+    required this.onChanged,
+    required this.splitSelected,
+    required this.onSplitTapped,
+  });
 
   final PaymentMethod? selected;
   final ValueChanged<PaymentMethod?> onChanged;
+  final bool splitSelected;
+  final VoidCallback onSplitTapped;
+
+  static Set<PaymentMethod> _selectionSet(
+    bool splitSelected,
+    PaymentMethod? selected,
+  ) {
+    if (splitSelected || selected == null) return <PaymentMethod>{};
+    return <PaymentMethod>{selected};
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1783,13 +2054,31 @@ final class _PaymentPicker extends StatelessWidget {
             segments: const [
               ButtonSegment(value: PaymentMethod.cash, label: Text('Cash')),
               ButtonSegment(value: PaymentMethod.upi, label: Text('UPI')),
-              ButtonSegment(value: PaymentMethod.bank, label: Text('Bank')),
             ],
-            selected: {?selected},
+            selected: _selectionSet(splitSelected, selected),
             emptySelectionAllowed: true,
             showSelectedIcon: false,
             onSelectionChanged: (selection) =>
                 onChanged(selection.isEmpty ? null : selection.first),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: onSplitTapped,
+            icon: const Icon(Icons.call_split),
+            label: const Text('Split'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: splitSelected
+                  ? AppColors.primary.withValues(alpha: 0.1)
+                  : null,
+              side: BorderSide(
+                color: splitSelected
+                    ? AppColors.primary
+                    : context.appColors.outline,
+              ),
+            ),
           ),
         ),
       ],
@@ -2340,7 +2629,7 @@ final class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
                   ? '${widget.completed.items.length} item${widget.completed.items.length == 1 ? '' : 's'} '
                         '· ${Money.formatPaise(sale.totalPaise)} · Not paid'
                   : '${widget.completed.items.length} item${widget.completed.items.length == 1 ? '' : 's'} '
-                        '· ${Money.formatPaise(sale.totalPaise)} · ${_paymentLabel(sale.paymentMethod!)}',
+                        '· ${Money.formatPaise(sale.totalPaise)} · ${_paymentSummary(sale)}',
               style: textTheme.bodyMedium?.copyWith(
                 color: context.appColors.textSecondary,
               ),
@@ -2415,6 +2704,26 @@ final class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
     PaymentMethod.upi => 'UPI',
     PaymentMethod.bank => 'Bank',
   };
+
+  /// How the receipt names what the customer paid.
+  ///
+  /// A split sale has no single method on the header (the legs live in
+  /// [Sale.payments]), so force-unwrapping `paymentMethod` here crashed the
+  /// success dialog on exactly the sales that just completed. Name each leg
+  /// instead, and fall back to a neutral label rather than another unwrap.
+  static String _paymentSummary(Sale sale) {
+    if (sale.payments.isNotEmpty) {
+      final legs = sale.payments
+          .map(
+            (p) =>
+                '${_paymentLabel(p.paymentMethod)} ${Money.formatPaise(p.amountPaise)}',
+          )
+          .join(' + ');
+      return sale.payments.length > 1 ? 'Split: $legs' : legs;
+    }
+    final method = sale.paymentMethod;
+    return method == null ? 'No payment' : _paymentLabel(method);
+  }
 }
 
 /// One persisted line rendered inside the post-sale receipt dialog.
@@ -2703,4 +3012,101 @@ String _heldTimeLabel(DateTime heldAtUtc) {
   if (difference.inHours < 24) return 'held ${difference.inHours} h ago';
   if (difference.inDays == 1) return 'held yesterday';
   return 'held ${formatDate(heldAtUtc)}';
+}
+
+final class _SplitPaymentSheet extends StatelessWidget {
+  const _SplitPaymentSheet({
+    required this.totalPaise,
+    required this.cashController,
+    required this.upiController,
+  });
+
+  final int totalPaise;
+  final TextEditingController cashController;
+  final TextEditingController upiController;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: AppInsets.lg.left,
+        right: AppInsets.lg.right,
+        top: AppInsets.md.top,
+        bottom: MediaQuery.of(context).viewInsets.bottom + AppInsets.lg.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Split Payment', style: textTheme.titleLarge),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            // Money.formatPaise already emits the ₹ symbol.
+            'Total: ${Money.formatPaise(totalPaise)}',
+            style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: cashController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            // Rupees, because that is what the cashier is holding. The label
+            // used to say "(paise)", which is a unit no customer or cashier
+            // thinks in.
+            decoration: const InputDecoration(
+              labelText: 'Cash amount (₹)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          TextField(
+            controller: upiController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'UPI amount (₹)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: cashController,
+            builder: (context, _, _) {
+              return ValueListenableBuilder<TextEditingValue>(
+                valueListenable: upiController,
+                builder: (context, _, _) {
+                  final draft = SplitPaymentDraft.fromRupeeInput(
+                    cash: cashController.text,
+                    upi: upiController.text,
+                    totalPaise: totalPaise,
+                  );
+                  final problem = draft.problem;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        problem ?? 'Exact — ready to complete',
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: draft.isExact
+                              ? AppColors.softGreen
+                              : AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      FilledButton(
+                        onPressed: draft.canSubmit
+                            ? () => Navigator.of(context).pop(draft)
+                            : null,
+                        child: const Text('Confirm Split'),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -1,6 +1,7 @@
 import 'package:brewflow_pos/config/env.dart';
 import 'package:brewflow_pos/config/flavor.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:flutter/widgets.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -41,14 +42,23 @@ const String _tag = 'Bootstrap';
 
 Future<void> bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final bootStopwatch = Stopwatch()..start();
 
   try {
     await _initEnvironment();
     await _initLocalStorage();
     await _initSupabase();
 
+    AppTrace.event('app.start', {
+      'flavor': AppFlavor.current.name,
+      'env': AppEnv.envFileName,
+      'bootMs': bootStopwatch.elapsedMilliseconds,
+    });
     runApp(const BrewFlowApp());
   } catch (error, stackTrace) {
+    AppTrace.fail('app.bootstrap_fail', error, stackTrace, {
+      'elapsedMs': bootStopwatch.elapsedMilliseconds,
+    });
     AppLog.error(
       'Bootstrap failed. Application cannot start.',
       tag: _tag,
@@ -62,6 +72,11 @@ Future<void> bootstrap() async {
 /// Loads the environment before anything that depends on it.
 Future<void> _initEnvironment() async {
   await AppEnv.load();
+  AppTrace.event('boot.step', {
+    'step': 'env',
+    'flavor': AppFlavor.current.name,
+    'env': AppEnv.envFileName,
+  });
   AppLog.info(
     'Environment loaded (flavor: ${AppFlavor.current.name}, '
     'env file: ${AppEnv.envFileName})',
@@ -72,6 +87,7 @@ Future<void> _initEnvironment() async {
 /// Initializes local storage (secure storage + shared preferences).
 Future<void> _initLocalStorage() async {
   await AppStorage.init();
+  AppTrace.event('boot.step', {'step': 'storage'});
   AppLog.info('Local storage initialized', tag: _tag);
 }
 
@@ -93,5 +109,6 @@ Future<void> _initSupabase() async {
     // Silence the SDK's own debug output in production builds.
     debug: AppFlavor.current.isDevelopment,
   );
+  AppTrace.event('boot.step', {'step': 'supabase'});
   AppLog.info('Supabase client initialized', tag: _tag);
 }

@@ -14,7 +14,7 @@
 ///   ordering itself via trigger-set `updated_at` (arrival order — see
 ///   supabase/migrations/0003_master_data_sync.sql).
 ///
-/// Money stays integer paise. Enum fields travel as their DB string values.
+/// /// Money stays integer paise. Enum fields travel as their DB string values.
 /// ---------------------------------------------------------------------------
 library;
 
@@ -180,6 +180,7 @@ final class SyncProduct {
     required this.isActive,
     required this.createdAt,
     this.cloudImagePath,
+    this.visibleInShops = false,
   });
 
   factory SyncProduct.fromJson(Map<String, dynamic> json) => SyncProduct(
@@ -199,6 +200,7 @@ final class SyncProduct {
     isActive: json['isActive'] as bool,
     createdAt: DateTime.parse(json['createdAt'] as String),
     cloudImagePath: json['cloudImagePath'] as String?,
+    visibleInShops: json['visible_in_shops'] as bool,
   );
 
   final String id;
@@ -224,6 +226,7 @@ final class SyncProduct {
   /// image is uploaded. This is metadata only — binary is never carried on
   /// the wire. Other devices read it to enqueue a local DOWNLOAD.
   final String? cloudImagePath;
+  final bool visibleInShops;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
@@ -242,6 +245,7 @@ final class SyncProduct {
     'isActive': isActive,
     'createdAt': createdAt.toIso8601String(),
     'cloudImagePath': cloudImagePath,
+    'visible_in_shops': visibleInShops,
   };
 }
 

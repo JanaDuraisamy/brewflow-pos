@@ -408,6 +408,9 @@ void main() {
           isActive: true,
           createdAt: now,
           updatedAt: now,
+          // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+          // seeded product survives the business scope filter.
+          shopId: 'shop-1',
         ),
       );
       fakeMovements.inner.productStock['p1'] = 3;

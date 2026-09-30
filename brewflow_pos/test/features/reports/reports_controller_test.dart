@@ -69,16 +69,48 @@ Future<ReportsSnapshot> _load(ProviderContainer container) =>
 
 void main() {
   group('reports range', () {
-    test('defaults to a bounded last-30-days window', () async {
+    test('defaults to a bounded Today window', () async {
       final container = _container();
       final range = container.read(reportsRangeProvider);
-      expect(range.datePreset, OrdersDatePreset.last30);
+      // Reports must open on Today without the owner touching the range.
+      expect(range.datePreset, OrdersDatePreset.today);
       expect(range.fromUtc, isNotNull);
       expect(range.toUtc, isNotNull);
 
+      final now = DateTime.now();
+      final localStart = DateTime(now.year, now.month, now.day);
+      expect(range.fromUtc, localStart.toUtc());
+      expect(
+        range.toUtc!.difference(localStart.toUtc()),
+        lessThan(const Duration(days: 1)),
+      );
+
       final snapshot = await _load(container);
-      expect(snapshot.sales.dailySalesPaise.length, 30);
+      expect(snapshot.range.datePreset, OrdersDatePreset.today);
+      expect(snapshot.sales.dailySalesPaise.length, 1);
       expect(snapshot.sales.orderCount, 0);
+    });
+
+    test('an older sale is outside the default Today window', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'R-today',
+        createdAt: DateTime.now().toUtc(),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 30000,
+        items: [_item('Chai', price: 30000)],
+      );
+      orders.add(
+        receiptNumber: 'R-old',
+        createdAt: DateTime.now().toUtc().subtract(const Duration(days: 9)),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 70000,
+        items: [_item('Old', price: 70000)],
+      );
+
+      final snapshot = await _load(_container(orders: orders));
+      expect(snapshot.sales.totalPaise, 30000);
+      expect(snapshot.sales.orderCount, 1);
     });
 
     test('today preset bounds the window to the current day', () async {
@@ -168,6 +200,9 @@ void main() {
         items: [_item('Latte', price: 40000)],
       );
       final container = _container(orders: orders);
+      container
+          .read(reportsRangeProvider.notifier)
+          .setPreset(OrdersDatePreset.last30);
 
       final snapshot = await _load(container);
       expect(snapshot.range.datePreset, OrdersDatePreset.last30);
@@ -260,11 +295,16 @@ void main() {
         items: [_item('Cookie', price: 2000)],
       );
 
-      final snapshot = await _load(_container(orders: orders));
+      final container = _container(orders: orders);
+      container
+          .read(reportsRangeProvider.notifier)
+          .setPreset(OrdersDatePreset.last7);
+
+      final snapshot = await _load(container);
       expect(snapshot.sales.totalPaise, 5000);
       expect(snapshot.sales.orderCount, 2);
       expect(snapshot.sales.itemCount, 3);
-      expect(snapshot.sales.dailySalesPaise.length, 30);
+      expect(snapshot.sales.dailySalesPaise.length, 7);
     });
 
     test('average sale is total over orders; null without sales', () async {
@@ -309,11 +349,11 @@ void main() {
       );
 
       final snapshot = await _load(_container(orders: orders));
-      expect(snapshot.payments.paiseOf(PaymentMethod.cash), 45000);
-      expect(snapshot.payments.paiseOf(PaymentMethod.upi), 15000);
-      expect(snapshot.payments.paiseOf(PaymentMethod.bank), 0);
-      expect(snapshot.payments.shareOf(PaymentMethod.cash), 75);
-      expect(snapshot.payments.shareOf(PaymentMethod.upi), 25);
+      expect(snapshot.payments.cashPaise, 45000);
+      expect(snapshot.payments.upiPaise, 15000);
+      expect(snapshot.payments.notPaidPaise, 0);
+      expect(snapshot.payments.shareOf(snapshot.payments.cashPaise), 75);
+      expect(snapshot.payments.shareOf(snapshot.payments.upiPaise), 25);
       expect(snapshot.payments.totalPaise, 60000);
     });
 
@@ -340,12 +380,15 @@ void main() {
         expect(snapshot.sales.totalPaise, 75000);
         expect(snapshot.sales.orderCount, 2);
         expect(snapshot.sales.itemCount, 2);
-        expect(snapshot.payments.paiseOf(PaymentMethod.cash), 45000);
-        expect(snapshot.payments.paiseOf(PaymentMethod.upi), 0);
-        expect(snapshot.payments.paiseOf(PaymentMethod.bank), 0);
+        expect(snapshot.payments.cashPaise, 45000);
+        expect(snapshot.payments.upiPaise, 0);
+        // The credit sale is revenue, and it is now reported honestly as
+        // "Not Paid" instead of vanishing from the split.
+        expect(snapshot.payments.notPaidPaise, 30000);
         // Shares still derive from the full window revenue.
         expect(snapshot.payments.totalPaise, 75000);
-        expect(snapshot.payments.shareOf(PaymentMethod.cash), 60);
+        expect(snapshot.payments.shareOf(snapshot.payments.cashPaise), 60);
+        expect(snapshot.payments.shareOf(snapshot.payments.notPaidPaise), 40);
         expect(snapshot.profitLoss.salesPaise, 75000);
       },
     );
@@ -485,6 +528,9 @@ void main() {
         costPricePaise: chaiCost,
         stockQuantity: 10,
         isActive: true,
+        // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+        // seeded products survive the business scope filter.
+        shopId: 'shop-1',
       );
       await inventory.createProduct(
         categoryId: category.id,
@@ -493,6 +539,7 @@ void main() {
         costPricePaise: latteCost,
         stockQuantity: 10,
         isActive: true,
+        shopId: 'shop-1',
       );
       return inventory;
     }
@@ -616,6 +663,9 @@ void main() {
             sellingPricePaise: i * 1000,
             stockQuantity: 5,
             isActive: true,
+            // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+            // seeded products survive the business scope filter.
+            shopId: 'shop-1',
           );
         }
 
@@ -641,6 +691,7 @@ void main() {
         costPricePaise: 1000,
         stockQuantity: 10,
         isActive: true,
+        shopId: 'shop-1',
       );
       await inventory.createProduct(
         categoryId: snacks.id,
@@ -648,6 +699,7 @@ void main() {
         sellingPricePaise: 2000,
         stockQuantity: 10,
         isActive: true,
+        shopId: 'shop-1',
       );
 
       final orders = FakeOrdersRepository();
@@ -681,7 +733,166 @@ void main() {
   });
 
   group('receivables and payables', () {
-    test('feed current-balance totals into the snapshot', () async {
+    // Ledger fixture shared by the range tests below: Priya owes on two old
+    // bills (one part-paid), Arun on one bill from today.
+    FakeCustomerLedgerRepository receivablesFixture(DateTime now) {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.addAll([
+        FakeLedgerBill(
+          id: 's1',
+          customerId: 'c1',
+          customerName: 'Priya',
+          receiptNumber: 'BF-000001',
+          createdAt: now.subtract(const Duration(days: 2)),
+          totalPaise: 10000,
+          shopId: 'shop-1',
+        ),
+        FakeLedgerBill(
+          id: 's2',
+          customerId: 'c1',
+          customerName: 'Priya',
+          receiptNumber: 'BF-000002',
+          createdAt: now.subtract(const Duration(days: 1)),
+          totalPaise: 10000,
+          shopId: 'shop-1',
+        ),
+        FakeLedgerBill(
+          id: 's3',
+          customerId: 'c2',
+          customerName: 'Arun',
+          receiptNumber: 'BF-000003',
+          createdAt: now,
+          totalPaise: 8000,
+          shopId: 'shop-1',
+        ),
+      ]);
+      ledger.storedPayments.add(
+        CustomerPayment(
+          id: 'p1',
+          customerId: 'c1',
+          saleId: 's1',
+          amountPaise: 5000,
+          paymentMethod: PaymentMethod.cash,
+          paidAt: now,
+          reversed: false,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      return ledger;
+    }
+
+    test('Today shows only today\'s outstanding credit bills', () async {
+      final now = DateTime.now().toUtc();
+      final container = _container(ledger: receivablesFixture(now));
+
+      final snapshot = await _load(container);
+
+      // Default range is Today, so Priya's two historical bills must NOT
+      // appear — this is the bug that showed an all-time balance inside a
+      // date-scoped report.
+      expect(snapshot.totalReceivablePaise, 8000);
+      expect(snapshot.customerReceivables, hasLength(1));
+      final arun = snapshot.customerReceivables.single;
+      expect(arun.customerName, 'Arun');
+      expect(arun.outstandingBillCount, 1);
+      expect(arun.totalDuePaise, 8000);
+      expect(arun.bills.map((b) => b.saleId), ['s3']);
+    });
+
+    test('open-bill counts follow the selected range', () async {
+      final now = DateTime.now().toUtc();
+      final container = _container(ledger: receivablesFixture(now));
+      container
+          .read(reportsRangeProvider.notifier)
+          .setPreset(OrdersDatePreset.last7);
+
+      final snapshot = await _load(container);
+
+      // Widening to 7 days brings both customers back: 15.00 + 8.00.
+      expect(snapshot.totalReceivablePaise, 23000);
+      expect(snapshot.customerReceivables.map((r) => r.customerName).toList(), [
+        'Arun',
+        'Priya',
+      ]);
+      final priya = snapshot.customerReceivables.firstWhere(
+        (r) => r.customerId == 'c1',
+      );
+      expect(priya.outstandingBillCount, 2);
+      // The partial payment stays inside its own bill (allocation history).
+      expect(priya.totalDuePaise, 15000);
+      expect(priya.bills.map((b) => b.saleId).toList(), ['s1', 's2']);
+    });
+
+    test('a custom range narrows receivables to its own window', () async {
+      final now = DateTime.now().toUtc();
+      final container = _container(ledger: receivablesFixture(now));
+      final local = DateTime.now();
+      container
+          .read(reportsRangeProvider.notifier)
+          .setCustomRange(
+            local.subtract(const Duration(days: 3)),
+            local.subtract(const Duration(days: 1)),
+          );
+
+      final snapshot = await _load(container);
+
+      // Only Priya's two bills fall in the 3..1-day-ago window; Arun's
+      // bill is from today and is excluded.
+      expect(snapshot.totalReceivablePaise, 15000);
+      expect(snapshot.customerReceivables, hasLength(1));
+      expect(snapshot.customerReceivables.single.customerName, 'Priya');
+      expect(snapshot.customerReceivables.single.outstandingBillCount, 2);
+    });
+
+    test('a bill collected in full drops out even inside the range', () async {
+      final now = DateTime.now().toUtc();
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.addAll([
+        FakeLedgerBill(
+          id: 'open',
+          customerId: 'c1',
+          customerName: 'Priya',
+          receiptNumber: 'BF-000001',
+          createdAt: now,
+          totalPaise: 8000,
+          shopId: 'shop-1',
+        ),
+        FakeLedgerBill(
+          id: 'settled',
+          customerId: 'c1',
+          customerName: 'Priya',
+          receiptNumber: 'BF-000002',
+          createdAt: now,
+          totalPaise: 8000,
+          shopId: 'shop-1',
+        ),
+      ]);
+      // The second bill was collected in full today.
+      ledger.storedPayments.add(
+        CustomerPayment(
+          id: 'p1',
+          customerId: 'c1',
+          saleId: 'settled',
+          amountPaise: 8000,
+          paymentMethod: PaymentMethod.cash,
+          paidAt: now,
+          reversed: false,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+
+      final snapshot = await _load(_container(ledger: ledger));
+
+      expect(snapshot.totalReceivablePaise, 8000);
+      expect(snapshot.customerReceivables.single.outstandingBillCount, 1);
+      expect(snapshot.customerReceivables.single.bills.map((b) => b.saleId), [
+        'open',
+      ]);
+    });
+
+    test('payables stay current-balance and unaffected by the range', () async {
       final now = DateTime.now().toUtc();
       final expenses = FakeExpensesRepository();
       expenses.seed(
@@ -700,73 +911,12 @@ void main() {
         paymentStatus: ExpensePaymentStatus.notPaid,
       );
 
-      final ledger = FakeCustomerLedgerRepository();
-      ledger.bills.add(
-        FakeLedgerBill(
-          id: 's1',
-          customerId: 'c1',
-          customerName: 'Priya',
-          receiptNumber: 'BF-000001',
-          createdAt: now.subtract(const Duration(days: 2)),
-          totalPaise: 10000,
-        ),
-      );
-      ledger.bills.add(
-        FakeLedgerBill(
-          id: 's2',
-          customerId: 'c1',
-          customerName: 'Priya',
-          receiptNumber: 'BF-000002',
-          createdAt: now.subtract(const Duration(days: 1)),
-          totalPaise: 10000,
-        ),
-      );
-      ledger.bills.add(
-        FakeLedgerBill(
-          id: 's3',
-          customerId: 'c2',
-          customerName: 'Arun',
-          receiptNumber: 'BF-000003',
-          createdAt: now,
-          totalPaise: 8000,
-        ),
-      );
-      ledger.storedPayments.add(
-        CustomerPayment(
-          id: 'p1',
-          customerId: 'c1',
-          saleId: 's1',
-          amountPaise: 5000,
-          paymentMethod: PaymentMethod.cash,
-          paidAt: now,
-          reversed: false,
-          createdAt: now,
-          updatedAt: now,
-        ),
-      );
-
       final snapshot = await _load(
-        _container(expenses: expenses, ledger: ledger),
+        _container(expenses: expenses, ledger: receivablesFixture(now)),
       );
 
-      // Receivables: two customers; Priya's 2 open bills minus the partial
-      // payment -> 150.00 due; Arun 80.00. Newest snapshot is not window-
-      // bounded — these are current outstanding balances.
-      expect(snapshot.totalReceivablePaise, 23000);
-      expect(snapshot.customerReceivables, hasLength(2));
-      expect(snapshot.customerReceivables.map((r) => r.customerName).toList(), [
-        'Arun',
-        'Priya',
-      ]);
-      final priya = snapshot.customerReceivables.firstWhere(
-        (r) => r.customerId == 'c1',
-      );
-      expect(priya.outstandingBillCount, 2);
-      expect(priya.totalDuePaise, 15000);
-      expect(priya.bills.map((b) => b.saleId).toList(), ['s1', 's2']);
-
-      // Payables: only the active NOT_PAID expense is a shop liability. Grouped
-      // by payee, and the total is the remaining balance.
+      // Payables are a current supplier balance, not a sales-window figure,
+      // so they keep their own (range-independent) derivation.
       expect(snapshot.shopPayables, hasLength(1));
       expect(snapshot.shopPayables.single.payeeName, 'Unpaid supply');
       expect(snapshot.shopPayables.single.totalPaise, 20000);
@@ -856,7 +1006,16 @@ void main() {
     );
     final container = _container(orders: orders);
 
+    // Default Today: only R-1 (today); R-2 is 10 days old.
     var snapshot = await _load(container);
+    expect(snapshot.range.datePreset, OrdersDatePreset.today);
+    expect(snapshot.sales.orderCount, 1);
+    expect(snapshot.sales.totalPaise, 30000);
+
+    container
+        .read(reportsRangeProvider.notifier)
+        .setPreset(OrdersDatePreset.last30);
+    snapshot = await _load(container);
     expect(snapshot.sales.orderCount, 2);
     expect(snapshot.sales.totalPaise, 50000);
 

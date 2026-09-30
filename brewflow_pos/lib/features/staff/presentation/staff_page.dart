@@ -40,7 +40,21 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
 
   Future<void> _reload() async {
     try {
-      final staff = await ref.read(staffRepositoryProvider).staffMembers();
+      // The roster follows the active business: Food Truck staff never see
+      // Cafe staff, and Cafe staff never see Food Truck staff. The Combined
+      // view intentionally keeps the owner's cross-business roster.
+      final business = ref.read(businessSwitcherProvider);
+      final List<UserProfile> staff;
+      if (business == BusinessContext.all) {
+        staff = await ref.read(staffRepositoryProvider).staffMembers();
+      } else {
+        final shopId = await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdFor(business);
+        staff = await ref
+            .read(staffRepositoryProvider)
+            .staffMembers(shopId: shopId);
+      }
       if (!mounted) return;
       setState(() {
         _staff = staff;
@@ -214,6 +228,11 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    // A business change must refresh the roster scope; otherwise a Cafe list
+    // can linger after Food Truck is selected (or vice versa).
+    ref.listen(businessSwitcherProvider, (_, _) {
+      if (mounted) _reload();
+    });
     final allowed = ref.watch(canProvider(Permission.manageStaff));
     final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
     if (!allowed) {

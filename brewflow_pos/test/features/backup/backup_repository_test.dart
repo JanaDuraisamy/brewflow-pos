@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/features/backup/data/drift_backup_repository.dart';
 import 'package:brewflow_pos/features/backup/domain/backup_failures.dart';
@@ -47,6 +48,7 @@ void main() {
           db.Shop(
             id: shopId,
             name: 'Shop',
+            receiptPrefix: AppConstants.defaultShopReceiptPrefix,
             createdAt: at,
             updatedAt: at,
           ).toCompanion(false),
@@ -87,6 +89,7 @@ void main() {
             memberPricePaise: null,
             imagePath: null,
             isActive: true,
+            visibleInShops: false,
             createdAt: at,
             updatedAt: at,
           ).toCompanion(false),
@@ -242,6 +245,7 @@ void main() {
             stockUnit: 'COUNT',
             lowStockMode: 'USE_DEFAULT',
             membershipEnabled: false,
+            visibleInShops: false,
             isActive: true,
             createdAt: at,
             updatedAt: at,

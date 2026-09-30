@@ -125,6 +125,7 @@ abstract interface class BillingRepository {
     PaymentMethod? paymentMethod,
     String? customerId,
     String? shopId,
+    List<SalePayment>? payments,
   });
 
   /// The sale header with this id, or null when missing.

@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/staff/data/cloud_shop_resolver.dart';
 import 'package:brewflow_pos/features/staff/data/drift_staff_repository.dart';
@@ -70,6 +71,15 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
     if (authUser == null) {
       return null;
     }
+    // Profile resolution decides the operator's role, shop and grants, and
+    // every permission check in the app is downstream of it. `source` records
+    // which branch produced the profile, which is what makes "the menu is
+    // wrong" explainable: local, mirrored-from-cloud, claimed-from-cloud, or
+    // first-device-ownership.
+    AppTrace.event('authz.resolve', {
+      'userRef': AppTrace.userRef(authUser.id),
+      'status': 'begin',
+    });
     try {
       final resolver = ref.read(cloudShopResolverProvider);
 
@@ -77,6 +87,11 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
       final existing = await repository.profileForAuthUser(authUser.id);
       if (existing != null) {
         if (!existing.isActive) {
+          AppTrace.warn('authz.resolve', {
+            'userRef': AppTrace.userRef(authUser.id),
+            'source': 'local',
+            'outcome': 'inactive_profile',
+          });
           throw const ProfileNotProvisionedFailure.inactive();
         }
 
@@ -97,6 +112,14 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
             if (existing.shopId != null &&
                 existing.shopId != cloudProfile.shopId &&
                 cloudShopPresent) {
+              // A device bound to a shop the cloud does not agree with ends up
+              // holding membership for the wrong business; this is the branch
+              // that repairs it, so it is worth a line of its own.
+              AppTrace.warn('authz.shop_migrated', {
+                'userRef': AppTrace.userRef(authUser.id),
+                'fromShopRef': AppTrace.userRef(existing.shopId),
+                'toShopRef': AppTrace.userRef(cloudProfile.shopId),
+              });
               AppLog.info(
                 'Cloud shop mismatch: local=${existing.shopId} '
                 'cloud=${cloudProfile.shopId} — migrating',
@@ -119,6 +142,15 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
             if (existing.role == UserRole.staff &&
                 cloudProfile.permissions.isNotEmpty &&
                 !_sameGrants(existing.permissions, cloudProfile.permissions)) {
+              // Grant changes are permission-sensitive: they silently change
+              // what this staff member can do, so the resulting grant set is
+              // recorded (the count and the permission names, never the user).
+              AppTrace.event('authz.grants_mirrored', {
+                'userRef': AppTrace.userRef(existing.id),
+                'role': existing.role.name,
+                'grants': cloudProfile.permissions.length,
+                'permissions': _grantNames(cloudProfile.permissions),
+              });
               AppLog.info(
                 'Cloud permission grants changed: userId=${existing.id} — '
                 'mirroring ${cloudProfile.permissions.length} grants',
@@ -141,6 +173,13 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
         // must never block authorization.
         await _backfillStaffRoster(resolver, repository, existing);
 
+        AppTrace.event('authz.resolve', {
+          'userRef': AppTrace.userRef(authUser.id),
+          'source': 'local',
+          'role': existing.role.name,
+          'shopRef': AppTrace.userRef(existing.shopId),
+          'grants': existing.permissions.length,
+        });
         return existing;
       }
 
@@ -165,6 +204,17 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
           permissions: cloudProfile.permissions,
         );
         await _backfillStaffRoster(resolver, repository, claimed);
+        // Second device joining an existing shop: the role came from the cloud
+        // and is authoritative, so it is recorded here — a device that came up
+        // as STAFF here can never be the reason a later OWNER-only action is
+        // denied.
+        AppTrace.event('authz.resolve', {
+          'userRef': AppTrace.userRef(authUser.id),
+          'source': 'cloud_claim',
+          'role': claimed.role.name,
+          'shopRef': AppTrace.userRef(claimed.shopId),
+          'grants': claimed.permissions.length,
+        });
         return claimed;
       }
 
@@ -174,10 +224,21 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
       // controller (retried on connectivity restore and app restart). It is
       // no longer a fire-and-forget here, so a failed bootstrap cannot
       // permanently orphan the shop.
+      AppTrace.event('authz.resolve', {
+        'userRef': AppTrace.userRef(authUser.id),
+        'source': 'first_device_ownership',
+        'role': profile.role.name,
+        'shopRef': AppTrace.userRef(profile.shopId),
+        'grants': profile.permissions.length,
+      });
       return profile;
-    } on StaffFailure {
+    } on StaffFailure catch (failure) {
+      AppTrace.warn('authz.resolve_fail', {
+        'failure': failure.runtimeType.toString(),
+      });
       rethrow;
     } catch (error, stackTrace) {
+      AppTrace.fail('authz.resolve_fail', error, stackTrace);
       AppLog.error(
         'Authorization store unavailable',
         tag: tag,
@@ -191,43 +252,93 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
   /// Refreshes after owner-side staff/profile mutations.
   void reload() => ref.invalidateSelf();
 
-  /// Mirrors the cloud `user_profiles` roster for [profile]'s shop into the
-  /// local database. Only the OWNER performs the pull (the roster is what the
-  /// owner's staff management page reads); staff rows are matched by auth user
-  /// id and never re-type an existing OWNER. Cloud grant sets are applied only
-  /// when the cloud actually carries them, so pre-push installs keep their
-  /// local grants. All failures are swallowed: the roster can always be
-  /// re-pulled on the next login.
+  /// Mirrors the cloud `user_profiles` rosters for every shop this OWNER
+  /// manages into the local database, starting with the primary shop. The
+  /// owner's staff page reads the local roster, so staff added from another
+  /// device — under EITHER business — must appear on this one.
+  ///
+  /// The primary shop is always included even when the managed-shop lookup
+  /// fails, so a cloud hiccup degrades to the previous single-shop behaviour
+  /// instead of leaving the roster empty.
+  ///
+  /// Rows are matched by auth user id and never re-type an existing OWNER.
+  /// Because the local schema binds a profile to exactly ONE shop, a member who
+  /// is staff in several businesses is mirrored under the first shop processed
+  /// (the primary) and left alone afterwards — re-pointing their `shop_id` on
+  /// every login would silently move their authorization between businesses.
+  ///
+  /// All failures are swallowed, per shop, so one unreachable business cannot
+  /// block the others; the roster can always be re-pulled on the next login.
   Future<void> _backfillStaffRoster(
     CloudShopResolver resolver,
     StaffRepository repository,
     UserProfile profile,
   ) async {
     if (!profile.isOwner || profile.shopId == null) return;
+    final primaryShopId = profile.shopId!;
+
+    // Primary first: it is the business this device boots into, and processing
+    // it first makes the local `shop_id` binding for shared members stable.
+    final targets = <({String shopId, String name})>[
+      (shopId: primaryShopId, name: 'Cafe'),
+    ];
     try {
-      final roster = await resolver.loadShopStaff(profile.shopId!);
-      for (final member in roster) {
-        // The owner's own row (and any OTHER cloud OWNER row) is never
-        // re-typed locally as STAFF by a roster pull.
-        if (member.authUserId == profile.authUserId || member.role == 'OWNER') {
-          continue;
-        }
-        await repository.upsertStaffProfile(
-          authUserId: member.authUserId,
-          email: member.email,
-          shopId: profile.shopId!,
-          isActive: member.isActive,
-          permissions: member.permissions,
-          displayName: member.displayName,
-        );
+      for (final shop in await resolver.listManagedShops()) {
+        if (shop.shopId == primaryShopId) continue;
+        if (targets.any((target) => target.shopId == shop.shopId)) continue;
+        targets.add((shopId: shop.shopId, name: shop.shopName));
       }
     } catch (error, stackTrace) {
       AppLog.warning(
-        'Cloud roster sync skipped for shop=${profile.shopId}',
+        'Managed-shop lookup failed; mirroring the primary shop only',
         tag: tag,
         error: error,
         stackTrace: stackTrace,
       );
+    }
+
+    for (final target in targets) {
+      try {
+        // A secondary business may have no local row yet (recovered id, or a
+        // second device), and the roster upsert needs one to attach to.
+        await repository.ensureShopWithId(target.shopId, name: target.name);
+        final roster = await resolver.loadShopStaff(target.shopId);
+        for (final member in roster) {
+          // The owner's own row (and any OTHER cloud OWNER row) is never
+          // re-typed locally as STAFF by a roster pull.
+          if (member.authUserId == profile.authUserId ||
+              member.role == 'OWNER') {
+            continue;
+          }
+          final existing = await repository.profileForAuthUser(
+            member.authUserId,
+          );
+          if (existing != null && existing.shopId != target.shopId) {
+            AppLog.info(
+              'Shared staff already bound to another business; keeping it '
+              '(user=${member.authUserId} '
+              'local=${existing.shopId} cloud=${target.shopId})',
+              tag: tag,
+            );
+            continue;
+          }
+          await repository.upsertStaffProfile(
+            authUserId: member.authUserId,
+            email: member.email,
+            shopId: target.shopId,
+            isActive: member.isActive,
+            permissions: member.permissions,
+            displayName: member.displayName,
+          );
+        }
+      } catch (error, stackTrace) {
+        AppLog.warning(
+          'Cloud roster sync skipped for shop=${target.shopId}',
+          tag: tag,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     }
   }
 }
@@ -235,6 +346,16 @@ final class UserProfileController extends AsyncNotifier<UserProfile?> {
 /// True when two grant sets contain exactly the same permissions.
 bool _sameGrants(Set<Permission> a, Set<Permission> b) =>
     a.length == b.length && a.containsAll(b);
+
+/// Permission names in a stable order, for the `authz.grants_mirrored` trace.
+///
+/// A grant set is a capability list, not personal data, so printing the names
+/// is what makes "the owner revoked billing from this tablet" answerable
+/// without guessing from a count.
+String _grantNames(Set<Permission> permissions) {
+  final names = permissions.map((p) => p.name).toList()..sort();
+  return names.join('+');
+}
 
 /// Owner-only removal of a staff member, cloud-first.
 ///
@@ -257,12 +378,34 @@ final class StaffDeletionController extends Notifier<void> {
   /// which case the local copy is deliberately left untouched so both mirrors
   /// keep agreeing.
   ///
+  /// OWNER targets are refused locally before any cloud call; the server RPC
+  /// refuses them again. The cloud call derives the target shop server-side,
+  /// so a mismatched local shop id can never scope the deletion elsewhere.
+  ///
   /// No attendance, salary or advance row is touched on either side.
   Future<void> delete(UserProfile member) async {
     requireOwner(ref);
+    if (member.role != UserRole.staff) {
+      AppTrace.warn('staff.delete', {
+        'userRef': AppTrace.userRef(member.id),
+        'role': member.role.name,
+        'outcome': 'refused_non_staff',
+      });
+      AppLog.warning(
+        'Refused local staff delete for a non-STAFF profile',
+        tag: tag,
+      );
+      throw const StaffDeleteCloudFailure(
+        'Owners cannot be removed as staff members.',
+      );
+    }
     final authUserId = member.authUserId;
     final shopId = member.shopId;
     if (authUserId == null || shopId == null) {
+      AppTrace.warn('staff.delete', {
+        'userRef': AppTrace.userRef(member.id),
+        'outcome': 'no_cloud_identity',
+      });
       throw const StaffDeleteCloudFailure(
         'This staff member has no cloud identity yet, so they cannot be '
         'removed yet.',
@@ -270,8 +413,13 @@ final class StaffDeletionController extends Notifier<void> {
     }
     final deleted = await ref
         .read(cloudShopResolverProvider)
-        .deleteStaffProfile(authUserId: authUserId, shopId: shopId);
+        .deleteStaffProfile(authUserId: authUserId);
     if (!deleted) {
+      AppTrace.warn('staff.delete', {
+        'userRef': AppTrace.userRef(authUserId),
+        'shopRef': AppTrace.userRef(shopId),
+        'outcome': 'cloud_refused',
+      });
       AppLog.warning(
         'Cloud staff delete failed; local mirror left untouched '
         '(user=$authUserId)',
@@ -281,6 +429,11 @@ final class StaffDeletionController extends Notifier<void> {
     }
     await ref.read(staffRepositoryProvider).archiveStaffProfile(member.id);
     ref.invalidate(staffRosterProvider);
+    AppTrace.event('staff.deleted', {
+      'userRef': AppTrace.userRef(authUserId),
+      'shopRef': AppTrace.userRef(shopId),
+      'attendancePreserved': true,
+    });
     AppLog.info(
       'Staff member removed: user=$authUserId shop=$shopId '
       '(history preserved)',
@@ -308,10 +461,24 @@ final canProvider = Provider.family<bool, Permission>((ref, permission) {
 /// Business-operation boundary guard. Throws [PermissionDeniedFailure] when
 /// a resolved session lacks [permission]. Controllers call this at the top
 /// of sensitive mutations so hiding UI is never the only protection.
+///
+/// A denial is the one failure that is always worth a line: it means an
+/// operator's granted set is not what the feature assumes, and that is
+/// invisible from the UI (the button is simply absent). The refused
+/// permission plus the session's role and grant count is the whole diagnosis,
+/// and the surrounding trace line names the attempted operation.
 void requirePermission(Ref ref, Permission permission) {
   final authorization = ref.read(authorizationProvider);
   if (authorization is RoleBasedAuthorization &&
       !authorization.canForSession(permission)) {
+    final profile = ref.read(userProfileProvider).value;
+    AppTrace.warn('authz.denied', {
+      'permission': permission.name,
+      'reason': 'missing_permission',
+      'role': profile?.role.name,
+      'shopRef': AppTrace.userRef(profile?.shopId),
+      'grants': profile?.permissions.length,
+    });
     throw PermissionDeniedFailure();
   }
 }
@@ -323,6 +490,12 @@ void requirePermission(Ref ref, Permission permission) {
 void requireOwner(Ref ref) {
   final profile = ref.read(userProfileProvider).value;
   if (profile != null && !profile.isOwner) {
+    AppTrace.warn('authz.denied', {
+      'permission': 'ownerOnly',
+      'reason': 'not_owner',
+      'role': profile.role.name,
+      'shopRef': AppTrace.userRef(profile.shopId),
+    });
     throw PermissionDeniedFailure();
   }
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:brewflow_pos/core/identity/device_identity.dart'
     show deviceIdProvider;
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart'
     show ConnectivitySnapshot, ConnectivityStatus;
 import 'package:brewflow_pos/core/storage/app_storage.dart';
@@ -272,6 +273,9 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
         // SDK also auto-refreshes on its own timer), retry a pending cloud
         // registration AND immediately drain whatever the outbox accumulated
         // while offline.
+        AppTrace.event('sync.connectivity_restored', {
+          'cloudConfirmed': state.cloudConfirmed,
+        });
         unawaited(_recoverAuthSession());
         _scheduleEnsure();
         _scheduleFastCycle();
@@ -286,7 +290,9 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
   Future<void> _recoverAuthSession() async {
     try {
       await ref.read(authRepositoryProvider).recoverSession();
+      AppTrace.event('auth.recover_session', {'outcome': 'ok'});
     } catch (error, stackTrace) {
+      AppTrace.warn('auth.recover_session', {'outcome': 'deferred'});
       AppLog.warning(
         'Auth session recovery skipped (will retry)',
         tag: tag,
@@ -347,9 +353,19 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
   }
 
   Future<void> _safeCycle(Future<void> Function() cycle) async {
+    if (state.phase != SyncSessionPhase.active) return;
+    final stopwatch = Stopwatch()..start();
+    AppTrace.event('sync.cycle', {
+      'outcome': 'begin',
+      'cloudConfirmed': state.cloudConfirmed,
+    });
     try {
-      if (state.phase != SyncSessionPhase.active) return;
       await cycle();
+      stopwatch.stop();
+      AppTrace.event('sync.cycle', {
+        'outcome': 'ok',
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       // After a pull, download product images whose cloud path arrived on this
       // device but are not yet cached locally (and push any queued uploads).
       // Fire-and-forget: image sync is never allowed to fail the data cycle.
@@ -358,6 +374,11 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
         _cancelConnectivityWatch();
       }
     } catch (error, stackTrace) {
+      stopwatch.stop();
+      AppTrace.warn('sync.cycle', {
+        'outcome': 'failed',
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       AppLog.warning(
         'Sync cycle failed (will retry)',
         tag: tag,
@@ -516,11 +537,11 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
         identityOk = true;
       }
 
-      // BFDIAG (temporary): live authorization snapshot against the EXACT
-      // gate the cloud writes enforce — pins the user, the shop ids in use,
-      // the push result and whether this device's Cafe/Food Truck memberships
-      // actually resolve for is_shop_member(). Diagnostics are best-effort
-      // and must never break the ensured session path.
+      // Live authorization snapshot against the EXACT gate the cloud writes
+      // enforce. This is the diagnostic that explains a FORBIDDEN cloud write:
+      // it says whether this device's Cafe/Food Truck memberships actually
+      // resolve for is_shop_member(), with the business context in force.
+      // Best-effort and must never break the ensured session path.
       try {
         final ftShopId = await AppStorage.preferences.readString(
           BusinessSwitcherController.foodTruckShopIdKey,
@@ -529,17 +550,24 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
         final memberFt = (ftShopId != null && ftShopId.isNotEmpty)
             ? await resolver.isShopMember(ftShopId)
             : null;
-        AppLog.info(
-          'BFDIAG user=$userId ctx=${ref.read(businessSwitcherProvider).name} '
-          'profileShop=${profile.shopId} authoritative=$shopId '
-          'cloudProfileShop=$cloudProfileShopId ftShop=$ftShopId '
-          'pushPrimary=$identityOk memberShop=$memberShop memberFT=$memberFt',
-          tag: tag,
-        );
+        AppTrace.event('sync.membership', {
+          'userRef': AppTrace.userRef(userId),
+          'context': ref.read(businessSwitcherProvider).name,
+          'profileShopRef': AppTrace.userRef(profile.shopId),
+          'authoritativeShopRef': AppTrace.userRef(authoritativeShopId),
+          'cloudProfileShopRef': AppTrace.userRef(cloudProfileShopId),
+          'foodTruckShopRef': AppTrace.userRef(ftShopId),
+          'pushPrimary': identityOk,
+          'memberPrimary': memberShop,
+          'memberFoodTruck': memberFt,
+        });
       } catch (_) {
         // Diagnostics only — never fail the session flow.
       }
     } catch (error, stackTrace) {
+      AppTrace.fail('sync.register_fail', error, stackTrace, {
+        'shopRef': AppTrace.userRef(shopId),
+      });
       AppLog.error(
         'Local device registration failed',
         tag: tag,
@@ -594,6 +622,16 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
       _cancelConnectivityWatch();
       _startCycles(shopId);
     } else {
+      // Either half of the cloud registration is still outstanding, so this
+      // device is running in a degraded mode: local POS works, but cloud
+      // writes can be refused. Saying so explicitly beats leaving it to be
+      // inferred from a later FORBIDDEN.
+      AppTrace.warn('sync.session_degraded', {
+        'deviceRegistered': confirmed,
+        'identityPushed': identityOk,
+        'shopRef': AppTrace.userRef(shopId),
+        'retry': 'on_connectivity_restore',
+      });
       _watchConnectivityWhilePending();
       // Still run cycles: pushes/pulls can work whenever the network is up
       // even if the devices row has not landed yet.
@@ -675,9 +713,20 @@ final class SyncSessionController extends Notifier<SyncSessionState> {
     }
   }
 
+  /// The one place the sync session phase changes, so it is the single place
+  /// worth tracing. `cloudConfirmed=false` on an otherwise active session is
+  /// the state that silently degrades every cloud write, and it is invisible in
+  /// the UI — only the log distinguishes it from a healthy session.
   void _setIfChanged(SyncSessionState next) {
     if (state == next) return;
+    final previous = state;
     state = next;
+    AppTrace.event('sync.phase', {
+      'from': previous.phase.name,
+      'to': next.phase.name,
+      'cloudConfirmed': next.cloudConfirmed,
+      'deviceRef': AppTrace.userRef(next.deviceId),
+    });
   }
 
   /// Refreshes every domain view after a successful sync cycle so that

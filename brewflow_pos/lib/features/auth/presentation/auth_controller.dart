@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/features/auth/data/supabase_auth_repository.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
@@ -98,6 +99,7 @@ final class AuthController extends Notifier<AuthState> {
     final subscription = repository.authStateChanges.listen(
       _applyAuthUser,
       onError: (Object error, StackTrace stackTrace) {
+        AppTrace.fail('auth.stream_fail', error, stackTrace);
         AppLog.error(
           'Auth state stream failed',
           tag: tag,
@@ -116,8 +118,15 @@ final class AuthController extends Notifier<AuthState> {
 
     final current = repository.currentUser;
     if (current != null) {
+      // A session survived process death (the tablet sign-out report): the
+      // splash goes away without ever showing the sign-in screen.
+      AppTrace.event('auth.restore', {
+        'outcome': 'restored',
+        'userRef': AppTrace.userRef(current.id),
+      });
       return AuthState.authenticated(email: current.email);
     }
+    AppTrace.event('auth.restore', {'outcome': 'none'});
     return AuthState.initializing;
   }
 
@@ -131,6 +140,7 @@ final class AuthController extends Notifier<AuthState> {
       return;
     }
     state = state.asSigningIn();
+    AppTrace.event('auth.sign_in', {'userRef': AppTrace.userRef(email)});
     try {
       await ref
           .read(authRepositoryProvider)
@@ -142,9 +152,15 @@ final class AuthController extends Notifier<AuthState> {
         _applyAuthUser(user);
       }
     } on AuthFailure catch (failure) {
+      AppTrace.fail('auth.sign_in_fail', failure, null, {
+        'userRef': AppTrace.userRef(email),
+      });
       AppLog.error('Sign-in failed (${failure.runtimeType})', tag: tag);
       state = AuthState.error(failure);
     } catch (error, stackTrace) {
+      AppTrace.fail('auth.sign_in_fail', error, stackTrace, {
+        'userRef': AppTrace.userRef(email),
+      });
       AppLog.error(
         'Sign-in failed unexpectedly',
         tag: tag,
@@ -161,6 +177,10 @@ final class AuthController extends Notifier<AuthState> {
   /// belongs to the signed-in user (POS cart, filters, purchase draft) is
   /// reset so the next session starts clean.
   Future<void> signOut() async {
+    final previous = state;
+    AppTrace.event('auth.sign_out', {
+      'userRef': AppTrace.userRef(previous.userEmail),
+    });
     try {
       await ref.read(authRepositoryProvider).signOut();
       if (ref.read(authRepositoryProvider).currentUser == null) {
@@ -171,6 +191,7 @@ final class AuthController extends Notifier<AuthState> {
       ref.invalidate(posFilterProvider);
       ref.invalidate(purchaseFormProvider);
     } catch (error, stackTrace) {
+      AppTrace.fail('auth.sign_out_fail', error, stackTrace);
       AppLog.error(
         'Sign-out failed',
         tag: tag,
@@ -183,6 +204,7 @@ final class AuthController extends Notifier<AuthState> {
   void _applyAuthUser(AuthUser? user) {
     if (user == null) {
       if (state.status != AuthStatus.unauthenticated) {
+        AppTrace.event('auth.state', {'status': 'signed_out'});
         AppLog.info('Auth state: signed out', tag: tag);
         state = AuthState.unauthenticated;
       }
@@ -190,6 +212,10 @@ final class AuthController extends Notifier<AuthState> {
     }
     if (state.status != AuthStatus.authenticated ||
         state.userEmail != user.email) {
+      AppTrace.event('auth.state', {
+        'status': 'signed_in',
+        'userRef': AppTrace.userRef(user.id),
+      });
       AppLog.info('Auth state: signed in', tag: tag);
       state = AuthState.authenticated(email: user.email);
     }

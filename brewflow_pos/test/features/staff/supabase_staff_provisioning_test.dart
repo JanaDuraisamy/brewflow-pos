@@ -1,7 +1,10 @@
+import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/features/staff/data/supabase_staff_provisioning.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../helpers/fake_staff_repository.dart';
 
 /// Edge-function response canned by the fake [FunctionsClient].
 final class _Canned {
@@ -218,6 +221,43 @@ void main() {
 
         final body = captured.single as Map;
         expect(body.containsKey('shop_id'), isFalse);
+      },
+    );
+
+    test(
+      'a successful Food Truck call creates an exact local STAFF profile',
+      () async {
+        final service = SupabaseStaffProvisioning(
+          _FakeFunctionsClient(
+            _Canned.success({
+              'id': 'auth-ft-1',
+              'email': 'ft@brewflow.example',
+            }),
+          ),
+        );
+        final repository = FakeStaffRepository();
+
+        final identity = await service.createStaffAuthUser(
+          const StaffCreateInput(
+            email: 'ft@brewflow.example',
+            password: 'secret123',
+            displayName: 'Food Truck Staff',
+            shopId: 'shop-truck',
+          ),
+        );
+        final profile = await repository.createStaffProfile(
+          identity: identity,
+          shopId: 'shop-truck',
+          displayName: 'Food Truck Staff',
+        );
+
+        expect(profile.role, UserRole.staff);
+        expect(profile.isActive, isTrue);
+        expect(profile.shopId, 'shop-truck');
+        expect(
+          await repository.staffMembers(shopId: 'shop-truck'),
+          hasLength(1),
+        );
       },
     );
   });

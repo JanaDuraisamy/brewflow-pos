@@ -22,6 +22,7 @@ import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
+import '../../helpers/test_providers.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -63,6 +64,7 @@ void main() {
 
   Widget app() => ProviderScope(
     overrides: [
+      ...businessScopeOverrides(),
       authRepositoryProvider.overrideWithValue(fakeAuth),
       expensesRepositoryProvider.overrideWithValue(fakeExpenses),
       inventoryRepositoryProvider.overrideWithValue(FakeInventoryRepository()),

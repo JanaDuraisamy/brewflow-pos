@@ -43,6 +43,11 @@ void main() {
   });
 
   Future<void> seedShop() async {
+    // The products.shop_id FK points at shops, so the row the product claims to
+    // belong to has to exist first.
+    await database
+        .into(database.shops)
+        .insert(ShopsCompanion.insert(id: const Value('shop-1'), name: 'Cafe'));
     await database
         .into(database.categories)
         .insert(CategoriesCompanion.insert(id: Value('c1'), name: 'Coffee'));
@@ -57,6 +62,9 @@ void main() {
             sellingPricePaise: 12000,
             costPricePaise: const Value(9000),
             stockQuantity: const Value(20),
+            // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so
+            // the seeded row survives the business scope filter.
+            shopId: const Value('shop-1'),
           ),
         );
     await database

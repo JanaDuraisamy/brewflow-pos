@@ -13,6 +13,7 @@ final class Category {
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
+    this.shopId,
   });
 
   final String id;
@@ -21,14 +22,28 @@ final class Category {
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  Category copyWith({String? name, bool? isActive, DateTime? updatedAt}) =>
-      Category(
-        id: id,
-        name: name ?? this.name,
-        isActive: isActive ?? this.isActive,
-        createdAt: createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
+  /// The business that owns this category, or null on a row created before
+  /// multi-shop existed.
+  ///
+  /// Carried on the model rather than looked up on demand because two rules
+  /// need it in memory: a mutation may only touch a row the active business
+  /// owns, and a business's category filter must not expose a category whose
+  /// only products are hidden from it.
+  final String? shopId;
+
+  Category copyWith({
+    String? name,
+    bool? isActive,
+    DateTime? updatedAt,
+    String? shopId,
+  }) => Category(
+    id: id,
+    name: name ?? this.name,
+    isActive: isActive ?? this.isActive,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    shopId: shopId ?? this.shopId,
+  );
 }
 
 /// The unit a product's stock is counted in. Mirrors the CHECK-constrained
@@ -140,6 +155,8 @@ final class Product {
     this.membershipEnabled = false,
     this.memberPricePaise,
     required this.isActive,
+    this.shopId,
+    this.visibleInShops = false,
     required this.createdAt,
     required this.updatedAt,
     this.variants = const [],
@@ -190,6 +207,13 @@ final class Product {
   final int? memberPricePaise;
 
   final bool isActive;
+  final String? shopId;
+
+  /// Controls whether this product is visible in the Food Truck shop.
+  /// Defaults to false; the owner can toggle it to make the product available
+  /// in Food Truck Billing. Cafe behavior is completely unchanged.
+  final bool visibleInShops;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -220,6 +244,8 @@ final class Product {
     bool? membershipEnabled,
     int? memberPricePaise,
     bool? isActive,
+    String? shopId,
+    bool? visibleInShops,
     DateTime? updatedAt,
     List<ProductVariant>? variants,
   }) => Product(
@@ -242,6 +268,8 @@ final class Product {
     membershipEnabled: membershipEnabled ?? this.membershipEnabled,
     memberPricePaise: memberPricePaise ?? this.memberPricePaise,
     isActive: isActive ?? this.isActive,
+    shopId: shopId ?? this.shopId,
+    visibleInShops: visibleInShops ?? this.visibleInShops,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     variants: variants ?? this.variants,

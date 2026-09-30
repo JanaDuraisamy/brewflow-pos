@@ -148,14 +148,26 @@ abstract interface class CustomerLedgerRepository {
   Future<int> outstandingForCustomer(String customerId);
 
   /// Every customer with an outstanding balance and their open bills,
-  /// current (not window-bounded) and read-only.
+  /// read-only, optionally bounded to the bills raised in one window.
   ///
   /// Only open NOT_PAID, non-voided credit sales generate due; rows keep the
   /// per-bill drill-down (oldest bill first) so the Receivables report can
   /// show exactly which bills each customer still owes on. Customers are
   /// ordered by name. [shopIds] restricts the read to the given businesses;
   /// when null the whole local database is scanned (single-shop devices).
-  Future<List<CustomerReceivable>> receivables({List<String>? shopIds});
+  ///
+  /// [fromUtc]/[toUtc] bound WHICH BILLS count, using the same sale
+  /// `createdAt` instants the sales windows use (both inclusive, UTC). A bill
+  /// raised outside the window is excluded even when it is still owed, and
+  /// [CustomerReceivable.outstandingBillCount] only counts the in-range open
+  /// bills — so a date-scoped report can never display an all-time balance or
+  /// an open-bill count from outside its own range. Leaving both null keeps
+  /// the all-time current-balance reading (the customer ledger page).
+  Future<List<CustomerReceivable>> receivables({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  });
 
   /// Customers with outstanding balances and the total across all of them
   /// (dashboard Due Reminders surface).

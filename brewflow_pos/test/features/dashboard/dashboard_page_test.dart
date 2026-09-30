@@ -200,6 +200,126 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('payment summary shows Cash / UPI / Not Paid and never Bank', (
+    tester,
+  ) async {
+    // Regression: the summary used to list a Bank row and dropped credit
+    // sales entirely, so the rows did not add up to the day total.
+    final orders = FakeOrdersRepository();
+    orders.add(
+      receiptNumber: 'BF-CASH',
+      createdAt: DateTime.now(),
+      paymentMethod: PaymentMethod.cash,
+      totalPaise: 10000,
+      items: const [
+        OrderItem(
+          productName: 'Filter Coffee',
+          sku: 'SKU-1',
+          unitPricePaise: 10000,
+          quantity: 1,
+          lineTotalPaise: 10000,
+          productId: 'product-1',
+        ),
+      ],
+    );
+    orders.add(
+      receiptNumber: 'BF-UPI',
+      createdAt: DateTime.now(),
+      paymentMethod: PaymentMethod.upi,
+      totalPaise: 20000,
+      items: const [
+        OrderItem(
+          productName: 'Filter Coffee',
+          sku: 'SKU-1',
+          unitPricePaise: 20000,
+          quantity: 1,
+          lineTotalPaise: 20000,
+          productId: 'product-1',
+        ),
+      ],
+    );
+    orders.add(
+      receiptNumber: 'BF-CREDIT',
+      createdAt: DateTime.now(),
+      paymentStatus: PaymentStatus.notPaid,
+      totalPaise: 30000,
+      items: const [
+        OrderItem(
+          productName: 'Filter Coffee',
+          sku: 'SKU-1',
+          unitPricePaise: 30000,
+          quantity: 1,
+          lineTotalPaise: 30000,
+          productId: 'product-1',
+        ),
+      ],
+    );
+    // A retired-BANK historical sale must not create a Bank row.
+    orders.add(
+      receiptNumber: 'BF-BANK',
+      createdAt: DateTime.now(),
+      paymentMethod: PaymentMethod.bank,
+      totalPaise: 40000,
+      items: const [
+        OrderItem(
+          productName: 'Filter Coffee',
+          sku: 'SKU-1',
+          unitPricePaise: 40000,
+          quantity: 1,
+          lineTotalPaise: 40000,
+          productId: 'product-1',
+        ),
+      ],
+    );
+
+    await pumpDashboard(tester, orders: orders);
+
+    final summary = find.widgetWithText(SectionCard, 'Payment Summary');
+    expect(summary, findsOneWidget);
+    await tester.ensureVisible(summary);
+    await tester.pumpAndSettle();
+
+    // The three current categories are present with the right amounts.
+    expect(
+      find.descendant(of: summary, matching: find.text('Cash')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: summary, matching: find.text('UPI')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: summary, matching: find.text('Not Paid')),
+      findsOneWidget,
+    );
+    // Cash = 10000 + 40000 (bank folded in) = 50000 = ₹500.00
+    expect(
+      find.descendant(of: summary, matching: find.text('₹500.00')),
+      findsOneWidget,
+    );
+    // UPI = 20000 = ₹200.00
+    expect(
+      find.descendant(of: summary, matching: find.text('₹200.00')),
+      findsOneWidget,
+    );
+    // Not Paid = 30000 = ₹300.00
+    expect(
+      find.descendant(of: summary, matching: find.text('₹300.00')),
+      findsOneWidget,
+    );
+    // Bank is folded into Cash, not shown as its own row.
+    expect(
+      find.descendant(of: summary, matching: find.text('Bank')),
+      findsNothing,
+    );
+    // Cash + UPI + Not Paid == Total (50000 + 20000 + 30000 = 100000).
+    expect(
+      find.descendant(of: summary, matching: find.text('₹1,000.00')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('date chip opens the date picker', (tester) async {
     await pumpDashboard(tester);
 

@@ -13,6 +13,7 @@ import 'package:brewflow_pos/features/customers/presentation/customers_controlle
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
+import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
@@ -666,10 +667,10 @@ final class _PaymentSummary extends StatelessWidget {
           ),
           Divider(height: 12, thickness: 1, color: context.appColors.divider),
           _PaymentRow(
-            label: 'Bank',
-            color: AppColors.card,
+            label: 'Not Paid',
+            color: AppColors.warning,
             amount: hasSales
-                ? Money.formatPaise(split[PaymentMethod.bank] ?? 0)
+                ? Money.formatPaise(snapshot.dayNotPaidPaise)
                 : '—',
           ),
           Divider(height: 12, thickness: 1, color: context.appColors.divider),
@@ -887,7 +888,7 @@ final class _BillRow extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    '${bill.paymentStatus == PaymentStatus.notPaid ? 'Not paid' : paymentMethodLabel(bill.paymentMethod!)} · '
+                    '${paymentDisplayLabel(bill.paymentStatus, bill.paymentMethod)} · '
                     '${itemsLabel(bill.itemCount)} · '
                     '${formatDateTime(bill.createdAt)}',
                     maxLines: 1,

@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
+import '../../helpers/test_providers.dart';
 import '../../helpers/fake_inventory_repository.dart';
 
 /// Collapsed-tablet Billing regression coverage for the navigation/Billing
@@ -55,6 +56,9 @@ FakeInventoryRepository _seedInventory() {
       isActive: true,
       createdAt: now,
       updatedAt: now,
+      // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so seeded
+      // products survive the business scope filter.
+      shopId: 'shop-1',
     ),
   );
   return inventory;
@@ -75,6 +79,7 @@ Future<void> _pumpPos(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        ...businessScopeOverrides(),
         inventoryRepositoryProvider.overrideWithValue(inventory),
         billingRepositoryProvider.overrideWithValue(
           FakeBillingRepository(inventory),

@@ -221,20 +221,38 @@ final class CustomerLedgerDao {
     return query.get();
   }
 
-  /// Every customer with an outstanding balance, current (not window-bounded).
+  /// Every customer with an outstanding balance, read-only and optionally
+  /// bounded to the credit bills raised inside one window.
   ///
   /// Open NOT_PAID, non-voided credit sales generate due; each customer's row
   /// carries the per-bill drill-down (oldest bill first) so the Receivables
   /// report section can show exactly which bills are still owed on. [shopIds]
   /// restricts the scan to the given businesses; null/empty scans everything
   /// locally (single-shop devices).
-  Future<List<CustomerReceivable>> receivables(List<String>? shopIds) async {
+  ///
+  /// [fromUtc]/[toUtc] (both inclusive, UTC) filter the candidate bills by
+  /// their own `createdAt` — the same sale-date semantics the sales windows
+  /// use, deliberately not a second definition. The due derivation below is
+  /// unchanged: a bill already collected in full is no longer NOT_PAID, so it
+  /// drops out on its own, and a part-paid bill contributes only what is left.
+  /// Bill counts and totals are therefore scoped to the window as well.
+  Future<List<CustomerReceivable>> receivables(
+    List<String>? shopIds, {
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) async {
     final query = _db.select(_db.sales)
       ..where(
         (t) =>
             t.customerId.isNotNull() &
             t.paymentStatus.equals('NOT_PAID') &
             t.voided.equals(false) &
+            (fromUtc != null
+                ? t.createdAt.isBiggerOrEqualValue(fromUtc)
+                : const Constant(true)) &
+            (toUtc != null
+                ? t.createdAt.isSmallerOrEqualValue(toUtc)
+                : const Constant(true)) &
             (shopIds != null && shopIds.isNotEmpty
                 ? t.shopId.isIn(shopIds)
                 : const Constant(true)),

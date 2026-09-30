@@ -123,6 +123,31 @@ final class DriftOrdersRepository implements OrdersRepository {
     }
   }
 
+  @override
+  Future<Map<String, Map<PaymentMethod, int>>> paymentLegsFor(
+    Iterable<String> saleIds,
+  ) async {
+    try {
+      final raw = await _dao.paymentLegsFor(saleIds);
+      final result = <String, Map<PaymentMethod, int>>{};
+      raw.forEach((saleId, byDbMethod) {
+        final legs = <PaymentMethod, int>{};
+        byDbMethod.forEach((dbMethod, paise) {
+          final method = PaymentMethod.fromDbValue(dbMethod);
+          // The table constrains legs to CASH/UPI, so an unknown value can
+          // only come from a future/foreign row: skip it rather than guess a
+          // method, and never let it corrupt the readable legs.
+          if (method == null) return;
+          legs.update(method, (t) => t + paise, ifAbsent: () => paise);
+        });
+        if (legs.isNotEmpty) result[saleId] = legs;
+      });
+      return result;
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to load payment details', error, stackTrace);
+    }
+  }
+
   Never _unexpected(String message, Object error, StackTrace stackTrace) {
     AppLog.error(message, tag: tag, error: error, stackTrace: stackTrace);
     throw const UnexpectedOrdersFailure();

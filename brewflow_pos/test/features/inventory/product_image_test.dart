@@ -23,6 +23,7 @@ import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Product Images (Todo 12)
@@ -162,6 +163,9 @@ void main() {
     isActive: true,
     createdAt: now,
     updatedAt: now,
+    // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so seeded
+    // products survive the business scope filter.
+    shopId: 'shop-1',
   );
 
   setUp(() async {
@@ -247,6 +251,7 @@ void main() {
 
   Widget app() => ProviderScope(
     overrides: [
+      ...businessScopeOverrides(),
       authRepositoryProvider.overrideWithValue(fakeAuth),
       inventoryRepositoryProvider.overrideWithValue(fakeInventory),
       ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),

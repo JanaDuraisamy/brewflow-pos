@@ -6,6 +6,7 @@ import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controlle
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
+import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
@@ -129,7 +130,7 @@ void main() {
     expect(snapshot.paymentSplitPaise, {PaymentMethod.upi: 50000});
   });
 
-  test('credit sales count in day revenue but stay out of the split', () async {
+  test('credit sales are reported as Not Paid and still reconcile', () async {
     final orders = ordersWith([
       (0, 100000, PaymentMethod.cash, [exampleItem()]),
     ]);
@@ -146,6 +147,55 @@ void main() {
     expect(snapshot.daySalesPaise, 160000);
     expect(snapshot.dayOrderCount, 2);
     expect(snapshot.paymentSplitPaise, {PaymentMethod.cash: 100000});
+    // The credit sale was previously dropped from the split entirely; it is
+    // now surfaced as the unpaid total for the selected day.
+    expect(snapshot.dayNotPaidPaise, 60000);
+    // Cash + UPI + Not Paid must reconcile with the day total.
+    final cash = snapshot.paymentSplitPaise[PaymentMethod.cash] ?? 0;
+    final upi = snapshot.paymentSplitPaise[PaymentMethod.upi] ?? 0;
+    expect(cash + upi + snapshot.dayNotPaidPaise, snapshot.daySalesPaise);
+  });
+
+  test('a split sale is attributed from its legs, not the NULL header', () {
+    // A split sale is PAID with payment_method = NULL, so it used to vanish
+    // from the day split and break the summary's arithmetic.
+    final orders = ordersWith([]);
+    orders.add(
+      receiptNumber: 'BF-902',
+      createdAt: today(),
+      paymentStatus: PaymentStatus.paid,
+      totalPaise: 30000,
+      items: [exampleItem()],
+      splitLegs: {PaymentMethod.cash: 12000, PaymentMethod.upi: 18000},
+    );
+
+    final attribution = attributePayments(
+      orders.storedSummaries,
+      legsBySaleId: {
+        for (final order in orders.storedSummaries)
+          if (orders.paymentLegs[order.id] != null)
+            order.id: orders.paymentLegs[order.id]!,
+      },
+    );
+    expect(attribution.cashPaise, 12000);
+    expect(attribution.upiPaise, 18000);
+    expect(attribution.notPaidPaise, 0);
+    expect(attribution.totalPaise, 30000);
+  });
+
+  test('legacy BANK sales fold into Cash and never become Not Paid', () async {
+    final orders = ordersWith([
+      (0, 100000, PaymentMethod.bank, [exampleItem()]),
+    ]);
+    final container = buildContainer(orders: orders);
+
+    final snapshot = await settle(container);
+    expect(snapshot.daySalesPaise, 100000);
+    // BANK is not a current category...
+    expect(snapshot.paymentSplitPaise.containsKey(PaymentMethod.bank), isFalse);
+    // ...its settled money is in Cash, not in Not Paid.
+    expect(snapshot.paymentSplitPaise, {PaymentMethod.cash: 100000});
+    expect(snapshot.dayNotPaidPaise, 0);
   });
 
   test('profit uses recorded cost prices for the selected day', () async {

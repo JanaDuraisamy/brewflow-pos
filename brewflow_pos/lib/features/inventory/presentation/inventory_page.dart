@@ -9,12 +9,14 @@ import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
+import 'package:brewflow_pos/features/inventory/presentation/food_truck_stock_sheet.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/product_thumbnail.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_adjustment_dialog.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_history_page.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -726,14 +728,14 @@ final class _ProductList extends ConsumerWidget {
   }
 }
 
-final class _ProductTable extends StatelessWidget {
+final class _ProductTable extends ConsumerWidget {
   const _ProductTable({required this.products, required this.categories});
 
   final List<Product> products;
   final List<Category> categories;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final textTheme = Theme.of(context).textTheme;
     return DataTable(
       columns: const [
@@ -822,7 +824,8 @@ final class _ProductTable extends StatelessWidget {
                   tooltip: 'Adjust stock',
                   icon: const Icon(Icons.swap_vert),
                   color: context.appColors.textSecondary,
-                  onPressed: () => _showAdjustStockDialog(context, product),
+                  onPressed: () =>
+                      _showAdjustStockDialog(context, ref, product),
                 ),
               ),
             ],
@@ -928,7 +931,8 @@ final class _ProductCard extends ConsumerWidget {
                     minHeight: 36,
                   ),
                   color: context.appColors.textSecondary,
-                  onPressed: () => _showAdjustStockDialog(context, product),
+                  onPressed: () =>
+                      _showAdjustStockDialog(context, ref, product),
                 ),
                 IconButton(
                   tooltip: 'Edit product',
@@ -1108,7 +1112,8 @@ final class _MobileProductCard extends ConsumerWidget {
                   icon: const Icon(Icons.swap_vert),
                   visualDensity: VisualDensity.compact,
                   color: appColors.textSecondary,
-                  onPressed: () => _showAdjustStockDialog(context, product),
+                  onPressed: () =>
+                      _showAdjustStockDialog(context, ref, product),
                 ),
             ],
           ),
@@ -1178,14 +1183,14 @@ final class _MobileMetric extends StatelessWidget {
 }
 
 /// Expandable variant summary shown under a variant product card.
-final class _VariantsTile extends StatelessWidget {
+final class _VariantsTile extends ConsumerWidget {
   const _VariantsTile({required this.product, required this.globalThreshold});
 
   final Product product;
   final int globalThreshold;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final textTheme = Theme.of(context).textTheme;
     final unit = _stockUnitSuffix(product.stockUnit);
     final variants = product.variants;
@@ -1274,6 +1279,7 @@ final class _VariantsTile extends StatelessWidget {
                       color: context.appColors.textSecondary,
                       onPressed: () => _showAdjustStockDialog(
                         context,
+                        ref,
                         product,
                         variant: variant,
                       ),
@@ -1411,14 +1417,86 @@ String _stockCellText(Product product) {
       : '${product.stockQuantity} $unit';
 }
 
-void _showAdjustStockDialog(
+/// Opens the stock editor for [product] in the active business.
+///
+/// The two businesses keep separate stock, so the editor has to route: a Cafe
+/// product adjust writes `products.stock_quantity`, while a product the Cafe
+/// shares into the Food Truck has no truck stock of its own and must be edited
+/// through the `shop_product_stock` overlay instead. Sending a shared product
+/// down the Cafe path is how a truck adjustment would silently move the Cafe's
+/// shelf, so the routing is explicit rather than inferred from the UI.
+///
+/// Fails closed whenever no single concrete shop can be named, because a stock
+/// write is a movement row plus a quantity update and both are irreversible
+/// from the user's point of view:
+///
+///  * `BusinessContext.all` is a read-only view spanning two independent
+///    shelves. There is no correct shelf to write, so guessing Cafe would move
+///    the Cafe's stock on a tap the user made while looking at both.
+///  * Food Truck with no persisted truck id has no shelf to move. Falling
+///    through to the Cafe path would let a truck action edit Cafe stock.
+Future<void> _showAdjustStockDialog(
   BuildContext context,
+  WidgetRef ref,
   Product product, {
   ProductVariant? variant,
-}) {
-  showDialog<void>(
+}) async {
+  final switcher = ref.read(businessSwitcherProvider.notifier);
+  final business = ref.watch(businessSwitcherProvider);
+  if (business == BusinessContext.all) {
+    _showAmbiguousScopeNotice(context);
+    return;
+  }
+  if (business == BusinessContext.foodTruck) {
+    final truckShopId = await switcher.existingFoodTruckShopId();
+    if (truckShopId == null) {
+      // No persisted truck: there is no Food Truck shelf to move, and the Cafe
+      // path would write the wrong business. Refuse rather than guess.
+      _showAmbiguousScopeNotice(context);
+      return;
+    }
+    // A product the truck owns outright edits its own stock row, exactly like
+    // the Cafe. Only a shared product needs the overlay editor.
+    if (product.shopId == truckShopId) {
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) =>
+            StockAdjustmentDialog(product: product, variant: variant),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => FoodTruckStockDialog(
+        shopId: truckShopId,
+        product: product,
+        variant: variant,
+      ),
+    );
+    return;
+  }
+  if (!context.mounted) return;
+  await showDialog<void>(
     context: context,
     builder: (_) => StockAdjustmentDialog(product: product, variant: variant),
+  );
+}
+
+/// Explains, in the user's own terms, why stock cannot be edited right now.
+///
+/// Deliberately not an error dialog: nothing failed, and the fix is on screen
+/// already (pick the single business, or let the Food Truck finish setting up).
+void _showAmbiguousScopeNotice(BuildContext context) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text(
+        'Pick a single business to adjust stock. The All businesses view is '
+        'read-only, and stock is kept separately for the Cafe and the '
+        'Food Truck.',
+      ),
+    ),
   );
 }
 
@@ -1438,7 +1516,7 @@ void _showProductActions(BuildContext context, WidgetRef ref, Product product) {
       ContextMenuItem(
         icon: Icons.swap_vert,
         label: 'Adjust Stock',
-        onTap: () => _showAdjustStockDialog(context, product),
+        onTap: () => _showAdjustStockDialog(context, ref, product),
       ),
       ContextMenuItem(
         icon: product.isActive

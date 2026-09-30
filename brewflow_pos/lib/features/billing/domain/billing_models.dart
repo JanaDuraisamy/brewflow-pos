@@ -386,6 +386,173 @@ final class HeldBill {
   );
 }
 
+/// One payment leg of a split sale.
+///
+/// A sale paid with both Cash and UPI records one [SalePayment] per method.
+/// Single-payment sales keep using [Sale.paymentMethod] and leave this list
+/// empty, so existing history and receipts are unaffected.
+final class SalePayment {
+  const SalePayment({required this.paymentMethod, required this.amountPaise});
+
+  final PaymentMethod paymentMethod;
+  final int amountPaise;
+
+  Map<String, dynamic> toJson() => {
+    'paymentMethod': paymentMethod.dbValue,
+    'amountPaise': amountPaise,
+  };
+
+  static SalePayment fromJson(Map<String, dynamic> json) => SalePayment(
+    paymentMethod:
+        PaymentMethod.fromDbValue(json['paymentMethod'] as String? ?? '') ??
+        PaymentMethod.cash,
+    amountPaise: json['amountPaise'] as int? ?? 0,
+  );
+}
+
+/// What a cashier's split-payment draft currently adds up to.
+enum SplitDraftState {
+  /// The draft cannot be read as an amount — non-numeric text, more than two
+  /// decimal places, or a value past the safe ceiling. Never submittable: the
+  /// alternative is guessing what was meant.
+  invalid,
+
+  /// The legs are valid but do not cover the total.
+  under,
+
+  /// The legs are valid but cover more than the total.
+  over,
+
+  /// The legs cover the total exactly. The only submittable state.
+  exact,
+}
+
+/// A cashier-entered split payment, parsed from **rupees** text into paise.
+///
+/// A cashier typing `200` means ₹200. Reading that as 200 paise would charge
+/// ₹2 against a ₹278 total and then reject the sale as short, which is what
+/// the paise-labelled input used to do. Rupees are a presentation concern and
+/// stop at this boundary: everything downstream — the cart, the controller,
+/// the repository, the RPC and the `sale_payments` table — stays integer paise,
+/// so the persisted model is untouched.
+///
+/// Pure and immutable, so the rule that decides whether a split is submittable
+/// is testable without a widget.
+final class SplitPaymentDraft {
+  const SplitPaymentDraft({
+    required this.cashPaise,
+    required this.upiPaise,
+    required this.totalPaise,
+    this.state = SplitDraftState.under,
+  });
+
+  /// Parses the two cashier inputs. Blank input is a zero leg, not an error — it
+  /// simply means that instrument is not part of this split, so the other one
+  /// can be read on its own. Text that is present but not a valid rupee amount
+  /// is [SplitDraftState.invalid].
+  ///
+  /// Note that a blank is *readable* but not necessarily *submittable*: a split
+  /// needs two instruments, so one filled field is exact arithmetic yet still
+  /// fails [canSubmit]. See [legCount].
+  factory SplitPaymentDraft.fromRupeeInput({
+    required String cash,
+    required String upi,
+    required int totalPaise,
+  }) {
+    final cashPaise = _leg(cash);
+    final upiPaise = _leg(upi);
+
+    // A blank field is a leg the cashier has not filled in yet, so it must not
+    // block the other one from being exact. A present-but-unreadable field
+    // must block, because there is no safe reading of it.
+    final unreadable =
+        (cash.trim().isNotEmpty && cashPaise == null) ||
+        (upi.trim().isNotEmpty && upiPaise == null);
+
+    final sum = (cashPaise ?? 0) + (upiPaise ?? 0);
+    final state = switch ((unreadable, sum)) {
+      (true, _) => SplitDraftState.invalid,
+      (_, final int s) when s == totalPaise => SplitDraftState.exact,
+      (_, final int s) when s > totalPaise => SplitDraftState.over,
+      _ => SplitDraftState.under,
+    };
+
+    return SplitPaymentDraft(
+      cashPaise: cashPaise ?? 0,
+      upiPaise: upiPaise ?? 0,
+      totalPaise: totalPaise,
+      state: state,
+    );
+  }
+
+  /// One input field read as paise, or null when it cannot be read.
+  static int? _leg(String raw) {
+    if (raw.trim().isEmpty) return 0;
+    return Money.parseRupeesToPaise(raw);
+  }
+
+  final int cashPaise;
+  final int upiPaise;
+  final int totalPaise;
+  final SplitDraftState state;
+
+  int get sumPaise => cashPaise + upiPaise;
+
+  /// How many instruments this split actually pays with. A zero leg is not a
+  /// leg: it is the absence of one.
+  int get legCount => (cashPaise > 0 ? 1 : 0) + (upiPaise > 0 ? 1 : 0);
+
+  /// A split is by definition money taken in more than one way, so a single
+  /// instrument is not a split at all — it is a normal payment that happens to
+  /// be typed into this editor. Requiring two keeps the two flows honest: the
+  /// split editor cannot be used to bypass the single-method picker, and a
+  /// one-instrument "split" can never be persisted as split payment rows.
+  static const int minLegs = 2;
+
+  bool get hasEnoughLegs => legCount >= minLegs;
+
+  /// How much of the total is still unaccounted for. Negative when over.
+  int get remainingPaise => totalPaise - sumPaise;
+
+  bool get isExact => state == SplitDraftState.exact;
+
+  /// Only an exact, fully readable, two-instrument draft may be submitted.
+  /// Under, over, invalid and single-instrument all block.
+  bool get canSubmit => isExact && hasEnoughLegs;
+
+  /// The payment legs to persist, in a fixed CASH-then-UPI order so the same
+  /// draft always produces the same rows. A zero leg is omitted rather than
+  /// written, so `sale_payments` never holds a zero-value row.
+  List<SalePayment> toPayments() => [
+    if (cashPaise > 0)
+      SalePayment(paymentMethod: PaymentMethod.cash, amountPaise: cashPaise),
+    if (upiPaise > 0)
+      SalePayment(paymentMethod: PaymentMethod.upi, amountPaise: upiPaise),
+  ];
+
+  /// What the cashier needs to fix, or null when the draft may be submitted.
+  ///
+  /// Returns whole formatted amounts with a single currency symbol each —
+  /// `Money.formatPaise` already prefixes ₹, so the caller must not add
+  /// another.
+  String? get problem {
+    if (state == SplitDraftState.invalid) {
+      return 'Enter amounts in rupees, up to two decimals';
+    }
+    if (!isExact) {
+      return remainingPaise > 0
+          ? 'Remaining: ${Money.formatPaise(remainingPaise)}'
+          : 'Overpaid: ${Money.formatPaise(-remainingPaise)}';
+    }
+    // Arithmetically exact, but only one instrument. The sum is right, so
+    // "remaining" would be a lie here — name the missing half instead.
+    if (!hasEnoughLegs) {
+      return 'A split needs both Cash and UPI';
+    }
+    return null;
+  }
+}
+
 /// A completed sale header.
 final class Sale {
   const Sale({
@@ -401,6 +568,7 @@ final class Sale {
     this.customerId,
     this.voided = false,
     this.voidedAt,
+    this.payments = const [],
   });
 
   final String id;
@@ -413,6 +581,8 @@ final class Sale {
   final PaymentStatus paymentStatus;
 
   /// Method the counter accepted; null for NOT_PAID (credit) sales.
+  ///
+  /// For split sales this is null — the individual legs live in [payments].
   final PaymentMethod? paymentMethod;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -426,6 +596,9 @@ final class Sale {
 
   /// UTC instant the sale was voided; null when the sale is active.
   final DateTime? voidedAt;
+
+  /// Split-payment legs. Empty for single-payment and credit sales.
+  final List<SalePayment> payments;
 }
 
 /// One persisted line of a completed sale (snapshot values).

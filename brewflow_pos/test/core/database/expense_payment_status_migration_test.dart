@@ -118,12 +118,21 @@ void main() {
         expect(second.isActive, false);
 
         // Rows outside the migration's scope survive untouched.
-        final product = await (db.select(
-          db.products,
-        )..where((t) => t.id.equals('p1'))).getSingle();
-        expect(product.name, 'Filter Coffee');
-        expect(product.sellingPricePaise, 12000);
-        expect(product.costPricePaise, 8000);
+        // The current products row type requires `visible_in_shops` (v28);
+        // this database is parked at the step under test, so read the columns
+        // that existed at that version explicitly.
+        final product =
+            await (db.selectOnly(db.products)
+                  ..addColumns([
+                    db.products.name,
+                    db.products.sellingPricePaise,
+                    db.products.costPricePaise,
+                  ])
+                  ..where(db.products.id.equals('p1')))
+                .getSingle();
+        expect(product.read(db.products.name), 'Filter Coffee');
+        expect(product.read(db.products.sellingPricePaise), 12000);
+        expect(product.read(db.products.costPricePaise), 8000);
 
         await db.close();
         schema.close();

@@ -1,9 +1,41 @@
 import 'package:brewflow_pos/features/billing/data/billing_cloud_gateway.dart';
 
+/// Captured arguments of one `createSaleAtomic` call.
+final class CreateSaleArgs {
+  CreateSaleArgs({
+    required this.shopId,
+    required this.customerId,
+    required this.subtotalPaise,
+    required this.totalPaise,
+    required this.offerDiscountPaise,
+    required this.paymentMethod,
+    required this.paymentStatus,
+    required this.lines,
+    required this.payments,
+  });
+
+  final String shopId;
+  final String? customerId;
+  final int subtotalPaise;
+  final int totalPaise;
+  final int offerDiscountPaise;
+  final String? paymentMethod;
+  final String paymentStatus;
+  final List<Map<String, dynamic>> lines;
+  final List<Map<String, dynamic>>? payments;
+}
+
 class FakeBillingCloudGateway implements BillingCloudGateway {
   int _receiptCounter = 0;
   final List<Map<String, dynamic>> calls = [];
+
+  /// Every `createSaleAtomic` argument set, so split-payment tests can assert
+  /// the legs actually reached the RPC rather than only that it was called.
+  final List<CreateSaleArgs> createSaleArgs = [];
   Object? nextError;
+
+  CreateSaleArgs? get lastCreateSale =>
+      createSaleArgs.isEmpty ? null : createSaleArgs.last;
 
   /// If set, createSaleAtomic will check stock via this callback and throw.
   Future<void> Function(List<Map<String, dynamic>> lines)? stockCheck;
@@ -23,8 +55,22 @@ class FakeBillingCloudGateway implements BillingCloudGateway {
     String? paymentMethod,
     required String paymentStatus,
     required List<Map<String, dynamic>> lines,
+    List<Map<String, dynamic>>? payments,
   }) async {
     calls.add({'shopId': shopId, 'lines': lines});
+    createSaleArgs.add(
+      CreateSaleArgs(
+        shopId: shopId,
+        customerId: customerId,
+        subtotalPaise: subtotalPaise,
+        totalPaise: totalPaise,
+        offerDiscountPaise: offerDiscountPaise,
+        paymentMethod: paymentMethod,
+        paymentStatus: paymentStatus,
+        lines: lines,
+        payments: payments,
+      ),
+    );
     if (nextError != null) {
       final e = nextError;
       nextError = null;

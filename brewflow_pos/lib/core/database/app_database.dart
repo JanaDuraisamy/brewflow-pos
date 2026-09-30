@@ -26,9 +26,11 @@ import 'tables/staff_advances.dart';
 import 'tables/staff_attendance.dart';
 import 'tables/staff_daily_salaries.dart';
 import 'tables/staff_monthly_salaries.dart';
+import 'tables/sale_payments.dart';
 import 'tables/sales.dart';
 import 'tables/devices.dart';
 import 'tables/shops.dart';
+import 'tables/shop_product_stock.dart';
 import 'tables/sync_outbox.dart';
 import 'tables/sync_state.dart';
 import 'tables/staff_permissions.dart';
@@ -78,6 +80,7 @@ part 'app_database.g.dart';
     ExpensePayments,
     Sales,
     SaleItems,
+    SalePayments,
     SaleSequences,
     StockMovements,
     Suppliers,
@@ -86,6 +89,7 @@ part 'app_database.g.dart';
     PurchaseSequences,
     Offers,
     ProductImageSync,
+    ShopProductStock,
     StorageCleanupNotification,
     StorageCleanupState,
     StaffAttendance,

@@ -5,6 +5,7 @@ import 'package:brewflow_pos/app/shells/app_shell.dart';
 import 'package:brewflow_pos/app/shells/splash_shell.dart';
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/router/app_routes.dart';
+import 'package:brewflow_pos/core/router/route_trace_observer.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_shell.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
@@ -66,14 +67,17 @@ export 'package:brewflow_pos/core/router/app_routes.dart';
 ///
 /// [redirect] and [refreshListenable] are the extension points for guards:
 /// pass an authorization redirect here and nothing else in the route table
-/// needs to change.
+/// needs to change. [observers] receives the same extension-point treatment, so
+/// navigation tracing can be added without touching the route table.
 GoRouter buildAppRouter({
   FutureOr<String?> Function(BuildContext context, GoRouterState state)?
   redirect,
   Listenable? refreshListenable,
+  List<NavigatorObserver> observers = const [],
 }) {
   return GoRouter(
     initialLocation: AppRoutes.splash,
+    observers: observers,
     routes: [
       GoRoute(
         path: AppRoutes.splash,
@@ -369,6 +373,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
   final router = buildAppRouter(
     refreshListenable: Listenable.merge([authNotifier, profileNotifier]),
+    observers: [BrewFlowRouteObserver()],
     redirect: (context, state) =>
         _authorizationRedirect(context, state, authNotifier.value),
   );

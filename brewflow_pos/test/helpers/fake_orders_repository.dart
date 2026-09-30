@@ -15,6 +15,10 @@ final class FakeOrdersRepository implements OrdersRepository {
   final Map<String, Order> _storedOrders = {};
   final Map<String, String> _orderShopIds = {};
 
+  /// Split-payment legs per sale id, mirroring the `sale_payments` rows the
+  /// real repository reads back for sales whose header method is NULL.
+  final Map<String, Map<PaymentMethod, int>> paymentLegs = {};
+
   /// Thrown by [orders] when set (list-load failures).
   Object? ordersError;
 
@@ -39,6 +43,7 @@ final class FakeOrdersRepository implements OrdersRepository {
     bool isVoided = false,
     DateTime? voidedAt,
     String? shopId,
+    Map<PaymentMethod, int>? splitLegs,
   }) {
     final summary = OrderSummary(
       id: 'order-${storedSummaries.length + 1}',
@@ -56,6 +61,9 @@ final class FakeOrdersRepository implements OrdersRepository {
       shopId: shopId,
     );
     if (shopId != null) _orderShopIds[summary.id] = shopId;
+    if (splitLegs != null && splitLegs.isNotEmpty) {
+      paymentLegs[summary.id] = Map.of(splitLegs);
+    }
     storedSummaries.add(summary);
     _storedOrders[summary.id] = Order(
       id: summary.id,
@@ -136,6 +144,17 @@ final class FakeOrdersRepository implements OrdersRepository {
         ? <OrderSummary>[]
         : matching.sublist(offset, end);
     return OrdersPageResult(items: page, hasMore: end < matching.length);
+  }
+
+  @override
+  Future<Map<String, Map<PaymentMethod, int>>> paymentLegsFor(
+    Iterable<String> saleIds,
+  ) async {
+    final wanted = saleIds.toSet();
+    return {
+      for (final entry in paymentLegs.entries)
+        if (wanted.contains(entry.key)) entry.key: Map.of(entry.value),
+    };
   }
 
   @override

@@ -49,8 +49,13 @@ void main() {
       final db = AppDatabase(schema.newConnection());
       await verifier.migrateAndValidate(db, 14);
 
-      // Preserved.
-      expect(await db.select(db.shops).get(), hasLength(1));
+      // Preserved. The current shops row type requires `receipt_prefix` (v28);
+      // this database is parked at v14, so count via a column that exists here.
+      final shopCount =
+          (await db.customSelect('SELECT COUNT(*) AS n FROM shops').getSingle())
+                  .data['n']
+              as int;
+      expect(shopCount, 1);
       final user = await (db.select(
         db.users,
       )..where((t) => t.id.equals('u1'))).getSingle();

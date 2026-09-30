@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   Category category(String id, String name) => Category(
@@ -43,6 +44,9 @@ void main() {
     isActive: true,
     createdAt: DateTime.now().toUtc(),
     updatedAt: DateTime.now().toUtc(),
+    // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so seeded
+    // products survive the business scope filter.
+    shopId: 'shop-1',
   );
 
   FakeInventoryRepository seedInventory() {
@@ -111,6 +115,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...businessScopeOverrides(),
           inventoryRepositoryProvider.overrideWithValue(inventory),
           billingRepositoryProvider.overrideWithValue(billing),
           customersRepositoryProvider.overrideWithValue(customers),

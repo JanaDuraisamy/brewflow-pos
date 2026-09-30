@@ -31,17 +31,23 @@ void main() {
     bool active = true,
     String? sku,
     int pricePaise = 12000,
+    String? shopId,
   }) async {
     await database
         .into(database.categories)
         .insert(
-          CategoriesCompanion.insert(id: Value(id), name: 'Category $id'),
+          CategoriesCompanion.insert(
+            id: Value(id),
+            name: 'Category $id',
+            shopId: Value(shopId),
+          ),
         );
     await database
         .into(database.products)
         .insert(
           ProductsCompanion.insert(
             id: Value(id),
+            shopId: Value(shopId),
             categoryId: id,
             name: name,
             sku: Value(sku),
@@ -97,6 +103,22 @@ void main() {
         .into(database.shops)
         .insert(ShopsCompanion.insert(id: Value('shop-1'), name: 'Cafe'));
     return 'shop-1';
+  }
+
+  /// Creates the Food Truck as a SECOND business with its own receipt label.
+  /// This is the shape the migration added: the prefix lives on the shop row,
+  /// so a second business does not inherit the Cafe one.
+  Future<String> seedFoodTruckShop() async {
+    await database
+        .into(database.shops)
+        .insert(
+          ShopsCompanion.insert(
+            id: Value('shop-truck'),
+            name: 'Food Truck',
+            receiptPrefix: Value('FT-'),
+          ),
+        );
+    return 'shop-truck';
   }
 
   Future<String?> customerIdOf(String saleId) async {
@@ -451,6 +473,203 @@ void main() {
       expect(await countSales(), 0);
       expect(await stockOf('p1'), 1000);
     });
+  });
+
+  group('Food Truck receipt prefix', () {
+    // -------------------------------------------------------------------------
+    // Cafe is the reference implementation: it must keep issuing BF- receipts,
+    // gapless and heal-forward, exactly as before. The Food Truck differs in
+    // exactly one way — the LABEL — because the two businesses must be
+    // distinguishable on the same till roll.
+    //
+    // The counter was already per-shop (`sale_sequences` keyed by
+    // (id, shop_id)); before the fix only the label was global, so a truck
+    // sale printed a BF- receipt indistinguishable from a Cafe one. These tests
+    // pin both halves: Cafe unchanged, truck labelled FT-, numbering
+    // independent.
+    // -------------------------------------------------------------------------
+
+    test('Cafe still issues BF- receipts gaplessly', () async {
+      final shopId = await seedShop();
+      await seedProduct(
+        id: 'p1',
+        name: 'Filter Coffee',
+        stock: 20,
+        shopId: shopId,
+      );
+
+      for (var i = 1; i <= 3; i++) {
+        final completed = await repository.completeSale(
+          lines: lines([('p1', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shopId,
+        );
+        expect(
+          completed.sale.receiptNumber,
+          'BF-${i.toString().padLeft(6, '0')}',
+        );
+      }
+    });
+
+    test('a Food Truck sale is labelled FT-, not BF-', () async {
+      final truckId = await seedFoodTruckShop();
+      await seedProduct(
+        id: 'pt',
+        name: 'Truck Latte',
+        stock: 20,
+        shopId: truckId,
+      );
+
+      final completed = await repository.completeSale(
+        lines: lines([('pt', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: truckId,
+      );
+
+      expect(
+        completed.sale.receiptNumber,
+        'FT-000001',
+        reason: 'a truck receipt must never be labelled as a Cafe receipt',
+      );
+    });
+
+    test('Cafe and Food Truck numbering are independent', () async {
+      final cafeId = await seedShop();
+      final truckId = await seedFoodTruckShop();
+      await seedProduct(
+        id: 'pc',
+        name: 'Cafe Coffee',
+        stock: 20,
+        shopId: cafeId,
+      );
+      await seedProduct(
+        id: 'pt',
+        name: 'Truck Tea',
+        stock: 20,
+        shopId: truckId,
+      );
+
+      // Interleaved on purpose: the two businesses share a device, and the
+      // counter must not let one consume the other's numbers.
+      for (var i = 0; i < 2; i++) {
+        final cafe = await repository.completeSale(
+          lines: lines([('pc', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: cafeId,
+        );
+        final truck = await repository.completeSale(
+          lines: lines([('pt', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: truckId,
+        );
+        expect(
+          cafe.sale.receiptNumber,
+          'BF-${(i + 1).toString().padLeft(6, '0')}',
+        );
+        expect(
+          truck.sale.receiptNumber,
+          'FT-${(i + 1).toString().padLeft(6, '0')}',
+        );
+      }
+    });
+
+    test('the heal-forward scan is scoped to the shop own prefix', () async {
+      final cafeId = await seedShop();
+      final truckId = await seedFoodTruckShop();
+      await seedProduct(
+        id: 'pt',
+        name: 'Truck Tea',
+        stock: 20,
+        shopId: truckId,
+      );
+
+      // A high Cafe receipt must NOT push the truck counter forward, and the
+      // truck's own high receipt must not be misread as a Cafe one. The scan
+      // filters on both shop_id AND prefix; dropping either filter breaks this.
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              shopId: Value(cafeId),
+              receiptNumber: 'BF-004200',
+              subtotalPaise: 5000,
+              totalPaise: 5000,
+            ),
+          );
+
+      final completed = await repository.completeSale(
+        lines: lines([('pt', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: truckId,
+      );
+
+      expect(
+        completed.sale.receiptNumber,
+        'FT-000001',
+        reason: "Cafe's high number must not leak into the truck sequence",
+      );
+    });
+
+    test('a truck heals forward past its own highest receipt', () async {
+      final truckId = await seedFoodTruckShop();
+      await seedProduct(
+        id: 'pt',
+        name: 'Truck Tea',
+        stock: 20,
+        shopId: truckId,
+      );
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              shopId: Value(truckId),
+              receiptNumber: 'FT-000007',
+              subtotalPaise: 5000,
+              totalPaise: 5000,
+            ),
+          );
+
+      final completed = await repository.completeSale(
+        lines: lines([('pt', 1)]),
+        paymentMethod: PaymentMethod.cash,
+        shopId: truckId,
+      );
+
+      expect(completed.sale.receiptNumber, 'FT-000008');
+    });
+
+    test(
+      'a blank prefix falls back to the Cafe label, never a bare number',
+      () async {
+        // A half-restored backup or a hand-edited row can leave the label empty.
+        // The allocator must still emit a labelled receipt: a bare "000001" is
+        // untraceable, so the historical Cafe label is the safe fallback.
+        const shopId = 'shop-blank';
+        await database
+            .into(database.shops)
+            .insert(
+              ShopsCompanion.insert(
+                id: Value(shopId),
+                name: 'Blank Prefix',
+                receiptPrefix: Value('   '),
+              ),
+            );
+        await seedProduct(
+          id: 'pb',
+          name: 'Blank Coffee',
+          stock: 20,
+          shopId: shopId,
+        );
+
+        final completed = await repository.completeSale(
+          lines: lines([('pb', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shopId,
+        );
+
+        expect(completed.sale.receiptNumber, 'BF-000001');
+      },
+    );
   });
 
   group('frequentlySoldProductIds', () {

@@ -88,10 +88,11 @@ void main() {
     required String receipt,
     required DateTime createdAt,
     PaymentStatus paymentStatus = PaymentStatus.paid,
-    PaymentMethod payment = PaymentMethod.cash,
+    PaymentMethod? payment = PaymentMethod.cash,
     int totalPaise = 24000,
     String? customerName,
     bool isVoided = false,
+    Map<PaymentMethod, int>? splitLegs,
     List<OrderItem> items = const [
       OrderItem(
         productName: 'Filter Coffee',
@@ -112,6 +113,7 @@ void main() {
       customerName: customerName,
       isVoided: isVoided,
       voidedAt: isVoided ? createdAt : null,
+      splitLegs: splitLegs,
     );
   }
 
@@ -481,6 +483,36 @@ void main() {
       expect(find.text('Not paid'), findsOneWidget);
       expect(find.text('Cash'), findsNothing);
       expect(find.text('Ravi'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a split sale with a NULL method still renders its payment', (
+      tester,
+    ) async {
+      // Regression: split sales are PAID but store payment_method = NULL on
+      // the header and keep the real methods in sale_payments. The list and
+      // detail used to force-unwrap that NULL, which threw and left a grey
+      // blank block where the payment value should be.
+      seedOrder(
+        receipt: 'BF-000044',
+        createdAt: DateTime.utc(2026, 8, 12, 6, 30),
+        payment: null,
+        splitLegs: const {PaymentMethod.cash: 12000, PaymentMethod.upi: 12000},
+      );
+      await pumpAuthenticated(tester);
+      await goToOrders(tester);
+
+      // The list renders without throwing and shows a real label.
+      expect(tester.takeException(), isNull);
+      expect(find.text('BF-000044'), findsOneWidget);
+      expect(find.text('Split'), findsOneWidget);
+
+      // The detail page too.
+      await tester.tap(find.text('BF-000044'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(OrderDetailPage), findsOneWidget);
+      expect(find.text('Split'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

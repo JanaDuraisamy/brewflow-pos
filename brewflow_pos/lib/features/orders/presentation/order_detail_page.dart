@@ -10,6 +10,7 @@ import 'package:brewflow_pos/features/billing/domain/receipt_document.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
+import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -366,7 +367,7 @@ final class _PaymentBadge extends StatelessWidget {
         borderRadius: AppBorderRadius.pill,
       ),
       child: Text(
-        notPaid ? 'Not paid' : paymentMethodLabel(method!),
+        paymentDisplayLabel(status, method),
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
           color: notPaid ? AppColors.warning : AppColors.primary,
           fontWeight: FontWeight.w600,

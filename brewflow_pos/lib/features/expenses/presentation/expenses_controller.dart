@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/expenses/data/drift_expenses_repository.dart';
 import 'package:brewflow_pos/features/expenses/data/quick_expense_store.dart';
@@ -344,6 +345,14 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     ExpensePaymentStatus paymentStatus = ExpensePaymentStatus.paid,
   }) {
     requirePermission(ref, Permission.expenses);
+    // Amount + category are the two fields a wrong-total report is about; the
+    // free-text name is deliberately not traced.
+    AppTrace.event('expense.create', {
+      'amountPaise': amountPaise,
+      'category': category.name,
+      'method': paymentMethod.name,
+      'status': paymentStatus.name,
+    });
     return _mutate(
       () => ref
           .read(expensesRepositoryProvider)
@@ -357,6 +366,7 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
             isActive: isActive,
             paymentStatus: paymentStatus,
           ),
+      label: 'create',
     );
   }
 
@@ -372,6 +382,13 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     required ExpensePaymentStatus paymentStatus,
   }) {
     requirePermission(ref, Permission.expenses);
+    AppTrace.event('expense.update', {
+      'expenseRef': AppTrace.userRef(id),
+      'amountPaise': amountPaise,
+      'category': category.name,
+      'status': paymentStatus.name,
+      'active': isActive,
+    });
     return _mutate(
       () => ref
           .read(expensesRepositoryProvider)
@@ -386,6 +403,7 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
             isActive: isActive,
             paymentStatus: paymentStatus,
           ),
+      label: 'update',
     );
   }
 
@@ -393,6 +411,7 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     requirePermission(ref, Permission.expenses);
     return _mutate(
       () => ref.read(expensesRepositoryProvider).setExpenseActive(id, isActive),
+      label: 'set_active',
     );
   }
 
@@ -400,6 +419,7 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     requireOwner(ref);
     return _mutate(
       () => ref.read(expensesRepositoryProvider).deleteExpense(id),
+      label: 'delete',
     );
   }
 
@@ -418,6 +438,12 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     String? note,
   }) async {
     requireOwner(ref);
+    // Money leaves the business on a payable payment, so it is traced like a
+    // sale: amount and method, never the payee name.
+    AppTrace.event('expense.pay_payable', {
+      'amountPaise': amountPaise,
+      'method': paymentMethod.name,
+    });
     try {
       final payment = await ref
           .read(expensesRepositoryProvider)
@@ -428,6 +454,7 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
             paidAt: paidAt,
             note: note,
           );
+      AppTrace.event('expense.pay_payable_ok', {'amountPaise': amountPaise});
       // A payment does not change the expense list, but it does change every
       // payable view and the Reports payable total.
       ref.invalidate(shopPayableProvider);
@@ -435,9 +462,16 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
       ref.invalidate(payablePaymentsProvider(payeeName));
       ref.invalidate(reportsControllerProvider);
       return payment;
-    } on ExpensesFailure {
+    } on ExpensesFailure catch (failure) {
+      AppTrace.warn('expense.pay_payable_reject', {
+        'amountPaise': amountPaise,
+        'failure': failure.runtimeType.toString(),
+      });
       rethrow;
     } catch (error, stackTrace) {
+      AppTrace.fail('expense.pay_payable_fail', error, stackTrace, {
+        'amountPaise': amountPaise,
+      });
       AppLog.error(
         'Payable payment failed',
         tag: tag,
@@ -451,16 +485,32 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
   /// Runs [action] against the repository, then refreshes this controller's
   /// state. [ExpensesFailure]s pass through untouched; anything unexpected is
   /// logged and rethrown as [UnexpectedExpensesFailure].
-  Future<void> _mutate(Future<void> Function() action) async {
+  ///
+  /// [label] names the mutation on the trace line so create, update and delete
+  /// stay distinguishable in logcat. Tracing only observes; the invalidate
+  /// pattern is unchanged.
+  Future<void> _mutate(
+    Future<void> Function() action, {
+    required String label,
+  }) async {
     try {
       await action();
+      AppTrace.event('expense.mutate', {'action': label, 'outcome': 'ok'});
       ref.invalidateSelf();
       ref.invalidate(shopPayableProvider);
       ref.invalidate(expensesCountProvider);
       ref.invalidate(reportsControllerProvider);
-    } on ExpensesFailure {
+    } on ExpensesFailure catch (failure) {
+      AppTrace.warn('expense.mutate', {
+        'action': label,
+        'outcome': 'rejected',
+        'failure': failure.runtimeType.toString(),
+      });
       rethrow;
     } catch (error, stackTrace) {
+      AppTrace.fail('expense.mutate_fail', error, stackTrace, {
+        'action': label,
+      });
       AppLog.error(
         'Expenses mutation failed',
         tag: tag,

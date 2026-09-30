@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// Seeds enough distinct products that the cart item list overflows the
 /// panel at any tested height.
@@ -60,6 +61,7 @@ Future<void> _pumpPos(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        ...businessScopeOverrides(),
         inventoryRepositoryProvider.overrideWithValue(inventory),
         billingRepositoryProvider.overrideWithValue(billing),
         customersRepositoryProvider.overrideWithValue(customerRepo),

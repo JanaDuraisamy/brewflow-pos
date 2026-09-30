@@ -232,6 +232,7 @@ final class LocalMasterDataApplier {
                 membershipEnabled: Value(row.membershipEnabled),
                 memberPricePaise: Value(row.memberPricePaise),
                 isActive: Value(row.isActive),
+                visibleInShops: Value(row.visibleInShops),
                 createdAt: Value(row.createdAt),
                 updatedAt: Value(appliedAt),
               ),

@@ -34,7 +34,25 @@ final class _RecordingInventoryRepository implements InventoryRepository {
   }
 
   @override
+  Future<List<Product>> productsForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+    String? search,
+    String? categoryId,
+    ProductStatusFilter status = ProductStatusFilter.all,
+  }) async {
+    productShopIdCalls.add([shopId]);
+    return storedProducts;
+  }
+
+  @override
   Future<List<Category>> categories({List<String>? shopIds}) async => [];
+
+  @override
+  Future<List<Category>> categoriesForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+  }) async => [];
 
   @override
   Future<bool> skuExists(String sku, {String? exceptId}) async => false;
@@ -44,15 +62,22 @@ final class _RecordingInventoryRepository implements InventoryRepository {
       throw UnimplementedError();
 
   @override
-  Future<void> updateCategoryName(String id, String name) =>
-      throw UnimplementedError();
+  Future<void> updateCategoryName(
+    String id,
+    String name, {
+    List<String>? shopIds,
+  }) => throw UnimplementedError();
 
   @override
-  Future<void> setCategoryActive(String id, bool isActive) =>
-      throw UnimplementedError();
+  Future<void> setCategoryActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  }) => throw UnimplementedError();
 
   @override
-  Future<void> deleteCategory(String id) => throw UnimplementedError();
+  Future<void> deleteCategory(String id, {List<String>? shopIds}) =>
+      throw UnimplementedError();
 
   @override
   Future<Product> createProduct({
@@ -71,6 +96,7 @@ final class _RecordingInventoryRepository implements InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    bool visibleInShops = false,
   }) => throw UnimplementedError();
 
   @override
@@ -91,15 +117,22 @@ final class _RecordingInventoryRepository implements InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    List<String>? shopIds,
+    bool visibleInShops = false,
   }) => throw UnimplementedError();
 
   @override
-  Future<void> setProductActive(String id, bool isActive) =>
-      throw UnimplementedError();
+  Future<void> setProductActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  }) => throw UnimplementedError();
 
   @override
-  Future<ProductDeleteResult> deleteProduct(String id) =>
-      throw UnimplementedError();
+  Future<ProductDeleteResult> deleteProduct(
+    String id, {
+    List<String>? shopIds,
+  }) => throw UnimplementedError();
 }
 
 Product _product(String id, String name, int paise) => Product(
@@ -399,7 +432,7 @@ void main() {
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Select a product.'), findsOneWidget);
+      expect(find.text('Select at least one product.'), findsOneWidget);
       expect(await container.read(offersProvider.future), isEmpty);
     });
 

@@ -11,6 +11,7 @@ import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
+import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
@@ -78,6 +79,7 @@ final class DashboardSnapshot {
     required this.dayOrderCount,
     required this.dayItemCount,
     required this.paymentSplitPaise,
+    required this.dayNotPaidPaise,
     required this.weeklySalesPaise,
     required this.recentBills,
     required this.productCount,
@@ -107,9 +109,16 @@ final class DashboardSnapshot {
   /// Total pieces sold on the selected day.
   final int dayItemCount;
 
-  /// Selected-day totals split by payment method; methods without sales are
-  /// absent from the map.
+  /// Selected-day settled money per payment method; methods without sales are
+  /// absent from the map. BANK is never a current category: a retired till
+  /// method's historical money is folded into Cash (see
+  /// [PaymentAttribution]).
   final Map<PaymentMethod, int> paymentSplitPaise;
+
+  /// Selected-day credit money still owed — the total of every NOT_PAID sale
+  /// on the selected day. This is the "Not Paid" row of the Payment Summary,
+  /// and it is what makes Cash + UPI + Not Paid reconcile with [daySalesPaise].
+  final int dayNotPaidPaise;
 
   /// Sales totals for the seven-day window ending on the selected date,
   /// oldest day first (index 0 = selected minus 6 days).
@@ -266,18 +275,12 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         }
       }
 
-      final paymentSplit = <PaymentMethod, int>{};
-      for (final order in selectedDayOrders) {
-        // NOT_PAID credit sales carry no method; they still count in revenue
-        // and profit, just not in the method breakdown.
-        final method = order.paymentMethod;
-        if (method == null) continue;
-        paymentSplit.update(
-          method,
-          (total) => total + order.totalPaise,
-          ifAbsent: () => order.totalPaise,
-        );
-      }
+      final paymentSplit = attributePayments(
+        selectedDayOrders,
+        legsBySaleId: await orders.paymentLegsFor(
+          selectedDayOrders.map((order) => order.id),
+        ),
+      );
 
       final dayProfit = await _dayProfit(
         orders,
@@ -351,7 +354,13 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
           0,
           (sum, order) => sum + order.itemCount,
         ),
-        paymentSplitPaise: paymentSplit,
+        paymentSplitPaise: {
+          if (paymentSplit.cashPaise > 0)
+            PaymentMethod.cash: paymentSplit.cashPaise,
+          if (paymentSplit.upiPaise > 0)
+            PaymentMethod.upi: paymentSplit.upiPaise,
+        },
+        dayNotPaidPaise: paymentSplit.notPaidPaise,
         weeklySalesPaise: weekly,
         recentBills: recentBills.items,
         productCount: products.length,

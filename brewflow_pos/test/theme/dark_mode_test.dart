@@ -215,6 +215,9 @@ void main() {
         costPricePaise: 5000,
         stockQuantity: 5,
         isActive: true,
+        // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+        // seeded product survives the business scope filter.
+        shopId: 'shop-1',
       );
 
       for (final theme in _themes) {
@@ -227,6 +230,7 @@ void main() {
           customerLedgerRepositoryProvider.overrideWithValue(
             FakeCustomerLedgerRepository(),
           ),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ]);
 
         expect(find.text('Inventory'), findsOneWidget);
@@ -331,6 +335,7 @@ void main() {
           inventoryRepositoryProvider.overrideWithValue(
             FakeInventoryRepository(),
           ),
+          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         ]);
 
         expect(find.byType(ProductFormPage), findsOneWidget);

@@ -742,7 +742,102 @@ final class AppMigrations {
         await m.createIndex(schema.idxExpensePaymentsPayee);
         await m.createIndex(schema.idxExpensePaymentsPaidAt);
       },
+      from27To28: (m, schema) async {
+        // Two additive columns, no data is rewritten or dropped.
+        //
+        // Both are guarded by a real existence check rather than a bare
+        // `addColumn`. The `user_version` and the physical schema can disagree
+        // on a device that ran a build where the table definition had already
+        // moved ahead of the versioned schema — a bare `addColumn` then fails
+        // with "duplicate column name" and the app is bricked on a version it
+        // has effectively already applied. Skipping an existing column is the
+        // behaviour a fresh `createAll` install already has.
+        //
+        // 1. `shops.receipt_prefix` — the receipt LABEL moves from a global
+        //    constant onto the business row. The counter was already isolated
+        //    per shop in `sale_sequences (id, shop_id)`; only the prefix was
+        //    shared, so a Food Truck sale printed a `BF-` receipt that was
+        //    indistinguishable from a Cafe one. The default is the historical
+        //    Cafe prefix, so an existing install keeps every number it already
+        //    issued and the self-healing `LIKE 'BF-%'` scan in the receipt
+        //    allocator still finds them.
+        if (!await _hasColumn(m.database, 'shops', 'receipt_prefix')) {
+          await m.addColumn(schema.shops, schema.shops.receiptPrefix);
+        }
+
+        // 2. `products.visible_in_shops` — the column the master-data sync
+        //    already reads and writes. The Drift table gained it without a
+        //    versioned schema, so an EXISTING install may have the column
+        //    physically present while still reporting version 27, and some
+        //    installs have neither. Adding it here covers the installs that
+        //    need it and leaves the ones that already have it untouched.
+        //
+        //    Defaults to false (not shared) so no product silently becomes
+        //    visible in the Food Truck as a side effect of upgrading.
+        if (!await _hasColumn(m.database, 'products', 'visible_in_shops')) {
+          await m.addColumn(schema.products, schema.products.visibleInShops);
+        }
+      },
+      from28To29: (m, schema) async {
+        // A brand-new table, so nothing existing is read, rewritten or dropped.
+        //
+        // `shop_product_stock` is the second shelf. `products` stays the single
+        // master definition (name, price, variants, category) and
+        // `products.visible_in_shops` decides which OTHER businesses may sell
+        // it, but the quantity each business sells from is per business and
+        // lives here. Without it, a Food Truck sale of a shared Cafe product
+        // would have to decrement the Cafe's own `stock_quantity`, so the two
+        // businesses would silently share one shelf — Cafe 100, truck 30, and
+        // a single truck sale takes the Cafe's count down to 99.
+        await m.createTable(schema.shopProductStock);
+        await m.createIndex(schema.idxShopProductStockShop);
+        await m.createIndex(schema.idxShopProductStockProduct);
+
+        // The two partial unique indexes are separate objects, NOT part of the
+        // table definition, so they have to be created here explicitly. The old
+        // comment here claimed the unique key "arrives with createTable" — that
+        // was true while the table still carried a `uniqueKeys` entry, and it
+        // stopped being true the moment the key became two partial indexes.
+        // Creating the table and forgetting these two would leave a migrated
+        // device with NO uniqueness at all: two overlay rows for the same
+        // business and product would both insert, an overlay read would stop
+        // being a single-row lookup, and the conditional
+        // `UPDATE ... WHERE quantity >= n` deduction would lose the guarantee
+        // that makes it race-safe. The defect would be invisible on a fresh
+        // install (createAll emits them from the table definition) and would
+        // only ever show up on an upgraded device — the exact population that
+        // needs the second shelf to be correct.
+        //
+        // They cannot be a single `UNIQUE (shop_id, product_id, variant_id)`:
+        // SQLite treats NULLs as distinct, so that would happily accept any
+        // number of product-level rows for one business. Hence two partial
+        // indexes, one per level.
+        await m.createIndex(schema.uxShopProductStockProductLevel);
+        await m.createIndex(schema.uxShopProductStockVariantLevel);
+      },
+      from29To30: (m, schema) async {
+        // Split-payment legs. A brand-new table, so nothing existing is read,
+        // rewritten or dropped. The sales.payment_method column stays for
+        // backward compatibility — split sales leave it NULL and store the
+        // individual Cash/UPI legs here.
+        await m.createTable(schema.salePayments);
+        await m.createIndex(schema.idxSalePaymentsSale);
+      },
     )(migrator, from, to);
+  }
+
+  /// True when [table] already has a [column].
+  ///
+  /// Used to keep an additive migration genuinely idempotent: a device whose
+  /// physical schema is ahead of its `user_version` must not be failed by a
+  /// duplicate `ALTER TABLE ... ADD COLUMN`.
+  static Future<bool> _hasColumn(
+    GeneratedDatabase db,
+    String table,
+    String column,
+  ) async {
+    final rows = await db.customSelect('PRAGMA table_info($table)').get();
+    return rows.any((row) => row.read<String>('name') == column);
   }
 
   /// True when [table] still declares a foreign key pointing at [target], i.e.

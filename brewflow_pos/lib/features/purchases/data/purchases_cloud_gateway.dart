@@ -35,6 +35,7 @@ final class SupabasePurchasesGateway implements PurchasesCloudGateway {
           'p_lines': lines,
         },
       ),
+      name: 'receive_purchase_atomic',
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);
@@ -50,6 +51,7 @@ final class SupabasePurchasesGateway implements PurchasesCloudGateway {
         'void_purchase_atomic',
         params: {'p_purchase_id': purchaseId},
       ),
+      name: 'void_purchase_atomic',
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);

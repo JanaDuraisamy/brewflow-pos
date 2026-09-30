@@ -17,9 +17,12 @@ import 'package:go_router/go_router.dart';
 /// BrewFlow POS — Daily Closing Page
 ///
 /// Owner-only end-of-day cash/sales recording and review. Amounts are entered
-/// in rupees and stored as integer paise; every field is optional-but-zeroed
-/// so a partial close never blocks saving. Records are immutable — correcting
-/// a day means saving a new closing for the same business date.
+/// in rupees and stored as integer paise; every amount is optional-but-zeroed
+/// so a partial close never blocks saving. "Taken out by" is a fixed owner
+/// dropdown rather than free text: it stays optional when nothing was taken
+/// out and is required whenever Cash taken out is above zero. Records are
+/// immutable — correcting a day means saving a new closing for the same
+/// business date.
 ///
 /// Selecting a date auto-loads that day's cash/UPI totals from completed
 /// sales and expenses from the expense data; Total Sales auto-calculates as
@@ -51,15 +54,42 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
     'Dec',
   ];
 
+  /// The only people who can be recorded as having taken cash out, in the
+  /// exact order they are offered. Free text is deliberately not allowed so a
+  /// closing can never carry an arbitrary or misspelt owner.
+  static const List<String> _cashTakenOutOwners = [
+    'Sudharsan',
+    'Narendar',
+    'Sathish',
+    'Jana',
+  ];
+
+  /// Resolves a persisted owner to one of [_cashTakenOutOwners], or null when
+  /// nothing was saved or the saved value is not a known owner. Comparison is
+  /// trim + case-insensitive so legacy casing still preselects, while the
+  /// returned value is always one of the four constants above.
+  static String? _matchCashTakenOutOwner(String? saved) {
+    final candidate = saved?.trim().toLowerCase() ?? '';
+    if (candidate.isEmpty) return null;
+    for (final owner in _cashTakenOutOwners) {
+      if (owner.toLowerCase() == candidate) return owner;
+    }
+    return null;
+  }
+
+  final _formKey = GlobalKey<FormState>();
+
   final _cash = TextEditingController();
   final _upi = TextEditingController();
   final _sales = TextEditingController();
   final _expenses = TextEditingController();
   final _cashInBox = TextEditingController();
   final _cashTakenOut = TextEditingController();
-  final _takenOutBy = TextEditingController();
   final _talliedBy = TextEditingController();
   final _note = TextEditingController();
+
+  /// Selected cash-taken-out owner; null means "not selected".
+  String? _takenOutBy;
 
   late DateTime _businessDate;
   String? _amountError;
@@ -90,7 +120,6 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
     _expenses.dispose();
     _cashInBox.dispose();
     _cashTakenOut.dispose();
-    _takenOutBy.dispose();
     _talliedBy.dispose();
     _note.dispose();
     super.dispose();
@@ -265,6 +294,7 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
           _cashTakenOut.text = Money.paiseToRupeesInput(
             latest.cashTakenOutPaise,
           );
+          _takenOutBy = _matchCashTakenOutOwner(latest.takenOutBy);
           return;
         }
         final auto = totals!;
@@ -295,85 +325,88 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
             ?.any((record) => record.businessDate == _businessDate) ??
         false;
 
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconButton.filledTonal(
-                tooltip: 'Pick business date',
-                onPressed: _pickBusinessDate,
-                icon: const Icon(Icons.calendar_today_outlined, size: 18),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text(
-                  '${date.day} ${_monthNames[date.month - 1]} ${date.year}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: appColors.textPrimary,
+    return Form(
+      key: _formKey,
+      child: AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  tooltip: 'Pick business date',
+                  onPressed: _pickBusinessDate,
+                  icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    '${date.day} ${_monthNames[date.month - 1]} ${date.year}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: appColors.textPrimary,
+                    ),
                   ),
+                ),
+              ],
+            ),
+            if (savedForDate) ...[
+              Text(
+                'Already saved for this date — saving again stores a new revision.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            _amountField(_cash, 'Total Cash', Icons.payments_outlined),
+            const SizedBox(height: AppSpacing.md),
+            _amountField(_upi, 'Total UPI', Icons.phone_iphone),
+            const SizedBox(height: AppSpacing.md),
+            _amountField(_sales, 'Total Sales', Icons.receipt_long_outlined),
+            const SizedBox(height: AppSpacing.md),
+            _amountField(
+              _expenses,
+              'Total Expenses',
+              Icons.shopping_bag_outlined,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _amountField(
+              _cashInBox,
+              'Cash left in box',
+              Icons.inventory_2_outlined,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _amountField(
+              _cashTakenOut,
+              'Cash taken out from shop',
+              Icons.file_upload_outlined,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _ownerDropdown(),
+            const SizedBox(height: AppSpacing.md),
+            _textField(_talliedBy, 'Tallied by (optional)'),
+            const SizedBox(height: AppSpacing.md),
+            _textField(_note, 'Note (optional)'),
+            if (_amountError != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                _amountError!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
                 ),
               ),
             ],
-          ),
-          if (savedForDate) ...[
-            Text(
-              'Already saved for this date — saving again stores a new revision.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          const SizedBox(height: AppSpacing.md),
-          _amountField(_cash, 'Total Cash', Icons.payments_outlined),
-          const SizedBox(height: AppSpacing.md),
-          _amountField(_upi, 'Total UPI', Icons.phone_iphone),
-          const SizedBox(height: AppSpacing.md),
-          _amountField(_sales, 'Total Sales', Icons.receipt_long_outlined),
-          const SizedBox(height: AppSpacing.md),
-          _amountField(
-            _expenses,
-            'Total Expenses',
-            Icons.shopping_bag_outlined,
-          ),
-          const SizedBox(height: AppSpacing.md),
-          _amountField(
-            _cashInBox,
-            'Cash left in box',
-            Icons.inventory_2_outlined,
-          ),
-          const SizedBox(height: AppSpacing.md),
-          _amountField(
-            _cashTakenOut,
-            'Cash taken out',
-            Icons.file_upload_outlined,
-          ),
-          const SizedBox(height: AppSpacing.md),
-          _textField(_takenOutBy, 'Taken out by (optional)'),
-          const SizedBox(height: AppSpacing.md),
-          _textField(_talliedBy, 'Tallied by (optional)'),
-          const SizedBox(height: AppSpacing.md),
-          _textField(_note, 'Note (optional)'),
-          if (_amountError != null) ...[
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              _amountError!,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.error,
-              ),
+            const SizedBox(height: AppSpacing.xl),
+            PrimaryButton(
+              label: 'Save Closing',
+              icon: Icons.check,
+              expanded: true,
+              loading: busy,
+              onPressed: _save,
             ),
           ],
-          const SizedBox(height: AppSpacing.xl),
-          PrimaryButton(
-            label: 'Save Closing',
-            icon: Icons.check,
-            expanded: true,
-            loading: busy,
-            onPressed: _save,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -403,6 +436,42 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
         border: const OutlineInputBorder(),
       ),
     );
+  }
+
+  /// Fixed-owner dropdown replacing the old free-text "Taken out by" field.
+  /// [DropdownButtonFormField.isExpanded] stops long owner names overflowing on
+  /// narrow phones and scales with the system text size, and the decorator
+  /// mirrors [_amountField]/[_textField] so the card stays visually uniform.
+  Widget _ownerDropdown() {
+    return DropdownButtonFormField<String>(
+      initialValue: _takenOutBy,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Taken out by',
+        border: OutlineInputBorder(),
+      ),
+      hint: const Text('Select who took the cash out'),
+      items: [
+        for (final owner in _cashTakenOutOwners)
+          DropdownMenuItem(value: owner, child: Text(owner)),
+      ],
+      onChanged: (value) => setState(() => _takenOutBy = value),
+      validator: (value) {
+        if (value == null && _cashTakenOutPaise() > 0) {
+          return 'Select who took the cash out.';
+        }
+        return null;
+      },
+    );
+  }
+
+  /// Cash taken out parsed to paise. Blank is 0 and unparseable text is -1, so
+  /// the amount check in [_save] reports the bad value before the owner
+  /// dropdown ever gates the save.
+  int _cashTakenOutPaise() {
+    final text = _cashTakenOut.text;
+    final paise = Money.parseRupeesToPaise(text);
+    return paise ?? (text.trim().isEmpty ? 0 : -1);
   }
 
   Future<void> _pickBusinessDate() async {
@@ -449,6 +518,10 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
       return;
     }
 
+    // Cash taken out above zero must name an owner; zero/blank cash stays
+    // optional. Validating through the form surfaces the message inline.
+    if (!_formKey.currentState!.validate()) return;
+
     await ref
         .read(dailyClosingsProvider.notifier)
         .record(
@@ -459,9 +532,7 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
           totalExpensePaise: parsed['Total Expenses'] ?? 0,
           cashLeftInBoxPaise: parsed['Cash left in box'] ?? 0,
           cashTakenOutPaise: parsed['Cash taken out'] ?? 0,
-          takenOutBy: _takenOutBy.text.trim().isEmpty
-              ? null
-              : _takenOutBy.text.trim(),
+          takenOutBy: _takenOutBy,
           talliedBy: _talliedBy.text.trim().isEmpty
               ? null
               : _talliedBy.text.trim(),
@@ -487,9 +558,11 @@ final class _DailyClosingPageState extends ConsumerState<DailyClosingPage> {
     _expenses.clear();
     _cashInBox.clear();
     _cashTakenOut.clear();
-    _takenOutBy.clear();
     _talliedBy.clear();
     _note.clear();
+    // The dropdown is driven by state, so clearing it needs a rebuild; the
+    // initialValue change re-syncs the form field.
+    setState(() => _takenOutBy = null);
   }
 
   static String _closingsErrorMessage(Object error) {

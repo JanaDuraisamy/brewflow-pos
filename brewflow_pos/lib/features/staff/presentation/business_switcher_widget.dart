@@ -94,48 +94,66 @@ final class _BusinessDropdown extends StatelessWidget {
 
   final ValueChanged<BusinessContext> onChanged;
 
+  /// Deterministic height of the whole bordered control, border included.
+  ///
+  /// A [DropdownButton] has no intrinsic height of its own — it inherits the
+  /// height of its tallest item plus the button's own padding, so it used to
+  /// feed straight into the phone [AppBar]'s height and made the header change
+  /// with the device's font and text scaling. Fixing the height here keeps the
+  /// control a usable 40dp touch target and makes the header deterministic.
+  static const double controlHeight = 40;
+
   @override
   Widget build(BuildContext context) {
     final appColors = context.appColors;
     final textTheme = Theme.of(context).textTheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: appColors.surface,
-        borderRadius: AppBorderRadius.sm,
-        border: Border.all(color: AppColors.gold, width: 1),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-        child: DropdownButton<BusinessContext>(
-          value: business,
-          isDense: true,
-          isExpanded: true,
-          underline: const SizedBox.shrink(),
+    return SizedBox(
+      height: controlHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: appColors.surface,
           borderRadius: AppBorderRadius.sm,
-          icon: const Icon(Icons.arrow_drop_down, color: AppColors.gold),
-          style: textTheme.labelMedium?.copyWith(
-            color: appColors.textPrimary,
-            fontWeight: FontWeight.w600,
-          ),
-          items: [
-            for (final (value, label) in BusinessSwitcher._entries)
-              DropdownMenuItem(
-                value: value,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (value == business) ...[
-                      const Icon(Icons.check, size: 16, color: AppColors.gold),
-                      const SizedBox(width: AppSpacing.xs),
+          border: Border.all(color: AppColors.gold, width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+          child: DropdownButton<BusinessContext>(
+            value: business,
+            isDense: true,
+            // Width still comes from the caller (the app bar's title column),
+            // never from a hardcoded number, so 360dp phones stay unclipped.
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            borderRadius: AppBorderRadius.sm,
+            icon: const Icon(Icons.arrow_drop_down, color: AppColors.gold),
+            style: textTheme.labelMedium?.copyWith(
+              color: appColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+            items: [
+              for (final (value, label) in BusinessSwitcher._entries)
+                DropdownMenuItem(
+                  value: value,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (value == business) ...[
+                        const Icon(
+                          Icons.check,
+                          size: 16,
+                          color: AppColors.gold,
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                      ],
+                      Text(label),
                     ],
-                    Text(label),
-                  ],
+                  ),
                 ),
-              ),
-          ],
-          onChanged: (next) {
-            if (next != null && next != business) onChanged(next);
-          },
+            ],
+            onChanged: (next) {
+              if (next != null && next != business) onChanged(next);
+            },
+          ),
         ),
       ),
     );

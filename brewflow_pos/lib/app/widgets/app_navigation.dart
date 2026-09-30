@@ -34,7 +34,11 @@ final class AppNavItem {
 /// On narrow phones (<600dp) the bar shows only the [primaryIndices]
 /// destinations; the rest live in a clean "More" sheet. This keeps labels
 /// single-line at 411dp, avoids the 10-item wrap seen in the screenshots,
-/// and feels premium — light, spacious, 56dp height, 48dp touch targets.
+/// and feels premium — light, spacious, 64dp height, 48dp touch targets.
+///
+/// The bar is designed to be handed to a [Scaffold.bottomNavigationBar]: it
+/// owns no inset handling of its own beyond the bar's built-in [SafeArea], so
+/// the Scaffold decides who consumes the bottom system inset.
 ///
 /// The main-bar split is passed in (positions within [items]) rather than
 /// hardcoded, because the owner can organize it. It is a *grouping* choice
@@ -326,35 +330,38 @@ final class _PhoneNavigationBar extends StatelessWidget {
           ),
         ],
       ),
-      child: SafeArea(
-        top: false,
-        child: NavigationBar(
-          selectedIndex: selectedIndex,
-          onDestinationSelected: onDestinationSelected,
-          height: 56,
-          elevation: 0,
-          backgroundColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          indicatorColor:
-              isMoreSelected && selectedIndex == destinations.length - 1
-              ? scheme.primary.withValues(alpha: 0.12)
-              : scheme.primary.withValues(alpha: 0.1),
-          indicatorShape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          labelTextStyle: WidgetStateProperty.resolveWith((states) {
-            final selected = states.contains(WidgetState.selected);
-            return textTheme.labelSmall?.copyWith(
-              fontSize: 10,
-              letterSpacing: 0.2,
-              height: 1.2,
-              color: selected ? scheme.primary : appColors.textSecondary,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            );
-          }),
-          destinations: destinations,
+      // NavigationBar already wraps its content in SafeArea(top: false), so
+      // this DecoratedBox is the only thing that must span the inset region:
+      // the surface, top border and shadow keep covering the navigation area
+      // while the inset itself is applied once, by the bar.
+      child: NavigationBar(
+        selectedIndex: selectedIndex,
+        onDestinationSelected: onDestinationSelected,
+        // AppSpacing.ultra: the M3 compact bar height that fits the
+        // always-visible labels without the tight 56dp crowding.
+        height: AppSpacing.ultra,
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor:
+            isMoreSelected && selectedIndex == destinations.length - 1
+            ? scheme.primary.withValues(alpha: 0.12)
+            : scheme.primary.withValues(alpha: 0.1),
+        indicatorShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
         ),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return textTheme.labelSmall?.copyWith(
+            fontSize: 10,
+            letterSpacing: 0.2,
+            height: 1.2,
+            color: selected ? scheme.primary : appColors.textSecondary,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          );
+        }),
+        destinations: destinations,
       ),
     );
   }

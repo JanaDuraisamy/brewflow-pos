@@ -25,6 +25,7 @@ import '../helpers/fake_settings_repository.dart';
 import '../helpers/fake_shop_name_repository.dart';
 import '../helpers/fake_staff_repository.dart';
 import '../helpers/fake_stock_movement_repository.dart';
+import '../helpers/test_providers.dart';
 
 void main() {
   group('automatic membership pricing (POS cart)', () {
@@ -294,6 +295,7 @@ void main() {
       inventory = FakeInventoryRepository();
       container = ProviderContainer(
         overrides: [
+          ...businessScopeOverrides(),
           inventoryRepositoryProvider.overrideWithValue(inventory),
           settingsRepositoryProvider.overrideWithValue(
             FakeSettingsRepository(),
@@ -328,6 +330,9 @@ void main() {
       lowStockMode: mode,
       lowStockThreshold: threshold,
       variants: variants,
+      // Matches the Cafe shop id FakeStaffRepository.ensureShop() hands out,
+      // so the products survive the business scope filter.
+      shopId: 'shop-1',
     );
 
     ProductVariant variant({

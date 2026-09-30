@@ -69,6 +69,46 @@ final class OrdersDao {
     };
   }
 
+  /// Split-payment legs per sale: `{saleId: {method: paise}}` for the given
+  /// [saleIds].
+  ///
+  /// `sales.payment_method` is only populated for single-payment sales; a
+  /// split sale leaves it NULL and records one `sale_payments` row per leg.
+  /// Payment summaries therefore cannot attribute split money from the sale
+  /// header alone — these legs are what make Cash + UPI + Not Paid reconcile
+  /// with the window total instead of silently dropping those sales.
+  ///
+  /// Sales with no legs are absent from the map. One grouped query covers the
+  /// whole window, so the caller does not need a per-sale round trip.
+  Future<Map<String, Map<String, int>>> paymentLegsFor(
+    Iterable<String> saleIds,
+  ) async {
+    final ids = saleIds.toList();
+    if (ids.isEmpty) return const {};
+    final query = _db.selectOnly(_db.salePayments)
+      ..addColumns([
+        _db.salePayments.saleId,
+        _db.salePayments.paymentMethod,
+        _db.salePayments.amountPaise.sum(),
+      ])
+      ..where(_db.salePayments.saleId.isIn(ids))
+      ..groupBy([_db.salePayments.saleId, _db.salePayments.paymentMethod]);
+    final rows = await query.get();
+    final result = <String, Map<String, int>>{};
+    for (final row in rows) {
+      final saleId = row.read(_db.salePayments.saleId);
+      final method = row.read(_db.salePayments.paymentMethod);
+      final paise = row.read(_db.salePayments.amountPaise.sum());
+      if (saleId == null || method == null || paise == null) continue;
+      (result[saleId] ??= <String, int>{}).update(
+        method,
+        (total) => total + paise,
+        ifAbsent: () => paise,
+      );
+    }
+    return result;
+  }
+
   Future<Sale?> saleById(String id) {
     final query = _db.select(_db.sales)
       // Opening balances are not orders; a direct lookup never resolves to one.

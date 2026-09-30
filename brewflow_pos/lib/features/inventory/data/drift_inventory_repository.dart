@@ -8,6 +8,7 @@ import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
 import 'package:brewflow_pos/core/database/shop_resolver.dart';
 import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_image_sync_repository.dart';
 import 'package:brewflow_pos/features/inventory/data/product_image_cloud_store.dart';
@@ -229,6 +230,29 @@ final class DriftInventoryRepository implements InventoryRepository {
   }
 
   @override
+  @override
+  Future<List<Category>> categoriesForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+  }) async {
+    try {
+      final rows = await _categories.queryForBusiness(
+        shopId: shopId,
+        catalogOwnerShopId: catalogOwnerShopId,
+      );
+      return rows.map(_categoryFromRow).toList();
+    } on Exception catch (error, stackTrace) {
+      AppLog.error(
+        'Failed to load business categories',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      throw const UnexpectedInventoryFailure();
+    }
+  }
+
+  @override
   Future<List<Category>> categories({List<String>? shopIds}) async {
     try {
       if (shopIds != null && shopIds.isNotEmpty) {
@@ -254,7 +278,14 @@ final class DriftInventoryRepository implements InventoryRepository {
     List<String>? shopIds,
   }) async {
     try {
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        // A non-null [shopIds] is a hard scope. An EMPTY list therefore means
+        // "this business has no shop of its own" (see
+        // `BusinessSwitcherController.shopIdsForRead`, which returns [] for a
+        // Food Truck that does not exist yet) and must yield NOTHING. Treating
+        // it as "unscoped" would hand the caller every other business's
+        // products, so a missing Food Truck would leak the Cafe catalogue.
+        if (shopIds.isEmpty) return const [];
         final allRows = <db.Product>[];
         for (final id in shopIds) {
           final rows = await _products.query(
@@ -294,6 +325,41 @@ final class DriftInventoryRepository implements InventoryRepository {
       ];
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load products', error, stackTrace);
+    }
+  }
+
+  @override
+  Future<List<Product>> productsForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+    String? search,
+    String? categoryId,
+    ProductStatusFilter status = ProductStatusFilter.all,
+  }) async {
+    try {
+      final active = switch (status) {
+        ProductStatusFilter.all => null,
+        ProductStatusFilter.active => true,
+        ProductStatusFilter.inactive => false,
+      };
+      final rows = await _products.queryForBusiness(
+        search: search,
+        categoryId: categoryId,
+        active: active,
+        shopId: shopId,
+        catalogOwnerShopId: catalogOwnerShopId,
+      );
+      final variantsByProduct = await _variants.allByProduct();
+      return [
+        for (final row in rows)
+          _productFromRow(row, variants: variantsByProduct[row.id] ?? const []),
+      ];
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected(
+        'Failed to load products for business',
+        error,
+        stackTrace,
+      );
     }
   }
 
@@ -402,10 +468,19 @@ final class DriftInventoryRepository implements InventoryRepository {
   );
 
   @override
-  Future<void> updateCategoryName(String id, String name) async {
+  Future<void> updateCategoryName(
+    String id,
+    String name, {
+    List<String>? shopIds,
+  }) async {
     final normalized = name.trim();
     if (normalized.isEmpty) {
       throw const UnexpectedInventoryFailure('Category name is required.');
+    }
+    // Ownership is checked before anything is written, so a cross-business
+    // rename cannot half-apply on the cloud leg.
+    if (!await _categories.isOwnedBy(id, shopIds)) {
+      throw const ForeignShopRowFailure();
     }
     if (await _categories.nameExists(normalized, exceptId: id)) {
       throw const DuplicateCategoryNameFailure();
@@ -445,8 +520,15 @@ final class DriftInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<void> setCategoryActive(String id, bool isActive) async {
+  Future<void> setCategoryActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  }) async {
     try {
+      if (!await _categories.isOwnedBy(id, shopIds)) {
+        throw const ForeignShopRowFailure();
+      }
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
@@ -512,8 +594,13 @@ final class DriftInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<void> deleteCategory(String id) async {
+  Future<void> deleteCategory(String id, {List<String>? shopIds}) async {
     try {
+      // Before the in-use check, so a foreign category never leaks whether it
+      // has products attached to it.
+      if (!await _categories.isOwnedBy(id, shopIds)) {
+        throw const ForeignShopRowFailure();
+      }
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         final inUse = await _products.countByCategory(id);
@@ -581,6 +668,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    bool visibleInShops = false,
   }) async {
     _validateProductInput(
       name: name,
@@ -626,6 +714,7 @@ final class DriftInventoryRepository implements InventoryRepository {
         final row = await _products.insert(
           db.ProductsCompanion.insert(
             shopId: Value(resolvedShopId),
+            visibleInShops: Value(visibleInShops),
             categoryId: categoryId,
             name: normalizedName,
             sku: Value(normalizedSku),
@@ -740,7 +829,12 @@ final class DriftInventoryRepository implements InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    List<String>? shopIds,
+    bool visibleInShops = false,
   }) async {
+    if (!await _products.isOwnedBy(id, shopIds)) {
+      throw const ForeignShopRowFailure();
+    }
     _validateProductInput(
       name: name,
       sellingPricePaise: sellingPricePaise,
@@ -820,6 +914,7 @@ final class DriftInventoryRepository implements InventoryRepository {
             membershipEnabled: Value(membershipEnabled),
             memberPricePaise: Value(memberPricePaise),
             isActive: Value(isActive),
+            visibleInShops: Value(visibleInShops),
           ),
         );
 
@@ -901,8 +996,15 @@ final class DriftInventoryRepository implements InventoryRepository {
               write: doUpdate,
               snapshots: (_, context) async {
                 final row = await _products.byId(id);
-                // ignore: avoid_print
-                print('updateProduct snapshot id=$id row=${row?.name}');
+                // A product that vanished between the update and this snapshot
+                // means the outbox entry will push a payload with no live row
+                // behind it — worth knowing, and previously only visible as an
+                // unprefixed stray print.
+                AppTrace.event('inventory.snapshot', {
+                  'entity': 'product',
+                  'productRef': AppTrace.userRef(id),
+                  'rowFound': row != null,
+                });
                 if (row == null) return const [];
                 final variantRows = await _variants.forProduct(id);
                 return [
@@ -936,8 +1038,18 @@ final class DriftInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<void> setProductActive(String id, bool isActive) async {
+  Future<void> setProductActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  }) async {
     try {
+      // A shared Cafe product is visible in the truck but owned by the Cafe;
+      // without this gate an ID-only call would deactivate the Cafe's own
+      // catalogue entry from the truck.
+      if (!await _products.isOwnedBy(id, shopIds)) {
+        throw const ForeignShopRowFailure();
+      }
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         await _products.updateActive(id, isActive);
@@ -967,8 +1079,14 @@ final class DriftInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<ProductDeleteResult> deleteProduct(String id) async {
+  Future<ProductDeleteResult> deleteProduct(
+    String id, {
+    List<String>? shopIds,
+  }) async {
     try {
+      if (!await _products.isOwnedBy(id, shopIds)) {
+        throw const ForeignShopRowFailure();
+      }
       if (_connectivity != null) await _requireOnline();
       // Decide the branch once: a product that is referenced (variants, sale
       // lines, purchase lines or stock movements) degrades to a safe soft
@@ -1323,6 +1441,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     isActive: row.isActive,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    shopId: row.shopId,
   );
 
   static Product _productFromRow(
@@ -1346,6 +1465,8 @@ final class DriftInventoryRepository implements InventoryRepository {
     membershipEnabled: row.membershipEnabled,
     memberPricePaise: row.memberPricePaise,
     isActive: row.isActive,
+    shopId: row.shopId,
+    visibleInShops: row.visibleInShops,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     variants: [for (final v in variants) _variantFromRow(v)],

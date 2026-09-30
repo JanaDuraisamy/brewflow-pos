@@ -5,12 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   late FakeInventoryRepository fake;
 
   ProviderContainer buildContainer() => ProviderContainer(
-    overrides: [inventoryRepositoryProvider.overrideWithValue(fake)],
+    overrides: [
+      inventoryRepositoryProvider.overrideWithValue(fake),
+      ...businessScopeOverrides(),
+    ],
   );
 
   final now = DateTime.now().toUtc();
@@ -30,6 +34,7 @@ void main() {
     String? sku,
     int sellingPricePaise = 100,
     bool isActive = true,
+    String? shopId = 'shop-1',
   }) => Product(
     id: id,
     categoryId: categoryId,
@@ -41,6 +46,7 @@ void main() {
     isActive: isActive,
     createdAt: now,
     updatedAt: now,
+    shopId: shopId,
   );
 
   setUp(() => fake = FakeInventoryRepository());

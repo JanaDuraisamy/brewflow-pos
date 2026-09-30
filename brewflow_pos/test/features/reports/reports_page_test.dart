@@ -49,6 +49,9 @@ _seededWorld({bool withCosts = true}) async {
     costPricePaise: withCosts ? 1000 : null,
     stockQuantity: 10,
     isActive: true,
+    // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+    // seeded products survive the business scope filter.
+    shopId: 'shop-1',
   );
   await inventory.createProduct(
     categoryId: category.id,
@@ -57,6 +60,7 @@ _seededWorld({bool withCosts = true}) async {
     costPricePaise: withCosts ? 30000 : null,
     stockQuantity: 10,
     isActive: true,
+    shopId: 'shop-1',
   );
   await inventory.createProduct(
     categoryId: category.id,
@@ -65,6 +69,7 @@ _seededWorld({bool withCosts = true}) async {
     costPricePaise: withCosts ? 1500 : null,
     stockQuantity: 10,
     isActive: true,
+    shopId: 'shop-1',
   );
 
   final now = DateTime.now();
@@ -138,6 +143,34 @@ Future<ProviderContainer> _pumpReports(
   return container;
 }
 
+/// The value rendered on the dashboard's "Sales" KPI card (the range's total
+/// sales). Scoped to that card because the same rupee figure legitimately
+/// appears elsewhere — as the payment total and, on a single-sale day, as the
+/// average.
+String _salesKpiValue(WidgetTester tester) {
+  final card = find.widgetWithText(KpiCard, 'Sales');
+  final values = tester
+      .widgetList<Text>(find.descendant(of: card, matching: find.byType(Text)))
+      .map((text) => text.data)
+      .whereType<String>()
+      .toList();
+  return values.firstWhere(
+    (value) => RegExp(r'^₹').hasMatch(value),
+    orElse: () => '<no sales value>',
+  );
+}
+
+/// Selects a range preset chip and settles, mirroring what the owner does
+/// after the page has opened on its Today default.
+///
+/// Reports now open on Today, so any test whose seeded sales span more than
+/// the current day has to opt into a wider range explicitly — which is also
+/// the real user flow for those ranges.
+Future<void> _selectPreset(WidgetTester tester, String label) async {
+  await tester.tap(find.text(label));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('renders the page header', (tester) async {
     await _pumpReports(tester);
@@ -179,7 +212,7 @@ void main() {
     );
   });
 
-  testWidgets('shows seeded sales KPIs by default (last 30 days)', (
+  testWidgets('opens on Today and only counts the current day by default', (
     tester,
   ) async {
     final world = await _seededWorld();
@@ -192,12 +225,48 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Sales'), findsOneWidget);
-    expect(find.text('₹530.00'), findsOneWidget);
+    // Only R-001 (today) is inside the default range; R-002 is yesterday.
+    expect(_salesKpiValue(tester), '₹430.00');
+    expect(find.text('₹530.00'), findsNothing);
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('Avg. Sale'), findsOneWidget);
+    expect(find.text('₹430.00'), findsNWidgets(2));
+    expect(find.text('Sales Overview'), findsOneWidget);
+    // The Sales Overview subtitle and the selected chip both read Today.
+    final overview = find.widgetWithText(SectionCard, 'Sales Overview');
+    expect(
+      find.descendant(of: overview, matching: find.text('Today')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<AppFilterChip>(find.widgetWithText(AppFilterChip, 'Today'))
+          .selected,
+      isTrue,
+    );
+  });
+
+  testWidgets('selecting Last 30 days widens the window to the older sale', (
+    tester,
+  ) async {
+    final world = await _seededWorld();
+    await _pumpReports(
+      tester,
+      orders: world.$1,
+      inventory: world.$2,
+      expenses: world.$3,
+    );
+    await tester.pumpAndSettle();
+
+    expect(_salesKpiValue(tester), '₹430.00');
+
+    await _selectPreset(tester, 'Last 30 days');
+
+    expect(_salesKpiValue(tester), '₹530.00');
     expect(find.text('2'), findsOneWidget);
     expect(find.text('8'), findsOneWidget);
-    expect(find.text('Avg. Sale'), findsOneWidget);
     expect(find.text('₹265.00'), findsOneWidget);
-    expect(find.text('Sales Overview'), findsOneWidget);
   });
 
   testWidgets('payment methods show amounts and shares', (tester) async {
@@ -212,7 +281,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpAndSettle();
+    // Both seeded sales must be in range for the Cash/UPI split to show.
+    await _selectPreset(tester, 'Last 30 days');
 
     expect(find.text('Payment Methods'), findsOneWidget);
     expect(find.text('Cash'), findsOneWidget);
@@ -220,11 +290,17 @@ void main() {
     expect(find.text('81%'), findsOneWidget);
     expect(find.text('UPI'), findsOneWidget);
     expect(find.text('18%'), findsOneWidget);
-    // 'Bank' also appears in the expenses 'By payment method' rows, so
-    // scope the assertion to the payment card.
+    // BANK is a retired till method and is no longer a Payment Methods
+    // category; credit money is reported as 'Not Paid' instead. 'Bank' still
+    // appears in the expenses 'By payment method' rows, so scope the
+    // assertion to the payment card.
     final paymentCard = find.widgetWithText(SectionCard, 'Payment Methods');
     expect(
       find.descendant(of: paymentCard, matching: find.text('Bank')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: paymentCard, matching: find.text('Not Paid')),
       findsOneWidget,
     );
     expect(find.text('0%'), findsWidgets);
@@ -275,7 +351,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpAndSettle();
+    // The COGS/net figures cover both seeded days.
+    await _selectPreset(tester, 'Last 30 days');
 
     expect(find.text('Profit & Loss'), findsOneWidget);
     expect(find.text('Cost of Goods'), findsOneWidget);
@@ -333,6 +410,7 @@ void main() {
       costPricePaise: 1000,
       stockQuantity: 10,
       isActive: true,
+      shopId: 'shop-1',
     );
     await inventory.createProduct(
       categoryId: category.id,
@@ -340,6 +418,7 @@ void main() {
       sellingPricePaise: 40000,
       stockQuantity: 10,
       isActive: true,
+      shopId: 'shop-1',
     );
     await inventory.createProduct(
       categoryId: category.id,
@@ -347,6 +426,7 @@ void main() {
       sellingPricePaise: 2000,
       stockQuantity: 10,
       isActive: true,
+      shopId: 'shop-1',
     );
     final now = DateTime.now();
     final orders = FakeOrdersRepository();
@@ -388,7 +468,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpAndSettle();
+    // Both seeded days contribute lines, so widen to include yesterday.
+    await _selectPreset(tester, 'Last 30 days');
 
     expect(
       find.text('Profit uses only lines with current cost prices'),
@@ -412,7 +493,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpAndSettle();
+    // Cookie only sold yesterday; widen so the full ranking is covered.
+    await _selectPreset(tester, 'Last 30 days');
 
     expect(find.text('Top Products'), findsOneWidget);
     expect(find.text('Cafe Latte'), findsOneWidget);
@@ -438,7 +520,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpAndSettle();
+    // The category total spans both seeded days.
+    await _selectPreset(tester, 'Last 30 days');
 
     expect(find.text('Category Performance'), findsOneWidget);
     expect(
@@ -549,13 +632,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('₹930.00'), findsOneWidget);
+    // Opens on Today: R-001 is today; R-002 (yesterday) and the 10-day-old
+    // R-003 are outside it.
+    expect(_salesKpiValue(tester), '₹430.00');
+    expect(find.text('₹930.00'), findsNothing);
 
-    await tester.tap(find.text('Last 7 days'));
-    await tester.pumpAndSettle();
+    await _selectPreset(tester, 'Last 7 days');
 
     expect(find.text('₹930.00'), findsNothing);
-    expect(find.text('₹530.00'), findsOneWidget);
+    expect(_salesKpiValue(tester), '₹530.00');
+
+    await _selectPreset(tester, 'Last 30 days');
+
+    expect(_salesKpiValue(tester), '₹930.00');
   });
 
   testWidgets('a custom range applied through the controller filters the '
@@ -577,6 +666,12 @@ void main() {
     );
     final container = await _pumpReports(tester, orders: orders);
     await tester.pumpAndSettle();
+
+    // Today is the default and neither seeded sale is from today.
+    expect(find.text('₹650.00'), findsNothing);
+    expect(find.text('No sales recorded in this window'), findsOneWidget);
+
+    await _selectPreset(tester, 'Last 30 days');
 
     expect(find.text('₹650.00'), findsOneWidget);
 
@@ -610,6 +705,7 @@ void main() {
       costPricePaise: 3000,
       stockQuantity: 10,
       isActive: true,
+      shopId: 'shop-1',
     );
     final orders = FakeOrdersRepository();
     orders.add(
@@ -641,6 +737,7 @@ void main() {
       costPricePaise: 1000,
       stockQuantity: 10,
       isActive: true,
+      shopId: 'shop-1',
     );
     final orders = FakeOrdersRepository();
     orders.add(
@@ -753,6 +850,8 @@ void main() {
         paymentStatus: ExpensePaymentStatus.notPaid,
       );
       final ledger = FakeCustomerLedgerRepository();
+      // Bills are scoped to the resolved shop (as the real DAO requires) and
+      // raised today, so they fall inside the default Today range.
       ledger.bills
         ..add(
           FakeLedgerBill(
@@ -762,6 +861,7 @@ void main() {
             receiptNumber: 'BF-000001',
             createdAt: now,
             totalPaise: 10000,
+            shopId: 'shop-1',
           ),
         )
         ..add(
@@ -772,6 +872,7 @@ void main() {
             receiptNumber: 'BF-000002',
             createdAt: now,
             totalPaise: 10000,
+            shopId: 'shop-1',
           ),
         )
         ..add(
@@ -782,6 +883,7 @@ void main() {
             receiptNumber: 'BF-000003',
             createdAt: now,
             totalPaise: 4000,
+            shopId: 'shop-1',
           ),
         );
 

@@ -6,7 +6,6 @@ import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
-import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
@@ -827,28 +826,22 @@ final class _PaymentMethodsCard extends StatelessWidget {
           _PaymentRow(
             label: 'Cash',
             color: AppColors.cash,
-            amount: hasSales
-                ? Money.formatPaise(payments.paiseOf(PaymentMethod.cash))
-                : '—',
-            share: payments.shareOf(PaymentMethod.cash),
+            amount: hasSales ? Money.formatPaise(payments.cashPaise) : '—',
+            share: payments.shareOf(payments.cashPaise),
           ),
           Divider(height: 12, thickness: 1, color: context.appColors.divider),
           _PaymentRow(
             label: 'UPI',
             color: AppColors.upi,
-            amount: hasSales
-                ? Money.formatPaise(payments.paiseOf(PaymentMethod.upi))
-                : '—',
-            share: payments.shareOf(PaymentMethod.upi),
+            amount: hasSales ? Money.formatPaise(payments.upiPaise) : '—',
+            share: payments.shareOf(payments.upiPaise),
           ),
           Divider(height: 12, thickness: 1, color: context.appColors.divider),
           _PaymentRow(
-            label: 'Bank',
-            color: AppColors.card,
-            amount: hasSales
-                ? Money.formatPaise(payments.paiseOf(PaymentMethod.bank))
-                : '—',
-            share: payments.shareOf(PaymentMethod.bank),
+            label: 'Not Paid',
+            color: AppColors.warning,
+            amount: hasSales ? Money.formatPaise(payments.notPaidPaise) : '—',
+            share: payments.shareOf(payments.notPaidPaise),
           ),
           Divider(height: 12, thickness: 1, color: context.appColors.divider),
           Row(
@@ -1313,7 +1306,8 @@ final class _CustomerReceivablesCard extends StatelessWidget {
     final rows = snapshot.customerReceivables;
     return SectionCard(
       title: 'Customer Receivables',
-      subtitle: 'Outstanding credit as of now · read-only',
+      subtitle:
+          'Credit bills raised in ${_rangeLabel(snapshot.range)} and still outstanding · read-only',
       child: Column(
         children: [
           if (rows.isNotEmpty) ...[
@@ -1343,7 +1337,7 @@ final class _CustomerReceivablesCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
               child: Text(
-                'No outstanding balances right now',
+                'No outstanding credit from this range',
                 style: textTheme.bodySmall?.copyWith(
                   color: context.appColors.textSecondary,
                 ),

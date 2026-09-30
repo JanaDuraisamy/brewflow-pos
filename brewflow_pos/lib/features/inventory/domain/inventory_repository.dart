@@ -58,6 +58,20 @@ final class NegativePriceFailure extends InventoryFailure {
   const NegativePriceFailure() : super('Prices cannot be negative.');
 }
 
+/// A mutation named a row the active business does not own.
+///
+/// The dangerous case this exists for is a Cafe master product that the Cafe
+/// has shared into the Food Truck: it is visible in the truck, so an ID-only
+/// deactivate or delete would happily remove the Cafe's catalogue entry from
+/// under the Cafe. Scope is passed explicitly and the row must belong to one of
+/// those shops, so a truck action can only ever touch the truck's own rows.
+final class ForeignShopRowFailure extends InventoryFailure {
+  const ForeignShopRowFailure()
+    : super(
+        'This item belongs to another business and cannot be changed here.',
+      );
+}
+
 final class UnexpectedInventoryFailure extends InventoryFailure {
   const UnexpectedInventoryFailure([
     super.message = 'Something went wrong. Please try again.',
@@ -69,6 +83,16 @@ final class UnexpectedInventoryFailure extends InventoryFailure {
 abstract interface class InventoryRepository {
   Future<List<Category>> categories({List<String>? shopIds});
 
+  /// Categories reachable from the business [shopId] may sell: its own, plus the
+  /// catalog owner's that hold a product shared into it.
+  ///
+  /// A category the business has no visible product for is not returned, so the
+  /// filter list never reveals a catalogue the business cannot use.
+  Future<List<Category>> categoriesForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+  });
+
   /// Every returned product carries its variants (empty list for products
   /// without variants) and a stock quantity that is the sum of variant stock
   /// when variants exist.
@@ -79,18 +103,51 @@ abstract interface class InventoryRepository {
     List<String>? shopIds,
   });
 
+  /// Returns products for the given [shopId] with optional shared‑product
+  /// visibility from the catalog owner ([catalogOwnerShopId]).
+  ///
+  /// When [shopId] equals [catalogOwnerShopId] (Cafe mode) the method
+  /// behaves like [products] — only the shop's own active products are
+  /// returned. When they differ (Food Truck mode) the result includes the
+  /// shop's own products plus any products the catalog owner has marked
+  /// [visibleInShops] = true.
+  ///
+  /// [categoryId] filters the same way it does in [products], applied AFTER
+  /// the visibility scope so a category can never widen which products a
+  /// business is allowed to see.
+  Future<List<Product>> productsForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+    String? search,
+    String? categoryId,
+    ProductStatusFilter status = ProductStatusFilter.all,
+  });
+
   /// Whether a product with this SKU exists (case-insensitive).
   Future<bool> skuExists(String sku, {String? exceptId});
 
   Future<Category> createCategory(String name, {String? shopId});
 
-  Future<void> updateCategoryName(String id, String name);
+  /// [shopIds] scopes the mutation to rows the active business owns; a row
+  /// belonging to another business throws [ForeignShopRowFailure]. Null keeps
+  /// the historical unscoped behaviour for callers with no business context.
+  Future<void> updateCategoryName(
+    String id,
+    String name, {
+    List<String>? shopIds,
+  });
 
-  Future<void> setCategoryActive(String id, bool isActive);
+  /// [shopIds] scopes the mutation as in [updateCategoryName].
+  Future<void> setCategoryActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  });
 
   /// Deletes a category; throws [CategoryInUseFailure] when products
-  /// reference it.
-  Future<void> deleteCategory(String id);
+  /// reference it, and [ForeignShopRowFailure] for a category owned by another
+  /// business when [shopIds] is given.
+  Future<void> deleteCategory(String id, {List<String>? shopIds});
 
   /// Creates a product atomically with its opening stock and any variants.
   ///
@@ -122,6 +179,7 @@ abstract interface class InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    bool visibleInShops = false,
   });
 
   /// Updates a product's editable fields. [stockQuantity] (and variant stock)
@@ -132,6 +190,12 @@ abstract interface class InventoryRepository {
   /// stock and id, new inputs are created (with their opening OPENING
   /// movements), and variants absent from the list are soft-deactivated —
   /// never deleted, so history stays intact. Variant stock is never edited.
+  ///
+  /// [shopIds] scopes the mutation to rows the active business owns and throws
+  /// [ForeignShopRowFailure] otherwise. Without it an edit reaches far more than
+  /// one row — the product's own fields, its variant set and their opening
+  /// movements — so an ID-only call could rewrite a Cafe master the truck was
+  /// merely shared.
   Future<void> updateProduct({
     required String id,
     required String categoryId,
@@ -149,16 +213,30 @@ abstract interface class InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    List<String>? shopIds,
+    bool visibleInShops = false,
   });
 
-  Future<void> setProductActive(String id, bool isActive);
+  /// Activates or deactivates a product.
+  ///
+  /// [shopIds] scopes the mutation to rows the active business owns and throws
+  /// [ForeignShopRowFailure] otherwise. This is what stops a Food Truck user
+  /// deactivating a Cafe master product the Cafe merely shared.
+  Future<void> setProductActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  });
 
   /// Removes a product. When the product is unreferenced (no variants, sale
   /// lines, purchase lines or stock movements) it is hard-deleted and its sync
   /// tombstone is pushed so other devices learn it; when history exists,
   /// deletion degrades to a safe soft deactivation and
   /// [ProductDeleteResult.deactivated] is returned.
-  Future<ProductDeleteResult> deleteProduct(String id);
+  ///
+  /// [shopIds] scopes the mutation as in [setProductActive], so a shared Cafe
+  /// product can never be deleted from the Food Truck.
+  Future<ProductDeleteResult> deleteProduct(String id, {List<String>? shopIds});
 }
 
 /// Outcome of a [InventoryRepository.deleteProduct] call.

@@ -36,6 +36,11 @@ final class FakeBillingRepository implements BillingRepository {
   /// Last customer id passed to a checkout (null for walk-ins).
   String? lastCustomerId;
 
+  /// Last shop scope passed to a checkout. The controller pins staff sessions
+  /// to their own profile shop and passes null for owner/unresolved sessions
+  /// (entity-derived scope, as before).
+  String? lastShopId;
+
   /// When set, every checkout throws this error before touching state.
   Object? completeSaleError;
 
@@ -49,11 +54,13 @@ final class FakeBillingRepository implements BillingRepository {
     PaymentMethod? paymentMethod,
     String? customerId,
     String? shopId,
+    List<SalePayment>? payments,
   }) async {
     checkouts += 1;
     lastPaymentMethod = paymentMethod;
     lastPaymentStatus = paymentStatus;
     lastCustomerId = customerId;
+    lastShopId = shopId;
     final gate = completeSaleGate;
     if (gate != null) {
       await gate.future;
@@ -68,7 +75,9 @@ final class FakeBillingRepository implements BillingRepository {
     if (paymentStatus == PaymentStatus.notPaid && customerId == null) {
       throw const MissingCustomerForCreditSaleFailure();
     }
-    if (paymentStatus == PaymentStatus.paid && paymentMethod == null) {
+    if (paymentStatus == PaymentStatus.paid &&
+        paymentMethod == null &&
+        (payments == null || payments.isEmpty)) {
       throw const InvalidPaymentFailure();
     }
 
@@ -141,10 +150,11 @@ final class FakeBillingRepository implements BillingRepository {
       paymentStatus: paymentStatus,
       paymentMethod: paymentStatus == PaymentStatus.notPaid
           ? null
-          : paymentMethod,
+          : (payments != null && payments.isNotEmpty ? null : paymentMethod),
       createdAt: now,
       updatedAt: now,
       customerId: customerId,
+      payments: payments ?? const [],
     );
     _storedItems[sale.id] = [
       for (final item in items)

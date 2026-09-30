@@ -566,10 +566,9 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                 if (_type == OfferType.quantityTier) ...[
                   _ProductSelector(
                     shopId: widget.shopId,
-                    title: 'Product *',
+                    title: 'Products *',
                     hint:
-                        'Search and select the product these quantity tiers price',
-                    single: true,
+                        'Search and select the products these quantity tiers price',
                     initialSelected: _selectedProductIds,
                     selected: _selectedProductIds,
                     onChanged: (ids) {
@@ -683,7 +682,9 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                 break;
               case OfferType.quantityTier:
                 if (_selectedProductIds.isEmpty) {
-                  setState(() => _selectionError = 'Select a product.');
+                  setState(
+                    () => _selectionError = 'Select at least one product.',
+                  );
                   return;
                 }
                 final tiers = _buildTiers();

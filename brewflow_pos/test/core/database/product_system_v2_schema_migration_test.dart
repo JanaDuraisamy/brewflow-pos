@@ -182,20 +182,37 @@ void main() {
         final db = AppDatabase(schema.newConnection());
         await verifier.migrateAndValidate(db, 8);
 
-        final product = await (db.select(
-          db.products,
-        )..where((t) => t.id.equals('p1'))).getSingle();
-        expect(product.name, 'Filter Coffee');
-        expect(product.sku, 'FC-1');
-        expect(product.sellingPricePaise, 12000);
-        expect(product.costPricePaise, 8000);
-        expect(product.stockQuantity, 7);
-        expect(product.imagePath, isNull);
-        expect(product.stockUnit, 'COUNT');
-        expect(product.lowStockMode, 'USE_DEFAULT');
-        expect(product.lowStockThreshold, isNull);
-        expect(product.membershipEnabled, false);
-        expect(product.memberPricePaise, isNull);
+        // The current products row type requires `visible_in_shops` (v28);
+        // this database is parked at the step under test, so read the
+        // preserved columns explicitly.
+        final product =
+            await (db.selectOnly(db.products)
+                  ..addColumns([
+                    db.products.name,
+                    db.products.sku,
+                    db.products.sellingPricePaise,
+                    db.products.costPricePaise,
+                    db.products.stockQuantity,
+                    db.products.imagePath,
+                    db.products.stockUnit,
+                    db.products.lowStockMode,
+                    db.products.lowStockThreshold,
+                    db.products.membershipEnabled,
+                    db.products.memberPricePaise,
+                  ])
+                  ..where(db.products.id.equals('p1')))
+                .getSingle();
+        expect(product.read(db.products.name), 'Filter Coffee');
+        expect(product.read(db.products.sku), 'FC-1');
+        expect(product.read(db.products.sellingPricePaise), 12000);
+        expect(product.read(db.products.costPricePaise), 8000);
+        expect(product.read(db.products.stockQuantity), 7);
+        expect(product.read(db.products.imagePath), isNull);
+        expect(product.read(db.products.stockUnit), 'COUNT');
+        expect(product.read(db.products.lowStockMode), 'USE_DEFAULT');
+        expect(product.read(db.products.lowStockThreshold), isNull);
+        expect(product.read(db.products.membershipEnabled), false);
+        expect(product.read(db.products.memberPricePaise), isNull);
 
         // The current customers row type requires membership columns (v11);
         // the migrated table only has the v8 columns, so read the preserved

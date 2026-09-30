@@ -1249,6 +1249,23 @@ void main() {
           .insert(CustomersCompanion.insert(id: Value(id), name: name));
     }
 
+    /// `sales.shop_id` is a real foreign key, so any shop-scoped fixture has
+    /// to create the shop rows first.
+    Future<void> seedShops(List<String> ids) async {
+      for (final id in ids) {
+        await database
+            .into(database.shops)
+            .insert(
+              ShopsCompanion.insert(
+                id: Value(id),
+                name: 'Shop $id',
+                createdAt: Value(DateTime.utc(2026, 1, 1)),
+                updatedAt: Value(DateTime.utc(2026, 1, 1)),
+              ),
+            );
+      }
+    }
+
     test(
       'surfaces only open sales with oldest-bill drill-down and name order',
       () async {
@@ -1297,6 +1314,163 @@ void main() {
         expect(arun.bills.single.saleId, 's3');
       },
     );
+
+    test('a date range bounds which bills count as receivable', () async {
+      // Regression: the Reports Customer Receivables card showed the
+      // all-time balance inside a date-scoped report. The DAO now filters
+      // candidate bills by the range on the bill's own createdAt.
+      final now = DateTime.now().toUtc();
+      await seedCustomerWithName('c1', 'Priya');
+      await seedShops(const ['shop-1']);
+      await seedSale(
+        id: 'today',
+        customerId: 'c1',
+        receiptNumber: 'BF-T',
+        totalPaise: 7000,
+        createdAt: now,
+        shopId: 'shop-1',
+      );
+      await seedSale(
+        id: 'yesterday',
+        customerId: 'c1',
+        receiptNumber: 'BF-Y',
+        totalPaise: 9000,
+        createdAt: now.subtract(const Duration(days: 1)),
+        shopId: 'shop-1',
+      );
+      await seedSale(
+        id: 'lastWeek',
+        customerId: 'c1',
+        receiptNumber: 'BF-W',
+        totalPaise: 11000,
+        createdAt: now.subtract(const Duration(days: 6)),
+        shopId: 'shop-1',
+      );
+      await seedSale(
+        id: 'ancient',
+        customerId: 'c1',
+        receiptNumber: 'BF-A',
+        totalPaise: 13000,
+        createdAt: now.subtract(const Duration(days: 10)),
+        shopId: 'shop-1',
+      );
+
+      // Unbounded: the all-time reading is still available.
+      final all = await repository.receivables(shopIds: ['shop-1']);
+      expect(all.single.totalDuePaise, 40000);
+      expect(all.single.outstandingBillCount, 4);
+
+      // Today only: the three historical bills must not appear.
+      final local = DateTime.now();
+      final todayStart = DateTime(local.year, local.month, local.day);
+      final todayEnd = todayStart
+          .add(const Duration(days: 1))
+          .subtract(const Duration(microseconds: 1));
+      final onlyToday = await repository.receivables(
+        shopIds: ['shop-1'],
+        fromUtc: todayStart.toUtc(),
+        toUtc: todayEnd.toUtc(),
+      );
+      expect(onlyToday.single.totalDuePaise, 7000);
+      expect(onlyToday.single.outstandingBillCount, 1);
+      expect(onlyToday.single.bills.single.saleId, 'today');
+
+      // Last 7 days: today + yesterday + 6-days-ago, but not 10-days-ago.
+      final weekStart = todayStart.subtract(const Duration(days: 6));
+      final last7 = await repository.receivables(
+        shopIds: ['shop-1'],
+        fromUtc: weekStart.toUtc(),
+        toUtc: todayEnd.toUtc(),
+      );
+      expect(last7.single.totalDuePaise, 27000);
+      expect(last7.single.outstandingBillCount, 3);
+      expect(last7.single.bills.map((b) => b.saleId), [
+        'lastWeek',
+        'yesterday',
+        'today',
+      ]);
+    });
+
+    test('a range never leaks another shop\'s credit', () async {
+      // Shop isolation must hold inside the range too: a Food Truck credit
+      // bill must not appear in a Cafe-scoped report.
+      final now = DateTime.now().toUtc();
+      await seedCustomerWithName('c1', 'Priya');
+      await seedShops(const ['cafe-shop', 'truck-shop']);
+      await seedSale(
+        id: 'cafe',
+        customerId: 'c1',
+        receiptNumber: 'BF-C',
+        totalPaise: 5000,
+        createdAt: now,
+        shopId: 'cafe-shop',
+      );
+      await seedSale(
+        id: 'truck',
+        customerId: 'c1',
+        receiptNumber: 'BF-T',
+        totalPaise: 60000,
+        createdAt: now,
+        shopId: 'truck-shop',
+      );
+
+      final cafe = await repository.receivables(shopIds: ['cafe-shop']);
+      expect(cafe.single.totalDuePaise, 5000);
+      expect(cafe.single.bills.single.saleId, 'cafe');
+
+      final truck = await repository.receivables(shopIds: ['truck-shop']);
+      expect(truck.single.totalDuePaise, 60000);
+      expect(truck.single.bills.single.saleId, 'truck');
+
+      // Both businesses together stay separated per bill, never merged into
+      // one invented balance row.
+      final combined = await repository.receivables(
+        shopIds: ['cafe-shop', 'truck-shop'],
+      );
+      expect(combined, hasLength(1));
+      expect(combined.single.totalDuePaise, 65000);
+      expect(combined.single.bills.map((b) => b.saleId).toList(), [
+        'cafe',
+        'truck',
+      ]);
+    });
+
+    test('a part-collected in-range bill shows only what is left', () async {
+      final now = DateTime.now().toUtc();
+      await seedCustomerWithName('c1', 'Priya');
+      await seedShops(const ['shop-1']);
+      await seedSale(
+        id: 's1',
+        customerId: 'c1',
+        receiptNumber: 'BF-1',
+        totalPaise: 10000,
+        createdAt: now,
+        shopId: 'shop-1',
+      );
+      await database
+          .into(database.customerPayments)
+          .insert(
+            CustomerPaymentsCompanion.insert(
+              id: const Value('p1'),
+              customerId: 'c1',
+              saleId: const Value('s1'),
+              amountPaise: 4000,
+              paymentMethod: 'CASH',
+              paidAt: now,
+              reversed: const Value(false),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+            ),
+          );
+
+      final receivables = await repository.receivables(
+        shopIds: ['shop-1'],
+        fromUtc: now.subtract(const Duration(hours: 1)),
+        toUtc: now.add(const Duration(hours: 1)),
+      );
+      expect(receivables.single.totalDuePaise, 6000);
+      expect(receivables.single.outstandingBillCount, 1);
+    });
   });
 
   group('outstandingAsOf', () {

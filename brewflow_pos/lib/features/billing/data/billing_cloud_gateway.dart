@@ -14,6 +14,7 @@ abstract interface class BillingCloudGateway {
     String? paymentMethod,
     required String paymentStatus,
     required List<Map<String, dynamic>> lines,
+    List<Map<String, dynamic>>? payments,
   });
 
   Future<Map<String, dynamic>> voidSaleAtomic(String saleId);
@@ -33,6 +34,7 @@ final class SupabaseBillingGateway implements BillingCloudGateway {
     String? paymentMethod,
     required String paymentStatus,
     required List<Map<String, dynamic>> lines,
+    List<Map<String, dynamic>>? payments,
   }) async {
     final res = await rpcWithTimeout(
       () => _client.rpc<dynamic>(
@@ -46,8 +48,10 @@ final class SupabaseBillingGateway implements BillingCloudGateway {
           'p_payment_method': paymentMethod,
           'p_payment_status': paymentStatus,
           'p_lines': lines,
+          'p_payments': payments,
         },
       ),
+      name: 'create_sale_atomic',
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);
@@ -61,6 +65,7 @@ final class SupabaseBillingGateway implements BillingCloudGateway {
         'void_sale_atomic',
         params: {'p_sale_id': saleId},
       ),
+      name: 'void_sale_atomic',
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);

@@ -110,6 +110,12 @@ class Products extends Table {
   /// Soft switch to hide a product from the POS without deleting it.
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 
+  /// Controls whether this product is visible in the Food Truck shop.
+  /// Defaults to false; the owner can toggle it to make the product available
+  /// in Food Truck Billing. Cafe behavior is completely unchanged.
+  BoolColumn get visibleInShops =>
+      boolean().withDefault(const Constant(false))();
+
   /// UTC timestamp of record creation.
   DateTimeColumn get createdAt =>
       dateTime().clientDefault(() => DateTime.now().toUtc())();

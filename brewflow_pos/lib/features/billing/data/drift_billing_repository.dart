@@ -4,9 +4,11 @@ import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/core/database/daos/sale_items_dao.dart';
 import 'package:brewflow_pos/core/database/daos/sales_dao.dart';
+import 'package:brewflow_pos/core/database/daos/shop_product_stock_dao.dart';
 import 'package:brewflow_pos/core/database/daos/stock_movements_dao.dart';
 import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/billing/data/billing_cloud_gateway.dart';
@@ -56,6 +58,7 @@ final class DriftBillingRepository implements BillingRepository {
        _sales = SalesDao(database),
        _saleItems = SaleItemsDao(database),
        _movements = StockMovementsDao(database),
+       _shopStock = ShopProductStockDao(database),
        _outbox = outboxCoordinator,
        _connectivity = connectivityService,
        _cloud = cloudGateway;
@@ -69,6 +72,10 @@ final class DriftBillingRepository implements BillingRepository {
   final SalesDao _sales;
   final SaleItemsDao _saleItems;
   final StockMovementsDao _movements;
+
+  /// The per-business shelf overlay. Present so a Food Truck sale of a Cafe
+  /// master product deducts the truck's own row instead of the Cafe's.
+  final ShopProductStockDao _shopStock;
   final SyncOutboxCoordinator? _outbox;
   final ConnectivityService? _connectivity;
   final BillingCloudGateway? _cloud;
@@ -80,6 +87,7 @@ final class DriftBillingRepository implements BillingRepository {
     PaymentMethod? paymentMethod,
     String? customerId,
     String? shopId,
+    List<SalePayment>? payments,
   }) async {
     if (lines.isEmpty) {
       throw const EmptyCartFailure();
@@ -87,14 +95,56 @@ final class DriftBillingRepository implements BillingRepository {
     if (paymentStatus == PaymentStatus.notPaid && customerId == null) {
       throw const MissingCustomerForCreditSaleFailure();
     }
-    if (paymentStatus == PaymentStatus.paid && paymentMethod == null) {
+    if (paymentStatus == PaymentStatus.paid &&
+        paymentMethod == null &&
+        (payments == null || payments.isEmpty)) {
+      // A split sale carries its payment in [payments] and has no single
+      // [paymentMethod] by design, so requiring the method here rejected every
+      // split with INVALID_PAYMENT even though the legs were valid. Mirrors the
+      // guard in the controller.
       throw const InvalidPaymentFailure();
+    }
+    if (payments != null && payments.isNotEmpty) {
+      final legSum = payments.fold<int>(0, (acc, p) => acc + p.amountPaise);
+      final legTotal = Money.sumPaise(payments.map((p) => p.amountPaise));
+      if (legTotal == null || legSum != legTotal) {
+        // Defensive: `legSum` can only exceed the ceiling by overflowing the
+        // per-leg range, but a split total above the ceiling is unrepresentable
+        // and must be rejected rather than written.
+        throw const UnexpectedBillingFailure(
+          'Split payments exceed the safe ceiling.',
+        );
+      }
+      if (payments.any((p) => p.amountPaise <= 0)) {
+        // `sale_payments.amount_paise` has CHECK (> 0); a zero or negative leg
+        // would abort the whole sale at the insert, so reject it with a reason.
+        throw const InvalidPaymentFailure();
+      }
+      if (payments.length < SplitPaymentDraft.minLegs) {
+        // A single instrument is an ordinary payment, not a split. Enforced
+        // here as well as in the editor so a caller that bypasses the UI cannot
+        // persist a one-row "split" and have it read back as split tender.
+        throw const InvalidPaymentFailure();
+      }
+      if (payments.any(
+        (p) =>
+            p.paymentMethod != PaymentMethod.cash &&
+            p.paymentMethod != PaymentMethod.upi,
+      )) {
+        // The counter takes CASH and UPI. BANK remains a valid historical value
+        // on a single-method sale, but it is not a split instrument.
+        throw const InvalidPaymentFailure();
+      }
     }
     // Online-only guard: reject when internet is unavailable before any mutation.
     if (_connectivity != null) {
       try {
         await OnlineGuard(_connectivity!).requireOnline();
       } on OfflineException catch (e) {
+        // Billing is online-only, so a "sale not completed" on a flaky Wi-Fi
+        // is the single most common report; recorded before it is translated
+        // into the user-safe message, which on its own hides the cause.
+        AppTrace.warn('sale.offline_blocked', {'lines': lines.length});
         throw UnexpectedBillingFailure(e.message);
       }
     }
@@ -104,16 +154,34 @@ final class DriftBillingRepository implements BillingRepository {
       // profile can therefore send a different shop_id than the one owning
       // the shelf products, and `create_sale_atomic` correctly rejects the
       // lines with UNAVAILABLE_PRODUCT. Derive the shop from the actual stock
-      // entities instead: every line must belong to one shop, and that shop
+      // entities instead: every line must agree on one shop, and that shop
       // becomes the RPC scope. An explicit [shopId] still wins (tests,
-      // callers with context); mixed-shop carts are rejected without
-      // weakening product validation.
-      final entityShopId = await _shopIdForLines(lines);
+      // callers with context) and additionally permits lines the selling
+      // business has been shared, which is what makes a Food Truck sale of a
+      // Cafe master product legal.
+      final entityShopId = await _shopIdForLines(lines, sellingShopId: shopId);
       final resolvedShopId = await resolveWritableShopId(
         _database,
         shopId ?? entityShopId,
       );
-      if (entityShopId != null && resolvedShopId != entityShopId) {
+      // Traced at the repository boundary because this is the last point where
+      // the sale's scope is still a variable: `is_shop_member()` receives
+      // exactly this value, so a FORBIDDEN rejection is attributable from the
+      // log alone. `route` is the other half of the question — whether a sale
+      // went to the server or to local SQLite decides which failure a shop
+      // owner should expect to see in the cloud at all.
+      AppTrace.event('sale.route', {
+        'route': _cloud == null ? 'local' : 'cloud',
+        'shopRef': AppTrace.userRef(resolvedShopId),
+        'requestedShopRef': AppTrace.userRef(shopId),
+        'entityShopRef': AppTrace.userRef(entityShopId),
+        'lines': lines.length,
+      });
+      if (entityShopId != null && entityShopId != resolvedShopId) {
+        AppTrace.warn('sale.shop_mismatch', {
+          'resolvedShopRef': AppTrace.userRef(resolvedShopId),
+          'entityShopRef': AppTrace.userRef(entityShopId),
+        });
         throw const UnexpectedBillingFailure(
           'Cart products belong to a different shop.',
         );
@@ -127,6 +195,7 @@ final class DriftBillingRepository implements BillingRepository {
           paymentMethod: paymentMethod,
           customerId: customerId,
           shopId: resolvedShopId,
+          payments: payments,
         );
       }
 
@@ -138,6 +207,7 @@ final class DriftBillingRepository implements BillingRepository {
             paymentMethod,
             customerId,
             resolvedShopId,
+            payments: payments,
           ),
         );
       }
@@ -148,6 +218,7 @@ final class DriftBillingRepository implements BillingRepository {
           paymentMethod,
           customerId,
           resolvedShopId,
+          payments: payments,
         ),
         snapshots: (result, ctx) async {
           final appends = <OutboxAppend>[
@@ -260,11 +331,9 @@ final class DriftBillingRepository implements BillingRepository {
     PaymentMethod? paymentMethod,
     String? customerId,
     required String shopId,
+    List<SalePayment>? payments,
   }) async {
     final cloud = _cloud!;
-    // BFDIAG (temporary): the exact shop_id this sale is sent under — the
-    // value is_shop_member() must accept for the sale to commit.
-    AppLog.info('BFDIAG saleShop=$shopId', tag: tag);
     // Compute money totals as in _checkoutCore to send to RPC
     final subtotal = Money.sumPaise(
       lines.map((l) => Money.multiplyPaise(l.unitPricePaise, l.quantity)!),
@@ -279,6 +348,20 @@ final class DriftBillingRepository implements BillingRepository {
       (sum, line) => sum + (line.appliedOffer?.discountPaise ?? 0),
     );
     final totalPaise = (subtotal - totalOfferDiscount).clamp(0, subtotal);
+
+    // Same re-check as the local path, before the RPC is called: a mismatched
+    // split must not reach the server (and must not burn a receipt number).
+    final cloudLegSum = payments == null || payments.isEmpty
+        ? null
+        : payments.fold<int>(0, (acc, p) => acc + p.amountPaise);
+    if (cloudLegSum != null && cloudLegSum != totalPaise) {
+      throw UnexpectedBillingFailure(
+        cloudLegSum < totalPaise
+            ? 'Split payments are ${Money.formatPaise(totalPaise - cloudLegSum)} short.'
+            : 'Split payments exceed the total by '
+                  '${Money.formatPaise(cloudLegSum - totalPaise)}.',
+      );
+    }
 
     final rpcLines = [
       for (final line in lines)
@@ -301,6 +384,21 @@ final class DriftBillingRepository implements BillingRepository {
         },
     ];
 
+    // The RPC expects a single method OR a leg list. A split sale has legs and
+    // no single method, so `paymentMethod!.dbValue` threw a null-check error
+    // that bypassed every failure mapping below, and `payments` was never
+    // passed at all — the server would have persisted a split with no
+    // `sale_payments` rows. Send exactly one of the two shapes.
+    final rpcPayments = payments == null || payments.isEmpty
+        ? null
+        : [
+            for (final p in payments)
+              {
+                'payment_method': p.paymentMethod.dbValue,
+                'amount_paise': p.amountPaise,
+              },
+          ];
+
     Map<String, dynamic> result;
     try {
       result = await cloud.createSaleAtomic(
@@ -311,9 +409,10 @@ final class DriftBillingRepository implements BillingRepository {
         offerDiscountPaise: totalOfferDiscount,
         paymentMethod: paymentStatus == PaymentStatus.notPaid
             ? null
-            : paymentMethod!.dbValue,
+            : (rpcPayments == null ? paymentMethod?.dbValue : null),
         paymentStatus: paymentStatus.dbValue,
         lines: rpcLines,
+        payments: rpcPayments,
       );
     } catch (e) {
       if (e is TimeoutException) {
@@ -337,6 +436,14 @@ final class DriftBillingRepository implements BillingRepository {
       if (msg.contains('MISSING_CUSTOMER'))
         throw const MissingCustomerForCreditSaleFailure();
       if (msg.contains('INVALID_PAYMENT')) throw const InvalidPaymentFailure();
+      if (msg.contains('SPLIT_PAYMENT_MISMATCH')) {
+        // The server re-checks the leg sum, so a mismatch here means the local
+        // draft and the committed total disagreed — name it rather than
+        // falling through to an opaque "something went wrong".
+        throw const UnexpectedBillingFailure(
+          'Split payments do not match the bill total.',
+        );
+      }
       if (msg.contains('EMPTY_CART')) throw const EmptyCartFailure();
       if (msg.contains('CUSTOMER_NOT_FOUND'))
         throw const CustomerNotFoundFailure();
@@ -368,12 +475,14 @@ final class DriftBillingRepository implements BillingRepository {
       totalPaise: totalPaise,
       offerDiscountPaise: totalOfferDiscount,
       paymentStatus: paymentStatus,
+      // A split has no single method; the legs live in `sale_payments`.
       paymentMethod: paymentStatus == PaymentStatus.notPaid
           ? null
-          : paymentMethod,
+          : (payments != null && payments.isNotEmpty ? null : paymentMethod),
       createdAt: createdAt,
       updatedAt: createdAt,
       customerId: customerId,
+      payments: payments ?? const [],
     );
 
     final saleItems = <SaleItem>[];
@@ -469,7 +578,9 @@ final class DriftBillingRepository implements BillingRepository {
                 paymentMethod: Value(
                   paymentStatus == PaymentStatus.notPaid
                       ? null
-                      : paymentMethod!.dbValue,
+                      : (payments != null && payments.isNotEmpty
+                            ? null
+                            : paymentMethod?.dbValue),
                 ),
                 paymentStatus: Value(paymentStatus.dbValue),
                 createdAt: Value(createdAt),
@@ -532,8 +643,24 @@ final class DriftBillingRepository implements BillingRepository {
         if (movementsToInsert.isNotEmpty) {
           await _movements.insertAll(movementsToInsert);
         }
+
+        // Mirror the legs too, so an offline read of this sale shows the same
+        // split the server recorded rather than a header with no method.
+        if (payments != null && payments.isNotEmpty) {
+          await _database.batch((batch) {
+            batch.insertAll(_database.salePayments, [
+              for (final p in payments)
+                db.SalePaymentsCompanion.insert(
+                  saleId: saleId,
+                  paymentMethod: p.paymentMethod.dbValue,
+                  amountPaise: p.amountPaise,
+                  createdAt: Value(createdAt),
+                ),
+            ]);
+          });
+        }
       });
-    } on Exception catch (error, stackTrace) {
+    } catch (error, stackTrace) {
       // The cloud sale is already committed; the transaction rolled back
       // cleanly, so nothing partial was cached. A local cache failure must
       // never surface as a failed sale — a retry would duplicate the sale
@@ -599,13 +726,33 @@ final class DriftBillingRepository implements BillingRepository {
     }
   }
 
+  /// The selling business's own quantity for one shared sellable unit.
+  ///
+  /// Returns 0 when the business has no shelf row for it. That is the
+  /// not-carried state, and it is deliberately indistinguishable from a real
+  /// zero here: both mean the till must refuse the line, and neither may fall
+  /// back to the owner's number.
+  Future<int> _overlayStock({
+    required String shopId,
+    required String productId,
+    String? variantId,
+  }) async {
+    final row = await _shopStock.find(
+      shopId: shopId,
+      productId: productId,
+      variantId: variantId,
+    );
+    return row?.quantity ?? 0;
+  }
+
   Future<CompletedSale> _checkoutCore(
     List<CartLine> lines,
     PaymentStatus paymentStatus,
     PaymentMethod? paymentMethod,
     String? customerId,
-    String shopId,
-  ) async {
+    String shopId, {
+    List<SalePayment>? payments,
+  }) async {
     final now = DateTime.now().toUtc();
     final saleId = const Uuid().v4();
 
@@ -633,9 +780,23 @@ final class DriftBillingRepository implements BillingRepository {
       // never deducted, never moved. The schema documents this semantic;
       // checkout simply skips the inventory leg for such products.
       final tracked = product.stockUnit != StockUnit.none.dbValue;
+      // Which shelf this sale draws from. A product the selling business OWNS
+      // deducts its own `stock_quantity` exactly as before. A product owned by
+      // another business (a Cafe master the Cafe shared into the Food Truck)
+      // must deduct the SELLING business's `shop_product_stock` row and leave
+      // the owner's number untouched — that separation is the whole point of
+      // the overlay, and deducting the Cafe's row here is precisely how a
+      // truck sale would eat the Cafe's stock.
+      final usesOverlay = product.shopId != null && product.shopId != shopId;
       final int stockEntityStock;
       if (tracked) {
-        stockEntityStock = variant?.stockQuantity ?? product.stockQuantity;
+        stockEntityStock = usesOverlay
+            ? await _overlayStock(
+                shopId: shopId,
+                productId: line.productId,
+                variantId: line.variantId,
+              )
+            : (variant?.stockQuantity ?? product.stockQuantity);
         if (stockEntityStock < line.quantity) {
           throw InsufficientStockFailure(line.productName);
         }
@@ -656,40 +817,56 @@ final class DriftBillingRepository implements BillingRepository {
       // skip deduction and the SALE movement entirely — no artificial
       // inventory is ever created for made-to-order items.
       if (tracked) {
-        final int updated;
-        if (variant != null) {
-          updated =
-              await (_database.update(_database.productVariants)..where(
-                    (t) =>
-                        t.id.equals(variant.id) &
-                        t.stockQuantity.isBiggerOrEqualValue(line.quantity),
-                  ))
-                  .write(
-                    db.ProductVariantsCompanion(
-                      stockQuantity: Value(
-                        variant.stockQuantity - line.quantity,
-                      ),
-                      updatedAt: Value(now),
-                    ),
-                  );
+        if (usesOverlay) {
+          // The selling business's own shelf, with the same conditional guard.
+          // A missing row returns null, which the stock check above has already
+          // turned into an InsufficientStockFailure — a business that does not
+          // carry a unit cannot conjure one by selling it.
+          final after = await _shopStock.deductQuantity(
+            shopId: shopId,
+            productId: line.productId,
+            variantId: line.variantId,
+            delta: line.quantity,
+          );
+          if (after == null) {
+            throw InsufficientStockFailure(line.productName);
+          }
         } else {
-          updated =
-              await (_database.update(_database.products)..where(
-                    (t) =>
-                        t.id.equals(line.productId) &
-                        t.stockQuantity.isBiggerOrEqualValue(line.quantity),
-                  ))
-                  .write(
-                    db.ProductsCompanion(
-                      stockQuantity: Value(
-                        product.stockQuantity - line.quantity,
+          final int updated;
+          if (variant != null) {
+            updated =
+                await (_database.update(_database.productVariants)..where(
+                      (t) =>
+                          t.id.equals(variant.id) &
+                          t.stockQuantity.isBiggerOrEqualValue(line.quantity),
+                    ))
+                    .write(
+                      db.ProductVariantsCompanion(
+                        stockQuantity: Value(
+                          variant.stockQuantity - line.quantity,
+                        ),
+                        updatedAt: Value(now),
                       ),
-                      updatedAt: Value(now),
-                    ),
-                  );
-        }
-        if (updated != 1) {
-          throw InsufficientStockFailure(line.productName);
+                    );
+          } else {
+            updated =
+                await (_database.update(_database.products)..where(
+                      (t) =>
+                          t.id.equals(line.productId) &
+                          t.stockQuantity.isBiggerOrEqualValue(line.quantity),
+                    ))
+                    .write(
+                      db.ProductsCompanion(
+                        stockQuantity: Value(
+                          product.stockQuantity - line.quantity,
+                        ),
+                        updatedAt: Value(now),
+                      ),
+                    );
+          }
+          if (updated != 1) {
+            throw InsufficientStockFailure(line.productName);
+          }
         }
       }
 
@@ -737,7 +914,33 @@ final class DriftBillingRepository implements BillingRepository {
     );
     final totalPaise = (subtotal - totalOfferDiscount).clamp(0, subtotal);
 
+    // Last gate before any write: the legs must cover exactly the total this
+    // method is about to commit. The controller checks first, but the
+    // repository is what inserts `sale_payments`, so it re-checks against its
+    // own total rather than trusting a caller-computed one.
+    final legSum = payments == null || payments.isEmpty
+        ? null
+        : payments.fold<int>(0, (acc, p) => acc + p.amountPaise);
+    if (legSum != null && legSum != totalPaise) {
+      throw UnexpectedBillingFailure(
+        legSum < totalPaise
+            ? 'Split payments are ${Money.formatPaise(totalPaise - legSum)} short.'
+            : 'Split payments exceed the total by '
+                  '${Money.formatPaise(legSum - totalPaise)}.',
+      );
+    }
+
     final receiptNumber = await _nextReceiptNumber(shopId);
+    // A split has no single method to put on the header — the legs live in
+    // `sale_payments`. `paymentMethod!` here threw a null-check error on the
+    // local write path, which is the default (offline-first) route, so a
+    // perfectly valid split crashed the sale instead of saving.
+    final headerMethod = switch (paymentStatus) {
+      PaymentStatus.notPaid => null,
+      _ when payments != null && payments.isNotEmpty => null,
+      _ => paymentMethod?.dbValue,
+    };
+
     await _database
         .into(_database.sales)
         .insert(
@@ -751,11 +954,7 @@ final class DriftBillingRepository implements BillingRepository {
             offerDiscountPaise: Value(totalOfferDiscount),
             // Credit sales persist no payment method — the debt lives in the
             // customer ledger, derived from this sale's total minus payments.
-            paymentMethod: Value(
-              paymentStatus == PaymentStatus.notPaid
-                  ? null
-                  : paymentMethod!.dbValue,
-            ),
+            paymentMethod: Value(headerMethod),
             paymentStatus: Value(paymentStatus.dbValue),
             createdAt: Value(now),
             updatedAt: Value(now),
@@ -789,6 +988,20 @@ final class DriftBillingRepository implements BillingRepository {
 
     await _movements.insertAll(movements);
 
+    if (payments != null && payments.isNotEmpty) {
+      await _database.batch((batch) {
+        batch.insertAll(_database.salePayments, [
+          for (final p in payments)
+            db.SalePaymentsCompanion.insert(
+              saleId: saleId,
+              paymentMethod: p.paymentMethod.dbValue,
+              amountPaise: p.amountPaise,
+              createdAt: Value(now),
+            ),
+        ]);
+      });
+    }
+
     final sale = Sale(
       id: saleId,
       receiptNumber: receiptNumber,
@@ -798,10 +1011,11 @@ final class DriftBillingRepository implements BillingRepository {
       paymentStatus: paymentStatus,
       paymentMethod: paymentStatus == PaymentStatus.notPaid
           ? null
-          : paymentMethod,
+          : (payments != null && payments.isNotEmpty ? null : paymentMethod),
       createdAt: now,
       updatedAt: now,
       customerId: customerId,
+      payments: payments ?? const [],
     );
     final persistedItems = (await _saleItems.bySale(
       saleId,
@@ -814,7 +1028,18 @@ final class DriftBillingRepository implements BillingRepository {
   /// product row. Returns null when no row carries a shop (legacy rows) so
   /// callers fall back to the profile resolver. Throws when lines span more
   /// than one shop — a mixed cart can never be a single atomic sale.
-  Future<String?> _shopIdForLines(List<CartLine> lines) async {
+  /// The shop every line in the cart agrees on.
+  ///
+  /// Without a known selling shop this is the only interpretation available, so
+  /// a cart spanning two businesses is rejected. With one, the cart is read as
+  /// "a sale OF that business": its own products are fine, and a product owned
+  /// by another business is only allowed when that owner has shared it
+  /// ([Products.visibleInShops]). A shared line still deducts the selling
+  /// business's overlay shelf, never the owner's own stock.
+  Future<String?> _shopIdForLines(
+    List<CartLine> lines, {
+    String? sellingShopId,
+  }) async {
     final productIds = lines.map((l) => l.productId).toSet();
     final productRows = productIds.isEmpty
         ? const <db.Product>[]
@@ -833,6 +1058,28 @@ final class DriftBillingRepository implements BillingRepository {
             _database.productVariants,
           )..where((t) => t.id.isIn(variantIds))).get();
     final variantsById = {for (final row in variantRows) row.id: row};
+
+    if (sellingShopId != null) {
+      for (final line in lines) {
+        final product = productsById[line.productId];
+        if (product == null) continue;
+        if (product.shopId == sellingShopId) continue;
+        // A product with no shop of its own is scopeless, not stolen: it is
+        // pinned to the selling business, which is the pre-sharing behaviour
+        // and the reason `shopId` exists as an explicit override. Only a product
+        // that NAMES a different owner has to have been shared to be sold.
+        if (product.shopId == null) continue;
+        if (!product.visibleInShops) {
+          // Same failure the mixed-shop rejection uses, so a cart that reaches
+          // for someone else's unshared product is indistinguishable from any
+          // other cross-shop attempt.
+          throw const UnexpectedBillingFailure(
+            'Cart products belong to a different shop.',
+          );
+        }
+      }
+      return sellingShopId;
+    }
 
     final shops = <String>{};
     for (final line in lines) {
@@ -973,12 +1220,38 @@ final class DriftBillingRepository implements BillingRepository {
     ).toJson(),
   );
 
+  /// Reads the receipt LABEL for [shopId].
+  ///
+  /// The prefix is a property of the business, not of the app: Cafe receipts
+  /// are `BF-`, Food Truck receipts are `FT-`. Falls back to the Cafe default
+  /// only if the shop row is missing, so a receipt is never emitted
+  /// unprefixed. The counter itself is already per-shop, so this is purely the
+  /// label — the sequence is untouched.
+  Future<String> _receiptPrefixFor(String shopId) async {
+    final row = await _database
+        .customSelect(
+          'SELECT receipt_prefix FROM shops WHERE id = ?',
+          variables: [Variable.withString(shopId)],
+        )
+        .getSingleOrNull();
+    final prefix = row?.data['receipt_prefix'] as String?;
+    if (prefix == null || prefix.trim().isEmpty) {
+      return AppConstants.defaultShopReceiptPrefix;
+    }
+    return prefix;
+  }
+
   /// Allocates a gapless receipt number scoped to [shopId].  The per-shop
   /// counter lives in `sale_sequences` with composite key `(id, shop_id)`.
   /// On first allocation we seed the counter and heal forward to the highest
   /// receipt number already in use.  Runs inside the checkout transaction,
   /// so a rolled-back checkout never consumes a value.
+  ///
+  /// The heal-forward scan is scoped to THIS shop's prefix as well as this
+  /// shop's id, so the Food Truck never skips past numbers that Cafe already
+  /// used (and vice versa) just because both share a counter.
   Future<String> _nextReceiptNumber(String shopId) async {
+    final prefix = await _receiptPrefixFor(shopId);
     await _database.customStatement(
       'INSERT OR IGNORE INTO sale_sequences (id, shop_id, next_value) VALUES (?, ?, 0)',
       [_receiptSequenceId, shopId],
@@ -1000,8 +1273,8 @@ final class DriftBillingRepository implements BillingRepository {
           variables: [
             Variable.withString(_receiptSequenceId),
             Variable.withString(shopId),
-            Variable.withInt(AppConstants.receiptPrefix.length + 1),
-            Variable.withString('${AppConstants.receiptPrefix}%'),
+            Variable.withInt(prefix.length + 1),
+            Variable.withString('$prefix%'),
             Variable.withString(shopId),
             Variable.withString(_receiptSequenceId),
             Variable.withString(shopId),
@@ -1009,7 +1282,7 @@ final class DriftBillingRepository implements BillingRepository {
         )
         .getSingle();
     final nextValue = row.read<int>('next_value');
-    return '${AppConstants.receiptPrefix}${nextValue.toString().padLeft(6, '0')}';
+    return '$prefix${nextValue.toString().padLeft(6, '0')}';
   }
 
   @override
@@ -1107,6 +1380,32 @@ final class DriftBillingRepository implements BillingRepository {
       final nowStr = now.toIso8601String();
       final items = await _saleItems.bySale(saleId);
       for (final item in items) {
+        // Mirror the deduction's routing exactly. A line sold from a shelf the
+        // seller did not own came out of that seller's `shop_product_stock`
+        // row, so it must go back to the same row; crediting the owner's
+        // `products.stock_quantity` here would invent Cafe stock the Cafe never
+        // lost, which is how a void silently inflates the Cafe's shelf.
+        final product = await (_database.select(
+          _database.products,
+        )..where((t) => t.id.equals(item.productId))).getSingleOrNull();
+        final soldShopId = saleRow.shopId;
+        final usedOverlay =
+            product?.shopId != null &&
+            soldShopId != null &&
+            product!.shopId != soldShopId;
+        if (usedOverlay) {
+          final restored = await _shopStock.restoreQuantity(
+            shopId: soldShopId!,
+            productId: item.productId,
+            variantId: item.variantId,
+            delta: item.quantity,
+          );
+          // A null restore means the shelf row is gone. There is nothing to put
+          // the units back onto, and inventing a row with a made-up number
+          // would be worse than the loss, so the void leaves it alone.
+          if (restored == null) continue;
+          continue;
+        }
         if (item.variantId != null) {
           await _database.customStatement(
             'UPDATE product_variants SET stock_quantity = '

@@ -1,5 +1,7 @@
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
+import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/billing/data/billing_cloud_gateway.dart';
 import 'package:brewflow_pos/features/billing/data/drift_billing_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -12,6 +14,7 @@ import 'package:brewflow_pos/features/customers/presentation/customers_controlle
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
+import 'package:brewflow_pos/features/inventory/presentation/effective_stock.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
 import 'package:brewflow_pos/features/offers/domain/offers_models.dart';
@@ -21,7 +24,7 @@ import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart'
-    show requirePermission;
+    show requirePermission, userProfileProvider;
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -115,6 +118,9 @@ final class PosFilterController extends Notifier<PosFilter> {
 /// staff can see the full shelf; the POS card renders them as sold out and the
 /// cart guard (`InsufficientStockFailure`) plus the checkout `stock_quantity
 /// >= ?` SQL guard prevent any sale of a zero-stock line.
+///
+/// Shop scope and effective stock follow the active business, so the counter
+/// shows the Food Truck its own shelf and the Cafe its own unchanged.
 final posProductsProvider =
     AsyncNotifierProvider<PosProductsController, List<Product>>(
       PosProductsController.new,
@@ -128,20 +134,64 @@ final class PosProductsController extends AsyncNotifier<List<Product>> {
     final filter = ref.watch(posFilterProvider);
     final repository = ref.watch(inventoryRepositoryProvider);
     final frequentFirst = filter.categoryId == kFrequentlySoldCategoryId;
+    final categoryId = frequentFirst ? null : filter.categoryId;
+    final business = ref.watch(businessSwitcherProvider);
+    final switcher = ref.read(businessSwitcherProvider.notifier);
     try {
-      final shelf = await repository.products(
-        search: filter.query,
-        categoryId: frequentFirst ? null : filter.categoryId,
-        status: ProductStatusFilter.active,
-      );
+      final List<Product> shelf;
+      String? overlayShopId;
+      if (business == BusinessContext.foodTruck) {
+        // A truck with no persisted identity shows an empty counter rather than
+        // the Cafe's menu, and never mints a shop as a side effect of browsing.
+        final ftId = await switcher.existingFoodTruckShopId();
+        if (ftId == null) return const [];
+        shelf = await repository.productsForBusiness(
+          shopId: ftId,
+          catalogOwnerShopId: await switcher.shopIdFor(BusinessContext.cafe),
+          search: filter.query,
+          categoryId: categoryId,
+          status: ProductStatusFilter.active,
+        );
+        // The truck sells from its own shelf; a shared product with no overlay
+        // row arrives here as 0 and the card renders it sold out.
+        overlayShopId = ftId;
+      } else if (business == BusinessContext.all) {
+        // Only the multi-business view needs the shop list; Cafe is the
+        // default and is already scoped by the repository, so it keeps the
+        // unscoped call it has always made.
+        shelf = await repository.products(
+          search: filter.query,
+          categoryId: categoryId,
+          status: ProductStatusFilter.active,
+          shopIds: await switcher.shopIdsForRead(business),
+        );
+      } else {
+        shelf = await repository.products(
+          search: filter.query,
+          categoryId: categoryId,
+          status: ProductStatusFilter.active,
+        );
+      }
+      // Read the overlay only when there IS an overlay to read. Watching it
+      // unconditionally would build the overlay repository — and therefore the
+      // database behind it — for a plain Cafe read that never uses it.
+      final withEffectiveStock = overlayShopId == null
+          ? shelf
+          : await applyEffectiveStock(
+              products: shelf,
+              repository: ref.read(shopProductStockRepositoryProvider),
+              shopId: overlayShopId,
+            );
       // Plain categories and explicit searches keep the repository order.
-      if (!frequentFirst || filter.query.isNotEmpty) return shelf;
+      if (!frequentFirst || filter.query.isNotEmpty) return withEffectiveStock;
       // "Frequently Sold": rank real counter history first, then the rest of
       // the shelf (products never sold stay reachable below the ranking). A
       // ranking failure is best-effort — never block the counter on it.
       final frequentIds = await _frequentlySoldIds() ?? const <String>[];
-      if (frequentIds.isEmpty) return shelf;
-      final byId = {for (final product in shelf) product.id: product};
+      if (frequentIds.isEmpty) return withEffectiveStock;
+      final byId = {
+        for (final product in withEffectiveStock) product.id: product,
+      };
       final ranked = <Product>[];
       for (final id in frequentIds) {
         final product = byId.remove(id);
@@ -242,8 +292,19 @@ final class PosCustomersController extends AsyncNotifier<List<Customer>> {
 final class CartController extends Notifier<Cart> {
   static const String tag = 'Billing';
 
+  /// Rebuilds on a business switch, which empties the cart.
+  ///
+  /// The cart belongs to the shop whose shelf filled it. Moving the till to
+  /// another business must not carry those lines over: a Cafe cart completed
+  /// against the Food Truck would price and stock the wrong shop. Watching the
+  /// context here — rather than clearing from the POS page — means the rule
+  /// holds no matter which screen the switch was made on, since [cartProvider]
+  /// is app-global while [PosPage] is only mounted on the counter.
   @override
-  Cart build() => Cart.empty;
+  Cart build() {
+    ref.watch(businessSwitcherProvider);
+    return Cart.empty;
+  }
 
   /// Whether membership pricing may operate at all (global Settings switch).
   /// Read lazily — never watched — so a settings change can never reset an
@@ -282,6 +343,12 @@ final class CartController extends Notifier<Cart> {
     if (existing == null) {
       state = state.withAdded(line);
       _recalculateOffers();
+      AppTrace.event('cart.add', {
+        'productRef': AppTrace.userRef(line.productId),
+        'variant': variant?.id == null,
+        'lines': state.lines.length,
+        'totalPaise': state.totalPaise,
+      });
       return;
     }
     if (existing.quantity >= existing.maxQuantity) {
@@ -289,6 +356,13 @@ final class CartController extends Notifier<Cart> {
     }
     state = state.withLineQuantity(line.keyId, existing.quantity + 1);
     _recalculateOffers();
+    AppTrace.event('cart.add', {
+      'productRef': AppTrace.userRef(line.productId),
+      'variant': variant?.id == null,
+      'merged': true,
+      'quantity': existing.quantity + 1,
+      'totalPaise': state.totalPaise,
+    });
   }
 
   /// Recalculates applicable offers for all cart lines.
@@ -409,6 +483,11 @@ final class CartController extends Notifier<Cart> {
   void remove(String keyId) {
     state = state.without(keyId);
     _recalculateOffers();
+    AppTrace.event('cart.remove', {
+      'lineRef': AppTrace.userRef(keyId),
+      'lines': state.lines.length,
+      'totalPaise': state.totalPaise,
+    });
   }
 
   /// Restores a previously removed line (undo).
@@ -418,7 +497,12 @@ final class CartController extends Notifier<Cart> {
   }
 
   /// Empties the cart (and with it any selected customer).
-  void clear() => state = Cart.empty;
+  void clear() {
+    if (state.isEmpty) return;
+    final dropped = state.lines.length;
+    state = Cart.empty;
+    AppTrace.event('cart.clear', {'droppedLines': dropped});
+  }
 
   /// Replaces the entire cart with [bill]'s snapshot (a resumed held bill),
   /// including its selected customer and member-pricing switch. The UI
@@ -479,27 +563,152 @@ final class CartController extends Notifier<Cart> {
   /// [MissingCustomerForCreditSaleFailure] / [InvalidPaymentFailure] / any
   /// repository [BillingFailure]. Failures preserve the cart exactly as it
   /// was, including the selected customer.
+  ///
+  /// Shop scope: a STAFF session pins the sale to its own profile shop. The
+  /// repository fallback prefers any local OWNER row over the signed-in
+  /// staff, so on a device that also holds the owner's profile a staff sale
+  /// could otherwise resolve to the owner's shop — a shop the staff has no
+  /// membership for — and the server would reject it with FORBIDDEN ("Access
+  /// denied for this shop") even though the staff holds BILLING. OWNER and
+  /// unresolved sessions pass null, keeping the entity-derived scope exactly
+  /// as before.
   Future<CompletedSale> checkout(
     PaymentMethod? paymentMethod, {
     PaymentStatus paymentStatus = PaymentStatus.paid,
+    List<SalePayment>? payments,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    // The business context is the single most load-bearing input to a sale: it
+    // decides the receipt prefix and whether a shared product deducts the
+    // truck's overlay shelf or the Cafe's own stock row. Recording it on the
+    // attempt (not just the outcome) means a wrong-context sale is provable
+    // even when the sale succeeded.
+    final business = ref.read(businessSwitcherProvider);
+    AppTrace.event('checkout.begin', {
+      'business': business.name,
+      'lines': state.lines.length,
+      'totalPaise': state.chargedTotalPaise,
+      'paymentStatus': paymentStatus.name,
+      'method': paymentMethod?.name,
+      'splitLegs': payments?.length ?? 0,
+      'customerRef': AppTrace.userRef(state.selectedCustomerId),
+    });
+
     requirePermission(ref, Permission.billing);
     if (state.isEmpty) {
+      AppTrace.warn('checkout.reject', {
+        'stage': 'validation',
+        'reason': 'empty_cart',
+      });
       throw const EmptyCartFailure();
     }
     if (paymentStatus == PaymentStatus.notPaid &&
         state.selectedCustomerId == null) {
+      AppTrace.warn('checkout.reject', {
+        'stage': 'validation',
+        'reason': 'credit_sale_without_customer',
+      });
       throw const MissingCustomerForCreditSaleFailure();
     }
-    if (paymentStatus == PaymentStatus.paid && paymentMethod == null) {
+    if (paymentStatus == PaymentStatus.paid &&
+        paymentMethod == null &&
+        (payments == null || payments.isEmpty)) {
+      AppTrace.warn('checkout.reject', {
+        'stage': 'validation',
+        'reason': 'paid_without_payment',
+      });
       throw const InvalidPaymentFailure();
     }
     final total = state.chargedTotalPaise;
     if (total == null) {
+      AppTrace.warn('checkout.reject', {
+        'stage': 'validation',
+        'reason': 'total_over_ceiling',
+      });
       throw const UnexpectedBillingFailure(
         'Cart total exceeds the safe ceiling.',
       );
     }
+    if (payments != null && payments.isNotEmpty) {
+      final sum = payments.fold<int>(0, (acc, p) => acc + p.amountPaise);
+      if (sum != total) {
+        // Money.formatPaise already emits the ₹ symbol; the previous inline
+        // `₹${(total - sum) / 100}` printed a raw double like "₹78.0".
+        AppTrace.warn('checkout.reject', {
+          'stage': 'validation',
+          'reason': sum < total ? 'split_underpaid' : 'split_overpaid',
+          'totalPaise': total,
+          'splitPaise': sum,
+          'legs': payments.length,
+        });
+        throw UnexpectedBillingFailure(
+          sum < total
+              ? 'Split payments are ${Money.formatPaise(total - sum)} short.'
+              : 'Split payments exceed the total by '
+                    '${Money.formatPaise(sum - total)}.',
+        );
+      }
+      if (payments.any((p) => p.amountPaise <= 0)) {
+        // A zero-value leg is not a payment, and the table forbids it. Caught
+        // here so the cashier gets a reason instead of a constraint violation.
+        AppTrace.warn('checkout.reject', {
+          'stage': 'validation',
+          'reason': 'split_zero_leg',
+          'legs': payments.length,
+        });
+        throw const InvalidPaymentFailure();
+      }
+      if (payments.length < SplitPaymentDraft.minLegs) {
+        // One instrument is a normal payment; it does not belong in the split
+        // path. Rejecting here keeps a one-row split from being written even if
+        // a caller reaches the controller without going through the editor.
+        AppTrace.warn('checkout.reject', {
+          'stage': 'validation',
+          'reason': 'split_needs_two_legs',
+          'legs': payments.length,
+        });
+        throw const InvalidPaymentFailure();
+      }
+      if (payments.any(
+        (p) =>
+            p.paymentMethod != PaymentMethod.cash &&
+            p.paymentMethod != PaymentMethod.upi,
+      )) {
+        // CASH and UPI are the only split instruments. BANK stays legal on a
+        // single-method sale for history, but never as part of a split.
+        AppTrace.warn('checkout.reject', {
+          'stage': 'validation',
+          'reason': 'split_unsupported_method',
+          'methods': payments.map((p) => p.paymentMethod.name).join('+'),
+        });
+        throw const InvalidPaymentFailure();
+      }
+      AppTrace.event('checkout.split', {
+        'legs': payments.length,
+        'methods': payments.map((p) => p.paymentMethod.name).join('+'),
+        'totalPaise': sum,
+      });
+    }
+    final session = ref.read(userProfileProvider).value;
+    var sessionShopId = session?.role == UserRole.staff
+        ? session?.shopId
+        : null;
+    // A Food Truck sale is a sale OF the truck, so the selling business is
+    // resolved from the active context even for an OWNER (whose profile carries
+    // no shop). The repository uses it both to scope the sale AND to decide
+    // whether a shared product deducts the truck's overlay shelf or the Cafe's
+    // own stock row. Read-only and unresolved contexts fall through unchanged.
+    if (business == BusinessContext.foodTruck) {
+      final ftId = await ref
+          .read(businessSwitcherProvider.notifier)
+          .existingFoodTruckShopId();
+      if (ftId != null) sessionShopId = ftId;
+    }
+    AppTrace.event('checkout.scoped', {
+      'shopRef': AppTrace.userRef(sessionShopId),
+      'role': session?.role.name,
+      'source': sessionShopId == null ? 'entity_derived' : 'explicit',
+    });
     try {
       final completed = await ref
           .read(billingRepositoryProvider)
@@ -510,7 +719,19 @@ final class CartController extends Notifier<Cart> {
                 ? null
                 : paymentMethod,
             customerId: state.selectedCustomerId,
+            shopId: sessionShopId,
+            payments: payments,
           );
+      stopwatch.stop();
+      AppTrace.event('checkout.ok', {
+        'receipt': completed.sale.receiptNumber,
+        'saleRef': AppTrace.userRef(completed.sale.id),
+        'shopRef': AppTrace.userRef(sessionShopId),
+        'totalPaise': completed.sale.totalPaise,
+        'method': paymentMethod?.name,
+        'splitLegs': payments?.length ?? 0,
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       state = Cart.empty;
       ref.invalidate(posProductsProvider);
       ref.invalidate(frequentlySoldIdsProvider);
@@ -525,9 +746,26 @@ final class CartController extends Notifier<Cart> {
         ref.invalidate(customerLedgerProvider(customerId));
       }
       return completed;
-    } on BillingFailure {
+    } on BillingFailure catch (failure) {
+      // The cart is intentionally left intact so the cashier can retry; the
+      // trace is what makes the retry attributable to this attempt.
+      AppTrace.fail('checkout.fail', failure, null, {
+        'stage': 'repository',
+        'failure': failure.runtimeType.toString(),
+        'shopRef': AppTrace.userRef(sessionShopId),
+        'totalPaise': total,
+        'cartPreserved': state.isNotEmpty,
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       rethrow;
     } catch (error, stackTrace) {
+      AppTrace.fail('checkout.fail', error, stackTrace, {
+        'stage': 'repository',
+        'shopRef': AppTrace.userRef(sessionShopId),
+        'totalPaise': total,
+        'cartPreserved': state.isNotEmpty,
+        'ms': stopwatch.elapsedMilliseconds,
+      });
       AppLog.error(
         'Checkout failed',
         tag: tag,

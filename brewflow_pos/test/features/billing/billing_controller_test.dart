@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:brewflow_pos/core/authorization/authorization.dart';
+import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
+import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_repository.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
@@ -17,10 +19,12 @@ import 'package:brewflow_pos/features/inventory/presentation/stock_movement_cont
 import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
@@ -162,9 +166,13 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
-  Future<List<CustomerReceivable>> receivables({List<String>? shopIds}) {
+  Future<List<CustomerReceivable>> receivables({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) {
     calls += 1;
-    return inner.receivables(shopIds: shopIds);
+    return inner.receivables(shopIds: shopIds, fromUtc: fromUtc, toUtc: toUtc);
   }
 
   @override
@@ -984,6 +992,345 @@ void main() {
       final b = held().holdCurrentBill(paymentStatus: PaymentStatus.paid)!;
       expect(a.id, 'hold-1');
       expect(b.id, 'hold-2');
+    });
+  });
+
+  group('checkout shop scope (staff sessions)', () {
+    const ownerAuth = AuthUser(id: 'a-owner', email: 'owner@brewflow.example');
+    const truckAuth = AuthUser(id: 'a-truck', email: 'truck@brewflow.example');
+    const cafeAuth = AuthUser(id: 'a-cafe', email: 'cafe@brewflow.example');
+    const truckShop = 'shop-truck';
+    const cafeShop = 'shop-cafe';
+
+    late FakeInventoryRepository scopeInventory;
+    late FakeBillingRepository scopeBilling;
+    late FakeStaffRepository scopeStaff;
+
+    Product scopeProduct() {
+      final created = Product(
+        id: 'scope-p1',
+        categoryId: 'c1',
+        name: 'Scope Coffee',
+        sku: null,
+        sellingPricePaise: 5000,
+        costPricePaise: null,
+        stockQuantity: 5,
+        isActive: true,
+        createdAt: DateTime.now().toUtc(),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      scopeInventory.storedProducts.add(created);
+      return created;
+    }
+
+    ProviderContainer scopedContainer({AuthUser? session}) {
+      final c = ProviderContainer(
+        overrides: [
+          inventoryRepositoryProvider.overrideWithValue(scopeInventory),
+          customersRepositoryProvider.overrideWithValue(customers),
+          billingRepositoryProvider.overrideWithValue(scopeBilling),
+          stockMovementRepositoryProvider.overrideWithValue(movements),
+          ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+          customerLedgerRepositoryProvider.overrideWithValue(ledger),
+          settingsRepositoryProvider.overrideWithValue(
+            FakeSettingsRepository(),
+          ),
+          staffRepositoryProvider.overrideWithValue(scopeStaff),
+          offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+          authRepositoryProvider.overrideWithValue(
+            FakeAuthRepository(user: session),
+          ),
+        ],
+      );
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    setUp(() async {
+      scopeInventory = FakeInventoryRepository();
+      scopeBilling = FakeBillingRepository(scopeInventory);
+      scopeStaff = FakeStaffRepository();
+      await scopeStaff.claimOwnership(ownerAuth);
+      await scopeStaff.claimOwnershipForCloud(
+        truckAuth,
+        shopId: truckShop,
+        role: UserRole.staff,
+        permissions: {Permission.billing},
+      );
+      await scopeStaff.claimOwnershipForCloud(
+        cafeAuth,
+        shopId: cafeShop,
+        role: UserRole.staff,
+        permissions: {Permission.billing},
+      );
+    });
+
+    test(
+      'owner checkout forwards null scope (entity-derived, unchanged)',
+      () async {
+        final c = scopedContainer(session: ownerAuth);
+        await c.read(userProfileProvider.future);
+        c.read(cartProvider.notifier).add(scopeProduct());
+
+        await c.read(cartProvider.notifier).checkout(PaymentMethod.cash);
+
+        expect(scopeBilling.checkouts, 1);
+        expect(
+          scopeBilling.lastShopId,
+          isNull,
+          reason: 'owner sales keep deriving their shop from the cart lines',
+        );
+      },
+    );
+
+    test('Food Truck staff with BILLING pins the sale to Food Truck', () async {
+      final c = scopedContainer(session: truckAuth);
+      await c.read(userProfileProvider.future);
+      c.read(cartProvider.notifier).add(scopeProduct());
+
+      await c.read(cartProvider.notifier).checkout(PaymentMethod.cash);
+
+      expect(scopeBilling.checkouts, 1);
+      expect(scopeBilling.lastShopId, truckShop);
+    });
+
+    test('Cafe staff with BILLING pins the sale to Cafe', () async {
+      final c = scopedContainer(session: cafeAuth);
+      await c.read(userProfileProvider.future);
+      c.read(cartProvider.notifier).add(scopeProduct());
+
+      await c.read(cartProvider.notifier).checkout(PaymentMethod.cash);
+
+      expect(scopeBilling.checkouts, 1);
+      expect(scopeBilling.lastShopId, cafeShop);
+    });
+
+    test(
+      'staff without BILLING is denied before reaching the repository',
+      () async {
+        final c = scopedContainer(session: truckAuth);
+        // Revoke the grant: same staff identity, no BILLING.
+        final profile = scopeStaff.profilesByAuthId[truckAuth.id]!;
+        scopeStaff.profilesByAuthId[truckAuth.id] = UserProfile(
+          id: profile.id,
+          email: profile.email,
+          authUserId: profile.authUserId,
+          shopId: profile.shopId,
+          displayName: profile.displayName,
+          role: UserRole.staff,
+          isActive: true,
+          permissions: const {},
+        );
+        c.invalidate(userProfileProvider);
+        await c.read(userProfileProvider.future);
+        c.read(cartProvider.notifier).add(scopeProduct());
+
+        await expectLater(
+          c.read(cartProvider.notifier).checkout(PaymentMethod.cash),
+          throwsA(isA<PermissionDeniedFailure>()),
+        );
+        expect(
+          scopeBilling.checkouts,
+          0,
+          reason: 'a denied checkout must never reach the repository',
+        );
+      },
+    );
+
+    test('unresolved session keeps entity-derived scope', () async {
+      final c = scopedContainer();
+      c.read(cartProvider.notifier).add(scopeProduct());
+
+      await c.read(cartProvider.notifier).checkout(PaymentMethod.cash);
+
+      expect(scopeBilling.checkouts, 1);
+      expect(scopeBilling.lastShopId, isNull);
+    });
+
+    group('split payment', () {
+      Future<void> _seed(ProviderContainer c) async {
+        final product = Product(
+          id: 'split-p1',
+          categoryId: 'c1',
+          name: 'Widget',
+          sku: null,
+          sellingPricePaise: 27800,
+          costPricePaise: null,
+          stockQuantity: 99,
+          isActive: true,
+          createdAt: DateTime.now().toUtc(),
+          updatedAt: DateTime.now().toUtc(),
+        );
+        scopeInventory.storedProducts.add(product);
+        c.read(cartProvider.notifier).add(product);
+      }
+
+      test('split 200+78=278 is allowed', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        final sale = await c
+            .read(cartProvider.notifier)
+            .checkout(
+              null,
+              payments: const [
+                SalePayment(
+                  paymentMethod: PaymentMethod.cash,
+                  amountPaise: 20000,
+                ),
+                SalePayment(
+                  paymentMethod: PaymentMethod.upi,
+                  amountPaise: 7800,
+                ),
+              ],
+            );
+        expect(sale.sale.payments, hasLength(2));
+        expect(sale.sale.paymentMethod, isNull);
+      });
+
+      test('split below total is rejected', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        await expectLater(
+          c
+              .read(cartProvider.notifier)
+              .checkout(
+                null,
+                payments: const [
+                  SalePayment(
+                    paymentMethod: PaymentMethod.cash,
+                    amountPaise: 15000,
+                  ),
+                  SalePayment(
+                    paymentMethod: PaymentMethod.upi,
+                    amountPaise: 10000,
+                  ),
+                ],
+              ),
+          throwsA(isA<UnexpectedBillingFailure>()),
+        );
+      });
+
+      test('split above total is rejected', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        await expectLater(
+          c
+              .read(cartProvider.notifier)
+              .checkout(
+                null,
+                payments: const [
+                  SalePayment(
+                    paymentMethod: PaymentMethod.cash,
+                    amountPaise: 20000,
+                  ),
+                  SalePayment(
+                    paymentMethod: PaymentMethod.upi,
+                    amountPaise: 10000,
+                  ),
+                ],
+              ),
+          throwsA(isA<UnexpectedBillingFailure>()),
+        );
+      });
+
+      test('cash-only still works', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        final sale = await c
+            .read(cartProvider.notifier)
+            .checkout(PaymentMethod.cash);
+        expect(sale.sale.paymentMethod, PaymentMethod.cash);
+        expect(sale.sale.payments, isEmpty);
+      });
+
+      test('upi-only still works', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        final sale = await c
+            .read(cartProvider.notifier)
+            .checkout(PaymentMethod.upi);
+        expect(sale.sale.paymentMethod, PaymentMethod.upi);
+        expect(sale.sale.payments, isEmpty);
+      });
+
+      test('split works for Cafe', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        final sale = await c
+            .read(cartProvider.notifier)
+            .checkout(
+              null,
+              payments: const [
+                SalePayment(
+                  paymentMethod: PaymentMethod.cash,
+                  amountPaise: 20000,
+                ),
+                SalePayment(
+                  paymentMethod: PaymentMethod.upi,
+                  amountPaise: 7800,
+                ),
+              ],
+            );
+        expect(
+          sale.sale.payments.map((p) => p.paymentMethod),
+          containsAll([PaymentMethod.cash, PaymentMethod.upi]),
+        );
+      });
+
+      test('split works for Food Truck', () async {
+        final c = scopedContainer(session: truckAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        final sale = await c
+            .read(cartProvider.notifier)
+            .checkout(
+              null,
+              payments: const [
+                SalePayment(
+                  paymentMethod: PaymentMethod.cash,
+                  amountPaise: 20000,
+                ),
+                SalePayment(
+                  paymentMethod: PaymentMethod.upi,
+                  amountPaise: 7800,
+                ),
+              ],
+            );
+        expect(sale.sale.payments, hasLength(2));
+      });
+
+      test('no Bank payment is created by split', () async {
+        final c = scopedContainer(session: cafeAuth);
+        await c.read(userProfileProvider.future);
+        await _seed(c);
+        final sale = await c
+            .read(cartProvider.notifier)
+            .checkout(
+              null,
+              payments: const [
+                SalePayment(
+                  paymentMethod: PaymentMethod.cash,
+                  amountPaise: 20000,
+                ),
+                SalePayment(
+                  paymentMethod: PaymentMethod.upi,
+                  amountPaise: 7800,
+                ),
+              ],
+            );
+        expect(
+          sale.sale.payments.every(
+            (p) => p.paymentMethod != PaymentMethod.bank,
+          ),
+          isTrue,
+        );
+      });
     });
   });
 }

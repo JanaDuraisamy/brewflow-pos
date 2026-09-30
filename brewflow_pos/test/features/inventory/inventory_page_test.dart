@@ -59,6 +59,9 @@ void main() {
     isActive: isActive,
     createdAt: now,
     updatedAt: now,
+    // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so seeded
+    // products survive the business scope filter.
+    shopId: 'shop-1',
   );
 
   setUp(() {

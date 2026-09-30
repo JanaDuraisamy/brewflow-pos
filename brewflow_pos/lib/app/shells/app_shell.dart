@@ -312,23 +312,21 @@ final class _AppShellState extends ConsumerState<AppShell> {
               // to one assigned shop with no switcher and no Combined view.
               showSwitcher: !filterActive,
             ),
-            body: SafeArea(
-              top: false,
-              child: Column(
-                children: [
-                  const ConnectivityBanner(),
-                  Expanded(child: navigationShell),
-                  SafeArea(
-                    top: false,
-                    child: AppBottomNavigation(
-                      items: items,
-                      primaryIndices: primaryIndices,
-                      selectedIndex: selected.clamp(0, items.length - 1),
-                      onDestinationSelected: goTo,
-                    ),
-                  ),
-                ],
-              ),
+            body: Column(
+              children: [
+                const ConnectivityBanner(),
+                Expanded(child: navigationShell),
+              ],
+            ),
+            // Deliberately NOT wrapped in SafeArea. This slot receives the
+            // untouched bottom inset from the Scaffold, and NavigationBar's own
+            // SafeArea applies it exactly once. A second wrapper here would
+            // double-pad the bar on every edge-to-edge device.
+            bottomNavigationBar: AppBottomNavigation(
+              items: items,
+              primaryIndices: primaryIndices,
+              selectedIndex: selected.clamp(0, items.length - 1),
+              onDestinationSelected: goTo,
             ),
           );
         }
@@ -523,6 +521,15 @@ final class _SidebarLogout extends ConsumerWidget {
 /// Lightweight phone header — compact brand wordmark, a subtle sync dot and a
 /// single sign-out action. The sync readout is intentionally faint here; the
 /// full sync card lives on the Dashboard where there is room to explain state.
+///
+/// Every vertical dimension here is a fixed constant rather than a result of
+/// the title's intrinsic content. [AppBar] sizes itself from its toolbar child
+/// (`height = topInset + max(0, toolbarHeight - childHeight) + childHeight`), so
+/// a title whose height came from font metrics or a [DropdownButton]'s intrinsic
+/// size made the whole header drift with the device's font and layout. Pinning
+/// both the toolbar and the title stack keeps the header identical on Android
+/// 14, 15 and 16, and keeps it in step with [preferredSize] so the Scaffold
+/// never reserves more room than the bar actually paints.
 final class _MobileAppBar extends ConsumerWidget
     implements PreferredSizeWidget {
   const _MobileAppBar({
@@ -537,8 +544,22 @@ final class _MobileAppBar extends ConsumerWidget
   /// Owner-only: renders the business switcher below the shop name.
   final bool showSwitcher;
 
+  /// Owner header: app name + shop name + business switcher.
+  static const double ownerToolbarHeight = 112;
+
+  /// Deterministic height of the owner title stack. The content it holds is
+  /// 18 (app name) + 1 + 16 (shop name) + 4 + [BusinessSwitcher]'s 40dp control
+  /// = 79, so this leaves a few dp of slack inside [ownerToolbarHeight] rather
+  /// than sizing itself to whichever font the device resolves.
+  static const double ownerTitleHeight = 84;
+
+  /// Staff header: the same stack without the switcher (18 + 1 + 16 = 35).
+  static const double compactToolbarHeight = 64;
+  static const double compactTitleHeight = 40;
+
   @override
-  Size get preferredSize => Size.fromHeight(showSwitcher ? 112 : 64);
+  Size get preferredSize =>
+      Size.fromHeight(showSwitcher ? ownerToolbarHeight : compactToolbarHeight);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -547,58 +568,67 @@ final class _MobileAppBar extends ConsumerWidget
     final displayName = appDisplayName?.trim().isNotEmpty ?? false
         ? appDisplayName!.trim()
         : AppConstants.defaultAppDisplayName;
+    final toolbarHeight = showSwitcher
+        ? ownerToolbarHeight
+        : compactToolbarHeight;
+    final titleHeight = showSwitcher ? ownerTitleHeight : compactTitleHeight;
     return AppBar(
       automaticallyImplyLeading: false,
       elevation: 0,
       scrolledUnderElevation: 0,
-      // Match [preferredSize] so the business switcher below the shop name
-      // always has the vertical room it needs on phone widths (no clipping).
-      toolbarHeight: showSwitcher ? 112 : kToolbarHeight,
+      // Paired with [preferredSize] so the reserved height and the painted
+      // height are the same number, and the title stack below always has room.
+      toolbarHeight: toolbarHeight,
       backgroundColor: appColors.background,
       surfaceTintColor: Colors.transparent,
       titleSpacing: AppSpacing.lg,
-      title: Row(
-        children: [
-          const BrandMark(size: BrandMark.compactSize),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: appColors.charcoal,
-                    height: 1.1,
-                  ),
-                ),
-                if (shopName != null && shopName!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 1),
+      // The fixed height is the whole point: the Column fills it instead of
+      // hugging its children, so nothing in the stack can push the header
+      // taller on a device with different font metrics.
+      title: SizedBox(
+        height: titleHeight,
+        child: Row(
+          children: [
+            const BrandMark(size: BrandMark.compactSize),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    shopName!.trim(),
+                    displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: textTheme.labelSmall?.copyWith(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: appColors.charcoal,
+                      height: 1.1,
                     ),
                   ),
+                  if (shopName != null && shopName!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      shopName!.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.labelSmall?.copyWith(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (showSwitcher) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: BusinessSwitcher(compact: true, dropdown: true),
+                    ),
+                  ],
                 ],
-                if (showSwitcher) ...[
-                  const SizedBox(height: AppSpacing.xs),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: BusinessSwitcher(compact: true, dropdown: true),
-                  ),
-                ],
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         const Center(child: SyncStatusDot()),

@@ -546,4 +546,125 @@ void main() {
       expect(results.first.offerType, OfferType.quantityTier);
     });
   });
+
+  group('multi-product quantity tier', () {
+    test('single product still works (compatibility)', () {
+      final offer = _offer(
+        id: 'qt-single',
+        name: 'Single Kulfi',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['kulfi-1'],
+          tiers: [QuantityTier(quantity: 1, pricePaise: 8000)],
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'kulfi-1', quantity: 1, unitPricePaise: 10000),
+        activeOffers: [offer],
+      );
+      expect(results, hasLength(1));
+      expect(results.single.discountPaise, 2000);
+    });
+
+    test('multiple products share the same tiers', () {
+      final offer = _offer(
+        id: 'qt-multi',
+        name: 'Kulfi Quantity Offer',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['strawberry', 'blueberry', 'bombay', 'brownie'],
+          tiers: [
+            QuantityTier(quantity: 1, pricePaise: 8000),
+            QuantityTier(quantity: 2, pricePaise: 14000),
+            QuantityTier(quantity: 3, pricePaise: 19500),
+          ],
+        ).toJson(),
+      );
+      for (final id in ['strawberry', 'blueberry', 'bombay', 'brownie']) {
+        final results = calculateLineOffers(
+          line: _line(productId: id, quantity: 2, unitPricePaise: 10000),
+          activeOffers: [offer],
+        );
+        expect(results, hasLength(1), reason: '$id should match');
+        expect(results.single.discountPaise, 6000, reason: '$id');
+      }
+    });
+
+    test('product not in the list does not match', () {
+      final offer = _offer(
+        id: 'qt-excl',
+        name: 'Excluded',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['strawberry'],
+          tiers: [QuantityTier(quantity: 1, pricePaise: 8000)],
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'other', quantity: 1, unitPricePaise: 10000),
+        activeOffers: [offer],
+      );
+      expect(results, isEmpty);
+    });
+
+    test('popsicles qty 1 = 80, qty 2 = 140, qty 3 = 195', () {
+      final offer = _offer(
+        id: 'popsicle',
+        name: 'Popsicle Offer',
+        type: OfferType.quantityTier,
+        config: const QuantityTierOfferConfig(
+          productIds: ['popsicle-1'],
+          tiers: [
+            QuantityTier(quantity: 1, pricePaise: 8000),
+            QuantityTier(quantity: 2, pricePaise: 14000),
+            QuantityTier(quantity: 3, pricePaise: 19500),
+          ],
+        ).toJson(),
+      );
+      final r1 = calculateLineOffers(
+        line: _line(
+          productId: 'popsicle-1',
+          quantity: 1,
+          unitPricePaise: 10000,
+        ),
+        activeOffers: [offer],
+      );
+      expect(r1.single.discountPaise, 2000);
+      final r2 = calculateLineOffers(
+        line: _line(
+          productId: 'popsicle-1',
+          quantity: 2,
+          unitPricePaise: 10000,
+        ),
+        activeOffers: [offer],
+      );
+      expect(r2.single.discountPaise, 6000);
+      final r3 = calculateLineOffers(
+        line: _line(
+          productId: 'popsicle-1',
+          quantity: 3,
+          unitPricePaise: 10000,
+        ),
+        activeOffers: [offer],
+      );
+      expect(r3.single.discountPaise, 10500);
+    });
+
+    test('non-quantity-tier offers are unaffected', () {
+      final pct = _offer(
+        id: 'pct',
+        name: '10%',
+        type: OfferType.percentage,
+        config: const PercentageOfferConfig(
+          percent: 10,
+          productIds: ['p1'],
+        ).toJson(),
+      );
+      final results = calculateLineOffers(
+        line: _line(productId: 'p1', quantity: 5, unitPricePaise: 10000),
+        activeOffers: [pct],
+      );
+      expect(results.single.discountPaise, 5000);
+    });
+  });
 }

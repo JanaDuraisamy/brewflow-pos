@@ -143,8 +143,11 @@ void main() {
     expect(inSummary('Cash in box'), findsNothing);
     expect(inSummary('Cash taken out'), findsNothing);
 
-    // Read-only preview: the form below keeps exactly its own fields.
-    expect(find.byType(TextField), findsNWidgets(9));
+    // Read-only preview: the form below keeps exactly its own fields — six
+    // amounts plus Tallied by and Note. "Taken out by" is a fixed-owner
+    // dropdown, not a text field.
+    expect(find.byType(TextField), findsNWidgets(8));
+    expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
   });
 
   testWidgets('a saved closing switches the card to the stored values', (
@@ -178,6 +181,7 @@ void main() {
     expect(inSummary('Cash taken out'), findsOneWidget);
 
     // Still read-only: nothing but the form's own fields on screen.
-    expect(find.byType(TextField), findsNWidgets(9));
+    expect(find.byType(TextField), findsNWidgets(8));
+    expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
   });
 }

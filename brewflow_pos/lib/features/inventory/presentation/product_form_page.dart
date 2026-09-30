@@ -170,6 +170,7 @@ final class ProductFormPageState extends ConsumerState<ProductFormPage> {
       widget.product?.lowStockMode ?? LowStockMode.useDefault;
   late bool _membershipEnabled = widget.product?.membershipEnabled ?? false;
   late bool _isActive = widget.product?.isActive ?? true;
+  late bool _visibleInShops = widget.product?.visibleInShops ?? false;
   final List<_VariantEditor> _variants = [];
   String? _skuError;
   bool _saving = false;
@@ -380,6 +381,7 @@ final class ProductFormPageState extends ConsumerState<ProductFormPage> {
           membershipEnabled: _membershipEnabled,
           memberPricePaise: memberPricePaise,
           isActive: _isActive,
+          visibleInShops: _visibleInShops,
           variants: variants,
         );
       } else {
@@ -397,6 +399,7 @@ final class ProductFormPageState extends ConsumerState<ProductFormPage> {
           membershipEnabled: _membershipEnabled,
           memberPricePaise: memberPricePaise,
           isActive: _isActive,
+          visibleInShops: _visibleInShops,
           variants: variants,
         );
       }
@@ -598,6 +601,17 @@ final class ProductFormPageState extends ConsumerState<ProductFormPage> {
                     ),
                     value: _isActive,
                     onChanged: (value) => setState(() => _isActive = value),
+                  ),
+                  SwitchListTile(
+                    contentPadding: AppInsets.zero,
+                    title: const Text('Visible in Food Truck'),
+                    subtitle: const Text(
+                      'When off, the product is hidden from Food Truck Billing but '
+                      'remains owned by the Cafe.',
+                    ),
+                    value: _visibleInShops,
+                    onChanged: (value) =>
+                        setState(() => _visibleInShops = value),
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   _StockUnitSection(

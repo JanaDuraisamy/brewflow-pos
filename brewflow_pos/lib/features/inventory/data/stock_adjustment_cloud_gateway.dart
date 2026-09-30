@@ -52,6 +52,7 @@ final class SupabaseStockAdjustmentGateway
           'p_note': note,
         },
       ),
+      name: 'adjust_stock_atomic',
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);

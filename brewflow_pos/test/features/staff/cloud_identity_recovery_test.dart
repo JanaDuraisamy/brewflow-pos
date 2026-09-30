@@ -3,6 +3,9 @@ import 'dart:convert';
 
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/database/app_database.dart';
+import 'package:brewflow_pos/core/storage/app_storage.dart';
+import 'package:brewflow_pos/core/storage/secure_storage.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/core/identity/device_identity.dart'
     show DeviceIdentity, deviceIdProvider;
 import 'package:brewflow_pos/core/services/connectivity_service.dart'
@@ -24,6 +27,7 @@ import 'package:internet_connection_checker_plus/internet_connection_checker_plu
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_cloud_shop_resolver.dart';
 import '../../helpers/fake_connectivity_service.dart';
+import '../../helpers/fake_preferences_storage.dart';
 
 /// ---------------------------------------------------------------------------
 /// Phase 7.3 — Hardware Identity Recovery regression tests.
@@ -562,6 +566,63 @@ void main() {
     );
 
     test(
+      'Food Truck secondary identity is pushed without moving primary',
+      () async {
+        await seedUser(
+          authUserId: kAuthUserId,
+          email: kEmail,
+          shopId: kCloudAuthoritative,
+        );
+        final prefs = FakePreferencesStorage();
+        await AppStorage.init(secure: _TestSecure(), preferences: prefs);
+        addTearDown(prefs.clearAppData);
+        const foodTruckShop = 'f3a2c1b4-9d8e-4f6a-8b5c-1d2e3f4a5b6c';
+        await prefs.writeString(
+          BusinessSwitcherController.foodTruckShopIdKey,
+          foodTruckShop,
+        );
+        final resolver = FakeCloudShopResolver(
+          profile: CloudUserProfile(
+            shopId: kCloudAuthoritative,
+            shopName: 'My Shop',
+            email: kEmail,
+            role: 'OWNER',
+            isActive: true,
+          ),
+        );
+        final auth = FakeAuthRepository(
+          user: const AuthUser(id: kAuthUserId, email: kEmail),
+        );
+        final container = containerWith(
+          auth: auth,
+          deviceId: 'dev-food-truck',
+          resolver: resolver,
+        );
+        addTearDown(container.dispose);
+
+        await container.read(userProfileProvider.future);
+        container.listen(syncSessionProvider, (_, _) {});
+        await pumpEventQueue();
+
+        expect(
+          resolver.pushedShopIds,
+          containsAll([kCloudAuthoritative, foodTruckShop]),
+          reason: 'both the primary and second business need OWNER membership',
+        );
+        expect(
+          resolver.pushedAuthUserIds.every((id) => id == kAuthUserId),
+          isTrue,
+        );
+        final rows = await db.select(db.users).get();
+        expect(
+          rows.single.shopId,
+          kCloudAuthoritative,
+          reason: 'the secondary push must not re-point the primary shop',
+        );
+      },
+    );
+
+    test(
       'connectivity restore after failed bootstrap retries the push',
       () async {
         await seedUser(
@@ -621,4 +682,40 @@ void main() {
       },
     );
   });
+}
+
+final class _TestSecure implements SecureStorage {
+  final Map<String, String> _values = {};
+
+  @override
+  Future<String?> read(String key) async => _values[key];
+
+  @override
+  Future<void> write(String key, String value) async {
+    _values[key] = value;
+  }
+
+  @override
+  Future<bool> readBool(String key, {bool defaultValue = false}) async =>
+      defaultValue;
+
+  @override
+  Future<void> writeBool(String key, bool value) async {}
+
+  @override
+  Future<int> readInt(String key, {int defaultValue = 0}) async => defaultValue;
+
+  @override
+  Future<void> writeInt(String key, int value) async {}
+
+  @override
+  Future<bool> contains(String key) async => _values.containsKey(key);
+
+  @override
+  Future<void> delete(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<void> clear() async => _values.clear();
 }

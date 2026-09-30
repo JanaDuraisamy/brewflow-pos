@@ -22,8 +22,14 @@ final class FakeInventoryRepository implements InventoryRepository {
   /// Number of [categories] calls.
   int categoriesCalls = 0;
 
+  /// Number of [categoriesForBusiness] calls.
+  int categoriesForBusinessCalls = 0;
+
   /// Number of [products] calls.
   int productsCalls = 0;
+
+  /// Number of [productsForBusiness] calls.
+  int productsForBusinessCalls = 0;
 
   Future<void> _gate() async {
     final gate = loadGate;
@@ -49,6 +55,37 @@ final class FakeInventoryRepository implements InventoryRepository {
   }
 
   @override
+  Future<List<Category>> categoriesForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+  }) async {
+    categoriesForBusinessCalls += 1;
+    await _gate();
+    _throwIfLoadError();
+    // Mirrors DriftInventoryRepository.categoriesForBusiness: the business's own
+    // categories always, plus a catalog-owner category only when a product
+    // shared into this business sits in it. A hidden product's category must
+    // not become a visible filter.
+    final reachable = storedProducts
+        .where(
+          (p) =>
+              p.shopId == catalogOwnerShopId &&
+              p.visibleInShops &&
+              p.categoryId != null,
+        )
+        .map((p) => p.categoryId)
+        .toSet();
+    return storedCategories
+        .where(
+          (c) =>
+              c.shopId == shopId ||
+              (c.shopId == catalogOwnerShopId && reachable.contains(c.id)),
+        )
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
+  @override
   Future<List<Product>> products({
     String? search,
     String? categoryId,
@@ -58,31 +95,70 @@ final class FakeInventoryRepository implements InventoryRepository {
     productsCalls += 1;
     await _gate();
     _throwIfLoadError();
-    var result = List<Product>.of(storedProducts);
-    final query = search?.trim() ?? '';
-    if (query.isNotEmpty) {
-      final lower = query.toLowerCase();
-      result = result
-          .where(
-            (product) =>
-                product.name.toLowerCase().contains(lower) ||
-                (product.sku?.toLowerCase().contains(lower) ?? false),
-          )
-          .toList();
-    }
-    if (categoryId != null) {
-      result = result
-          .where((product) => product.categoryId == categoryId)
-          .toList();
-    }
-    result = switch (status) {
-      ProductStatusFilter.all => result,
-      ProductStatusFilter.active =>
-        result.where((product) => product.isActive).toList(),
-      ProductStatusFilter.inactive =>
-        result.where((product) => !product.isActive).toList(),
-    };
-    result.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    // A non-null [shopIds] is a hard scope; an empty list must yield nothing
+    // (mirrors DriftInventoryRepository) so isolation tests cannot pass by
+    // accident.
+    final scoped = shopIds == null
+        ? List<Product>.of(storedProducts)
+        : storedProducts
+              .where((product) => shopIds.contains(product.shopId))
+              .toList();
+    return _finish(scoped, search, status, categoryId);
+  }
+
+  @override
+  Future<List<Product>> productsForBusiness({
+    required String shopId,
+    required String catalogOwnerShopId,
+    String? search,
+    String? categoryId,
+    ProductStatusFilter status = ProductStatusFilter.all,
+  }) async {
+    productsForBusinessCalls += 1;
+    await _gate();
+    _throwIfLoadError();
+    // Mirrors ProductsDao.queryForBusiness: the active shop's own products plus
+    // the catalog owner's products it has explicitly shared. When both ids are
+    // the same the second clause is a no-op, so Cafe behaviour is unchanged.
+    final isCafe = shopId == catalogOwnerShopId;
+    final visible = storedProducts.where((product) {
+      if (product.shopId == shopId) return true;
+      if (isCafe) return false;
+      return product.shopId == catalogOwnerShopId && product.visibleInShops;
+    }).toList();
+    // The category predicate runs on the already-scoped set, so a category
+    // can never be used to reach a product the business may not see.
+    return _finish(visible, search, status, categoryId);
+  }
+
+  /// Applies the search / category / status predicates the way the Drift DAO
+  /// does — in SQL, before ordering — then sorts by name.
+  static List<Product> _finish(
+    Iterable<Product> source,
+    String? search,
+    ProductStatusFilter status,
+    String? categoryId,
+  ) {
+    final lower = search?.trim().toLowerCase() ?? '';
+    final result =
+        source.where((product) {
+          if (categoryId != null && product.categoryId != categoryId) {
+            return false;
+          }
+          if (lower.isNotEmpty) {
+            final matchesName = product.name.toLowerCase().contains(lower);
+            final matchesSku =
+                product.sku?.toLowerCase().contains(lower) ?? false;
+            if (!matchesName && !matchesSku) return false;
+          }
+          return switch (status) {
+            ProductStatusFilter.all => true,
+            ProductStatusFilter.active => product.isActive,
+            ProductStatusFilter.inactive => !product.isActive,
+          };
+        }).toList()..sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
     return result;
   }
 
@@ -115,14 +191,20 @@ final class FakeInventoryRepository implements InventoryRepository {
       isActive: true,
       createdAt: now,
       updatedAt: now,
+      shopId: shopId,
     );
     storedCategories.add(category);
     return category;
   }
 
   @override
-  Future<void> updateCategoryName(String id, String name) async {
+  Future<void> updateCategoryName(
+    String id,
+    String name, {
+    List<String>? shopIds,
+  }) async {
     _throwIfLoadError();
+    _requireCategoryOwnedBy(id, shopIds);
     final normalized = name.trim();
     if (normalized.isEmpty) {
       throw const UnexpectedInventoryFailure('Category name is required.');
@@ -142,8 +224,13 @@ final class FakeInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<void> setCategoryActive(String id, bool isActive) async {
+  Future<void> setCategoryActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  }) async {
     _throwIfLoadError();
+    _requireCategoryOwnedBy(id, shopIds);
     _replaceCategory(
       _requireCategory(
         id,
@@ -152,12 +239,35 @@ final class FakeInventoryRepository implements InventoryRepository {
   }
 
   @override
-  Future<void> deleteCategory(String id) async {
+  Future<void> deleteCategory(String id, {List<String>? shopIds}) async {
     _throwIfLoadError();
+    _requireCategoryOwnedBy(id, shopIds);
     if (storedProducts.any((product) => product.categoryId == id)) {
       throw const CategoryInUseFailure();
     }
     storedCategories.removeWhere((category) => category.id == id);
+  }
+
+  /// Mirrors `CategoriesDao.isOwnedBy`: null scope is unscoped, an empty
+  /// allow-set claims nothing, and a legacy null-owner row stays claimable.
+  void _requireCategoryOwnedBy(String id, List<String>? shopIds) {
+    if (shopIds == null) return;
+    final category = _requireCategory(id);
+    if (shopIds.isEmpty ||
+        (category.shopId != null && !shopIds.contains(category.shopId))) {
+      throw const ForeignShopRowFailure();
+    }
+  }
+
+  /// Mirrors `ProductsDao.isOwnedBy`. A null-owner product predates multi-shop
+  /// and stays claimable so an upgrade does not orphan existing data.
+  void _requireProductOwnedBy(String id, List<String>? shopIds) {
+    if (shopIds == null) return;
+    final product = _requireProduct(id);
+    if (shopIds.isEmpty ||
+        (product.shopId != null && !shopIds.contains(product.shopId))) {
+      throw const ForeignShopRowFailure();
+    }
   }
 
   @override
@@ -177,6 +287,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    bool visibleInShops = false,
   }) async {
     _throwIfLoadError();
     _validatePrices(sellingPricePaise, costPricePaise);
@@ -245,6 +356,8 @@ final class FakeInventoryRepository implements InventoryRepository {
       isActive: isActive,
       createdAt: now,
       updatedAt: now,
+      shopId: shopId,
+      visibleInShops: visibleInShops,
       variants: createdVariants,
     );
     storedProducts.add(product);
@@ -269,8 +382,11 @@ final class FakeInventoryRepository implements InventoryRepository {
     required bool isActive,
     List<ProductVariantInput> variants = const [],
     String? shopId,
+    List<String>? shopIds,
+    bool visibleInShops = false,
   }) async {
     _throwIfLoadError();
+    _requireProductOwnedBy(id, shopIds);
     _validatePrices(sellingPricePaise, costPricePaise);
     _validateStock(stockQuantity);
     final normalizedName = name.trim();
@@ -357,17 +473,23 @@ final class FakeInventoryRepository implements InventoryRepository {
         isActive: isActive,
         updatedAt: DateTime.now().toUtc(),
         variants: updatedVariants,
+        visibleInShops: visibleInShops,
       ),
     );
   }
 
   @override
-  Future<void> setProductActive(String id, bool isActive) async {
+  Future<void> setProductActive(
+    String id,
+    bool isActive, {
+    List<String>? shopIds,
+  }) async {
     _throwIfLoadError();
     final existing = storedProducts.firstWhere(
       (product) => product.id == id,
       orElse: () => throw const UnexpectedInventoryFailure(),
     );
+    _requireOwnedBy(existing, shopIds);
     _replaceProduct(
       existing.copyWith(isActive: isActive, updatedAt: DateTime.now().toUtc()),
     );
@@ -379,12 +501,16 @@ final class FakeInventoryRepository implements InventoryRepository {
   final Set<String> productsWithHistory = {};
 
   @override
-  Future<ProductDeleteResult> deleteProduct(String id) async {
+  Future<ProductDeleteResult> deleteProduct(
+    String id, {
+    List<String>? shopIds,
+  }) async {
     _throwIfLoadError();
     final existing = storedProducts.firstWhere(
       (product) => product.id == id,
       orElse: () => throw const UnexpectedInventoryFailure(),
     );
+    _requireOwnedBy(existing, shopIds);
     if (productsWithHistory.contains(id)) {
       _replaceProduct(
         existing.copyWith(isActive: false, updatedAt: DateTime.now().toUtc()),
@@ -395,8 +521,25 @@ final class FakeInventoryRepository implements InventoryRepository {
     return ProductDeleteResult.deleted;
   }
 
+  /// Mirrors `ProductsDao.isOwnedBy`: null scope is unrestricted, an empty
+  /// allow-set matches nothing, and a legacy row without an owner stays
+  /// claimable so existing fixtures do not need rewriting.
+  void _requireOwnedBy(Product product, List<String>? shopIds) {
+    if (shopIds == null) return;
+    if (shopIds.isEmpty) throw const ForeignShopRowFailure();
+    final owner = product.shopId;
+    if (owner != null && !shopIds.contains(owner)) {
+      throw const ForeignShopRowFailure();
+    }
+  }
+
   Category _requireCategory(String id) => storedCategories.firstWhere(
     (category) => category.id == id,
+    orElse: () => throw const UnexpectedInventoryFailure(),
+  );
+
+  Product _requireProduct(String id) => storedProducts.firstWhere(
+    (product) => product.id == id,
     orElse: () => throw const UnexpectedInventoryFailure(),
   );
 

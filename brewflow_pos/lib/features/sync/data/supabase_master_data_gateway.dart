@@ -150,6 +150,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'member_price_paise': row.memberPricePaise,
     'is_active': row.isActive,
     'client_created_at': row.createdAt.toIso8601String(),
+    'visible_in_shops': row.visibleInShops,
     // image_path intentionally never pushed: device-local asset paths are
     // meaningless on other devices (see master_data_models.dart).
     // cloud_image_path IS pushed: it is metadata (a storage object key), and
@@ -174,6 +175,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     isActive: json['is_active'] as bool,
     createdAt: _utc(json['client_created_at']),
     cloudImagePath: json['cloud_image_path'] as String?,
+    visibleInShops: json['visible_in_shops'] as bool,
   );
 
   // ---- Product variants -----------------------------------------------------

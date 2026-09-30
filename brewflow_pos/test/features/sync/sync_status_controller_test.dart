@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_connectivity_service.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — SyncStatusController Focused Tests
@@ -27,6 +28,7 @@ void main() {
     db = AppDatabase(NativeDatabase.memory());
     container = ProviderContainer(
       overrides: [
+        ...businessScopeOverrides(),
         connectivityServiceProvider.overrideWithValue(
           fakeConnectivityService(),
         ),
@@ -73,6 +75,7 @@ void main() {
     // Re-create container — should start fresh.
     container = ProviderContainer(
       overrides: [
+        ...businessScopeOverrides(),
         connectivityServiceProvider.overrideWithValue(
           fakeConnectivityService(),
         ),

@@ -816,9 +816,13 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
-  Future<List<CustomerReceivable>> receivables({List<String>? shopIds}) async {
+  Future<List<CustomerReceivable>> receivables({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) async {
     try {
-      return await _dao.receivables(shopIds);
+      return await _dao.receivables(shopIds, fromUtc: fromUtc, toUtc: toUtc);
     } on CustomerLedgerFailure {
       rethrow;
     } on Exception catch (error, stackTrace) {
@@ -915,11 +919,32 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
     return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
   }
 
+  /// Reads the receipt LABEL for [shopId]; see the billing repository's copy
+  /// for the rationale. This ledger shares the `sale_sequences` counter with
+  /// billing, so it MUST agree on the prefix too — an opening-balance entry
+  /// minted as `BF-000004` inside a Food Truck would collide with the Cafe
+  /// namespace the counter is healing over.
+  Future<String> _receiptPrefixFor(String shopId) async {
+    final row = await _database
+        .customSelect(
+          'SELECT receipt_prefix FROM shops WHERE id = ?',
+          variables: [Variable.withString(shopId)],
+        )
+        .getSingleOrNull();
+    final prefix = row?.data['receipt_prefix'] as String?;
+    if (prefix == null || prefix.trim().isEmpty) {
+      return AppConstants.defaultShopReceiptPrefix;
+    }
+    return prefix;
+  }
+
   /// Allocates a gapless, per-shop receipt reference for an opening-balance
   /// entry through the shared `sale_sequences` counter — the exact SQL the
   /// billing repository uses, so references never collide with counter
-  /// receipts and the sequence heals over every existing `BF-` number.
+  /// receipts and the sequence heals over every existing number for THIS
+  /// shop's prefix.
   Future<String> _nextReceiptNumber(String shopId) async {
+    final prefix = await _receiptPrefixFor(shopId);
     await _database.customStatement(
       'INSERT OR IGNORE INTO sale_sequences (id, shop_id, next_value) VALUES (?, ?, 0)',
       [_receiptSequenceId, shopId],
@@ -941,8 +966,8 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
           variables: [
             Variable.withString(_receiptSequenceId),
             Variable.withString(shopId),
-            Variable.withInt(AppConstants.receiptPrefix.length + 1),
-            Variable.withString('${AppConstants.receiptPrefix}%'),
+            Variable.withInt(prefix.length + 1),
+            Variable.withString('$prefix%'),
             Variable.withString(shopId),
             Variable.withString(_receiptSequenceId),
             Variable.withString(shopId),
@@ -950,7 +975,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
         )
         .getSingle();
     final nextValue = row.read<int>('next_value');
-    return '${AppConstants.receiptPrefix}${nextValue.toString().padLeft(6, '0')}';
+    return '$prefix${nextValue.toString().padLeft(6, '0')}';
   }
 
   Never _unexpected(String message, Object error, StackTrace stackTrace) {

@@ -53,6 +53,7 @@ abstract final class AppRoutes {
   static const String productNew = '/inventory/products/new';
   static const String productEdit = '/inventory/products/edit';
   static const String productStockHistory = '/inventory/products/history';
+  static const String foodTruckStock = '/inventory/food-truck-stock';
 
   // Orders module sub-routes (pushed on top of the orders branch)
   static const String orderDetail = '/orders/detail';

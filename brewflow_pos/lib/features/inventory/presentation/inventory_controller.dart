@@ -336,21 +336,17 @@ final class ProductsController extends AsyncNotifier<List<Product>> {
         // Cafe's. Applied before the stock filters so low/out-of-stock are
         // judged on the same figures the user will be billed against.
         overlayShopId = ftId;
-      } else if (business == BusinessContext.all) {
-        // Only the multi-business view needs the shop list; Cafe is the default
-        // and is already scoped by the repository, so it keeps the unscoped
-        // call it has always made.
+      } else {
+        // Cafe and the combined view share one scoped call. It must be scoped:
+        // `products()` treats a null `shopIds` as "no filter at all", so the
+        // unscoped call this branch used to make returned every shop's
+        // catalogue — a Food Truck staff member forced into the Cafe context saw
+        // Cafe products, and an owner on the Cafe saw Food Truck products too.
         items = await repository.products(
           search: filter.query,
           status: filter.status,
           categoryId: filter.categoryId,
           shopIds: await switcher.shopIdsForRead(business),
-        );
-      } else {
-        items = await repository.products(
-          search: filter.query,
-          status: filter.status,
-          categoryId: filter.categoryId,
         );
       }
       // Read the overlay only when there IS an overlay to read. Watching it

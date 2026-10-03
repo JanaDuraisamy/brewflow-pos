@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
+import '../../staff/presentation/business_switcher.dart';
 import '../../staff/presentation/staff_controller.dart';
 
 /// ---------------------------------------------------------------------------
@@ -106,10 +107,17 @@ final class CustomersController extends AsyncNotifier<List<Customer>> {
   Future<List<Customer>> build() async {
     final filter = ref.watch(customersFilterProvider);
     final repository = ref.watch(customersRepositoryProvider);
+    final business = ref.watch(businessSwitcherProvider);
+    final switcher = ref.read(businessSwitcherProvider.notifier);
     try {
+      // Customers are shop-owned records (names, phones, outstanding
+      // balances), so the list is scoped to the session's businesses. A staff
+      // member is pinned to their own shop by the switcher, which also enforces
+      // staff/shop isolation.
       var items = await repository.customers(
         search: filter.query,
         status: filter.status,
+        shopIds: await switcher.shopIdsForRead(business),
       );
       if (filter.dueOnly) {
         // Due membership is decided by the ledger's own aggregation; here we
@@ -139,7 +147,15 @@ final class CustomersController extends AsyncNotifier<List<Customer>> {
 
   Future<Customer?> byId(String id) async {
     try {
-      return await ref.read(customersRepositoryProvider).customerById(id);
+      // Scoped: a customer profile carries a phone number and balance history.
+      return await ref
+          .read(customersRepositoryProvider)
+          .customerById(
+            id,
+            shopIds: await ref
+                .read(businessSwitcherProvider.notifier)
+                .shopIdsForRead(ref.read(businessSwitcherProvider)),
+          );
     } on CustomersFailure {
       rethrow;
     } catch (error, stackTrace) {

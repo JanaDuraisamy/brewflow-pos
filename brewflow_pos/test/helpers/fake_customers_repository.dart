@@ -22,6 +22,18 @@ final class FakeCustomersRepository implements CustomersRepository {
   /// Number of [customers] calls.
   int customersCalls = 0;
 
+  /// Scope passed to the most recent [customers] call.
+  ///
+  /// A non-null value here is what proves a controller resolved the session's
+  /// businesses instead of relying on a writable-shop fallback. Note the fake
+  /// cannot *filter* a non-empty scope: [Customer] carries no `shopId`, so
+  /// cross-business filtering is only assertable at the controller layer plus
+  /// in the real-DB tests. The empty-scope case is fully enforced here.
+  List<String>? lastCustomersShopIds;
+
+  /// Scope passed to the most recent [customerById] call.
+  List<String>? lastCustomerByIdShopIds;
+
   /// Customer ids that have sales/payment history (so delete degrades to
   /// deactivation). Tests can populate this to exercise the safe path.
   final Set<String> customersWithHistory = {};
@@ -61,10 +73,15 @@ final class FakeCustomersRepository implements CustomersRepository {
   Future<List<Customer>> customers({
     String? search,
     CustomerStatusFilter status = CustomerStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     customersCalls += 1;
+    lastCustomersShopIds = shopIds;
     await _gate();
     _throwIfLoadError();
+    // Scope contract: null = legacy unscoped, non-null = hard scope. An empty
+    // list must yield NOTHING, never "everything".
+    if (shopIds != null && shopIds.isEmpty) return const [];
     var result = List<Customer>.of(storedCustomers);
     final query = search?.trim() ?? '';
     if (query.isNotEmpty) {
@@ -90,8 +107,10 @@ final class FakeCustomersRepository implements CustomersRepository {
   }
 
   @override
-  Future<Customer?> customerById(String id) async {
+  Future<Customer?> customerById(String id, {List<String>? shopIds}) async {
+    lastCustomerByIdShopIds = shopIds;
     _throwIfLoadError();
+    if (shopIds != null && shopIds.isEmpty) return null;
     for (final customer in storedCustomers) {
       if (customer.id == id) {
         return customer;

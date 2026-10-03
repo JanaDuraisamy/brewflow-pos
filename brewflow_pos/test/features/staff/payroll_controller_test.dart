@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Payroll Controller Regression
@@ -39,6 +40,10 @@ void main() {
         staffPayrollRepositoryProvider.overrideWithValue(
           DriftStaffPayrollRepository(database),
         ),
+        // Payroll reads are session-gated: an unresolved profile fails closed,
+        // so the fixture has to declare who is signed in. An OWNER may read
+        // any staff member's payroll, scoped to that member's own business.
+        ...businessScopeOverrides(profile: testOwnerProfile(shopId: cafeShop)),
       ],
     );
     addTearDown(c.dispose);
@@ -291,9 +296,175 @@ void main() {
         throwsA(isA<PermissionDeniedFailure>()),
       );
 
-      // The row survives the refused delete.
+      // The row survives the refused delete. Verified through the owner
+      // session, because a staff session may only read its OWN payroll.
+      final ownerSummary = await ownerContainer.read(
+        payrollSummaryProvider(staffId).future,
+      );
+      expect(ownerSummary.shifts.map((s) => s.id), [id]);
+
+      // A staff session cannot even read another member's payroll.
+      final staffView = await c.read(payrollSummaryProvider(staffId).future);
+      expect(staffView.shifts, isEmpty);
+    });
+  });
+
+  // Regression: the scope resolver used to return null — the repositories'
+  // "every business" value — for a staff row with no shop_id AND for any
+  // exception while reading the profile. Payroll carries attendance hours,
+  // salary and advances, so a failed lookup silently widened the read across
+  // Cafe and Food Truck. Every unresolvable case must now yield no rows.
+  group('payroll read scope', () {
+    const truckShop = 'shop-truck';
+
+    /// A container whose session profile is exactly [profile].
+    ProviderContainer sessionAs(UserProfile profile) {
+      final c = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(database),
+          staffPayrollRepositoryProvider.overrideWithValue(
+            DriftStaffPayrollRepository(database),
+          ),
+          ...businessScopeOverrides(profile: profile),
+        ],
+      );
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    Future<void> addShift(
+      String shopId,
+      String day, {
+      String forStaff = staffId,
+    }) async {
+      // The summary provider defaults to the current month, so the shift has to
+      // land inside it.
+      final now = DateTime.now();
+      final d = int.parse(day);
+      await database
+          .into(database.staffAttendance)
+          .insert(
+            StaffAttendanceCompanion.insert(
+              id: Value('a-$forStaff-$shopId-$day'),
+              staffUserId: forStaff,
+              shopId: Value(shopId),
+              inAt: DateTime.utc(now.year, now.month, d, 9),
+              outAt: Value(DateTime.utc(now.year, now.month, d, 17)),
+              workedMinutes: const Value(480),
+              attendanceDate: DateTime.utc(now.year, now.month, d),
+            ),
+          );
+    }
+
+    test('an owner reads payroll scoped to the staff member business', () async {
+      await addShift(cafeShop, '5');
+      await addShift(truckShop, '6');
+
+      final c = sessionAs(testOwnerProfile(shopId: cafeShop));
+      await c.read(payrollSummaryProvider(staffId).future);
+
+      // `staff-1` belongs to the Cafe, so the truck shift must not appear even
+      // though the owner could switch to Combined. `StaffAttendanceRecord`
+      // carries no shop, so the count is what proves the scoping.
       final summary = await c.read(payrollSummaryProvider(staffId).future);
-      expect(summary.shifts.map((s) => s.id), [id]);
+      expect(summary.shifts, hasLength(1));
+      expect(summary.totalMinutes, 480);
+    });
+
+    test(
+      'a staff row with no shop resolves to no rows, not every shop',
+      () async {
+        // A legacy staff row whose shop_id is NULL.
+        await database
+            .into(database.users)
+            .insert(
+              UsersCompanion.insert(
+                id: const Value('legacy-staff'),
+                email: 'legacy@brewflow.example',
+                shopId: const Value(null),
+                role: const Value('STAFF'),
+              ),
+            );
+        await addShift(cafeShop, '5', forStaff: 'legacy-staff');
+
+        final c = sessionAs(testOwnerProfile(shopId: cafeShop));
+        final summary = await c.read(
+          payrollSummaryProvider('legacy-staff').future,
+        );
+        // The row really exists, so an empty result proves the scope refused to
+        // widen: failing wide here would show this member the Cafe's payroll.
+        expect(
+          summary.shifts,
+          isEmpty,
+          reason:
+              'a staff row with no shop_id must read as no rows, not all rows',
+        );
+      },
+    );
+
+    test('an unresolved session profile reads no payroll', () async {
+      await addShift(cafeShop, '5');
+
+      // No profile override at all: the session cannot be classified as owner
+      // or staff, so it must not be trusted with a payroll read.
+      final c = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(database),
+          staffPayrollRepositoryProvider.overrideWithValue(
+            DriftStaffPayrollRepository(database),
+          ),
+        ],
+      );
+      addTearDown(c.dispose);
+
+      final summary = await c.read(payrollSummaryProvider(staffId).future);
+      expect(summary.shifts, isEmpty);
+    });
+
+    test('a staff session reads only its own payroll', () async {
+      // `self-staff` is assigned to the Cafe and signs in as itself.
+      await database
+          .into(database.users)
+          .insert(
+            UsersCompanion.insert(
+              id: const Value('self-staff'),
+              email: 'self@brewflow.example',
+              shopId: const Value(cafeShop),
+              role: const Value('STAFF'),
+            ),
+          );
+      await addShift(cafeShop, '5', forStaff: 'self-staff');
+      await addShift(cafeShop, '6', forStaff: staffId);
+
+      final own = sessionAs(
+        const UserProfile(
+          id: 'self-staff',
+          email: 'self@brewflow.example',
+          role: UserRole.staff,
+          isActive: true,
+          permissions: {},
+          shopId: cafeShop,
+        ),
+      );
+      final ownSummary = await own.read(
+        payrollSummaryProvider('self-staff').future,
+      );
+      expect(ownSummary.shifts, isNotEmpty);
+
+      final other = sessionAs(
+        const UserProfile(
+          id: 'self-staff',
+          email: 'self@brewflow.example',
+          role: UserRole.staff,
+          isActive: true,
+          permissions: {},
+          shopId: cafeShop,
+        ),
+      );
+      final otherSummary = await other.read(
+        payrollSummaryProvider(staffId).future,
+      );
+      expect(otherSummary.shifts, isEmpty);
     });
   });
 }

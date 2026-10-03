@@ -1,8 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
-import 'product_variants.dart';
-import 'products.dart';
 import 'sales.dart';
 import 'shops.dart';
 
@@ -10,11 +8,11 @@ import 'shops.dart';
 /// SaleItems — line items of a completed sale
 ///
 /// The product name, SKU, unit price and line total are snapshotted at sale
-/// time so historical receipts never change when products are later edited
-/// or deactivated. Deleting a product (or its sale) is rejected by the
-/// RESTRICT foreign keys to protect history. Variant lines snapshot the
-/// variant name the same way; variants are soft-deactivated, never deleted,
-/// so their RESTRICT FK is safe.
+/// time so historical receipts never change when products are later edited,
+/// deactivated or deleted. Variant lines snapshot the variant name the same
+/// way. Because those snapshots are self-contained, the product/variant ids
+/// are plain FK-free columns (schema v31) and deleting a product never
+/// touches — or is blocked by — a line that already happened.
 /// ---------------------------------------------------------------------------
 
 @TableIndex(name: 'idx_sale_items_shop', columns: {#shopId})
@@ -34,16 +32,18 @@ class SaleItems extends Table {
   TextColumn get saleId =>
       text().references(Sales, #id, onDelete: KeyAction.restrict)();
 
-  /// Product sold. Deleting a product with sale history is rejected.
-  TextColumn get productId =>
-      text().references(Products, #id, onDelete: KeyAction.restrict)();
+  /// Product sold at the time. NOT a foreign key (schema v31): a product with
+  /// billing history must still be deletable, so the id is PRESERVED as a plain
+  /// column and a deleted product simply leaves a dangling id. Nothing about
+  /// this line depends on the products row — [productName], [sku] and
+  /// [variantName] are the snapshots receipts and reports render, which is why
+  /// historical bills survive a true product delete untouched.
+  TextColumn get productId => text()();
 
-  /// Variant sold; NULL for non-variant lines. RESTRICT protects history.
-  TextColumn get variantId => text().nullable().references(
-    ProductVariants,
-    #id,
-    onDelete: KeyAction.restrict,
-  )();
+  /// Variant sold; NULL for non-variant lines. Plain column for the same reason
+  /// as [productId] — a deleted variant must not block the delete, and
+  /// [variantName] is the snapshot that keeps the line readable.
+  TextColumn get variantId => text().nullable()();
 
   /// Product name at the time of the sale (snapshot).
   TextColumn get productName => text()();

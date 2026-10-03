@@ -9,7 +9,6 @@ import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -17,7 +16,7 @@ import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// One sale line bounded by the repository's snapshot semantics.
 OrderItem _item(
@@ -57,7 +56,9 @@ ProviderContainer _container({
       customerLedgerRepositoryProvider.overrideWithValue(
         ledger ?? FakeCustomerLedgerRepository(),
       ),
-      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      // Inventory/category reads are shop-scoped, so the fixture has to declare
+      // the signed-in owner session (this also supplies the staff repository).
+      ...businessScopeOverrides(),
     ],
   );
   addTearDown(container.dispose);
@@ -528,7 +529,7 @@ void main() {
         costPricePaise: chaiCost,
         stockQuantity: 10,
         isActive: true,
-        // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+        // The Cafe shop id businessScopeOverrides() resolves to, so the
         // seeded products survive the business scope filter.
         shopId: 'shop-1',
       );
@@ -663,7 +664,7 @@ void main() {
             sellingPricePaise: i * 1000,
             stockQuantity: 5,
             isActive: true,
-            // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+            // The Cafe shop id businessScopeOverrides() resolves to, so the
             // seeded products survive the business scope filter.
             shopId: 'shop-1',
           );

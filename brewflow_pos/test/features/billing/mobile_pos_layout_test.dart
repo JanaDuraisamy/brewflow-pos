@@ -3,9 +3,11 @@ import 'package:brewflow_pos/features/billing/presentation/pos_page.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../helpers/test_providers.dart';
 
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
@@ -146,6 +148,9 @@ Future<void> _pumpPos(WidgetTester tester, Size size) async {
     ProviderScope(
       overrides: [
         inventoryRepositoryProvider.overrideWithValue(inventory),
+        userProfileProvider.overrideWithBuild(
+          (ref, notifier) => testOwnerProfile(),
+        ),
         billingRepositoryProvider.overrideWithValue(
           FakeBillingRepository(inventory),
         ),

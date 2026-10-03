@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_customers_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   testWidgets('phone field shows honest WhatsApp status and never a fake '
@@ -20,6 +21,9 @@ void main() {
         customersRepositoryProvider.overrideWithValue(
           FakeCustomersRepository(),
         ),
+        // The form watches the shop-scoped customer controller; declare the
+        // signed-in owner session so the switcher does not fail closed.
+        ...businessScopeOverrides(),
       ],
     );
     addTearDown(container.dispose);

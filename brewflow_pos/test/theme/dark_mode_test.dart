@@ -26,7 +26,6 @@ import 'package:brewflow_pos/features/purchases/presentation/purchases_page.dart
 import 'package:brewflow_pos/features/purchases/presentation/suppliers_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_page.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,7 +39,7 @@ import '../helpers/fake_inventory_repository.dart';
 import '../helpers/fake_orders_repository.dart';
 import '../helpers/fake_purchases_repository.dart';
 import '../helpers/fake_settings_repository.dart';
-import '../helpers/fake_staff_repository.dart';
+import '../helpers/test_providers.dart';
 import '../helpers/fake_suppliers_repository.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
@@ -192,7 +191,7 @@ void main() {
           connectivityServiceProvider.overrideWithValue(
             fakeConnectivityService(),
           ),
-          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+          ...businessScopeOverrides(),
         ], size: const Size(800, 2800));
 
         expect(find.text('Dashboard'), findsOneWidget);
@@ -215,7 +214,7 @@ void main() {
         costPricePaise: 5000,
         stockQuantity: 5,
         isActive: true,
-        // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so the
+        // The Cafe shop id businessScopeOverrides() resolves to, so the
         // seeded product survives the business scope filter.
         shopId: 'shop-1',
       );
@@ -230,7 +229,7 @@ void main() {
           customerLedgerRepositoryProvider.overrideWithValue(
             FakeCustomerLedgerRepository(),
           ),
-          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+          ...businessScopeOverrides(),
         ]);
 
         expect(find.text('Inventory'), findsOneWidget);
@@ -261,6 +260,9 @@ void main() {
           customersRepositoryProvider.overrideWithValue(
             FakeCustomersRepository(),
           ),
+          // The POS shelf read is shop-scoped, so the fixture has to declare the
+          // signed-in owner session.
+          ...businessScopeOverrides(),
         ], size: const Size(1280, 800));
 
         expect(find.text('Filter Coffee'), findsWidgets);
@@ -298,6 +300,9 @@ void main() {
 
       for (final theme in _themes) {
         await _pumpPage(tester, theme, const PurchasesPage(), [
+          // Purchase/supplier reads are shop-scoped and fail closed without a
+          // signed-in owner.
+          ...businessScopeOverrides(),
           suppliersRepositoryProvider.overrideWithValue(suppliers),
           purchasesRepositoryProvider.overrideWithValue(purchases),
         ], size: const Size(1200, 2000));
@@ -335,7 +340,7 @@ void main() {
           inventoryRepositoryProvider.overrideWithValue(
             FakeInventoryRepository(),
           ),
-          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+          ...businessScopeOverrides(),
         ]);
 
         expect(find.byType(ProductFormPage), findsOneWidget);
@@ -372,6 +377,9 @@ void main() {
       );
 
       await _pumpPage(tester, AppTheme.dark, const PosPage(), [
+        // The POS customer picker is shop-scoped and fails closed without a
+        // signed-in owner.
+        ...businessScopeOverrides(),
         inventoryRepositoryProvider.overrideWithValue(inventory),
         billingRepositoryProvider.overrideWithValue(billing),
         customersRepositoryProvider.overrideWithValue(customers),

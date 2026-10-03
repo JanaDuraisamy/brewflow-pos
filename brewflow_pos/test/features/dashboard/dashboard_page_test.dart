@@ -21,6 +21,7 @@ import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   final owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
@@ -46,7 +47,9 @@ void main() {
       settingsRepositoryProvider.overrideWithValue(
         settings ?? FakeSettingsRepository(),
       ),
-      staffRepositoryProvider.overrideWithValue(staff ?? FakeStaffRepository()),
+      // Shop-scoped dashboard reads resolve their scope from the signed-in
+      // profile, so the fixture must declare the owner session explicitly.
+      ...businessScopeOverrides(staff: staff),
       connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
     ],
     child: const MaterialApp(home: Scaffold(body: DashboardPage())),

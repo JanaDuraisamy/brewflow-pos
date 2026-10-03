@@ -106,18 +106,39 @@ final class DriftCustomersRepository implements CustomersRepository {
   Future<List<Customer>> customers({
     String? search,
     CustomerStatusFilter status = CustomerStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     try {
-      final shopId = await resolveWritableShopId(_database);
-      final rows = await _customers.query(
-        search: search,
-        active: switch (status) {
-          CustomerStatusFilter.all => null,
-          CustomerStatusFilter.active => true,
-          CustomerStatusFilter.inactive => false,
-        },
-        shopId: shopId,
-      );
+      final active = switch (status) {
+        CustomerStatusFilter.all => null,
+        CustomerStatusFilter.active => true,
+        CustomerStatusFilter.inactive => false,
+      };
+      // A non-null [shopIds] is a hard scope, so an empty list must yield
+      // NOTHING. Treating it as "unscoped" would hand a Food Truck session the
+      // Cafe's entire customer list — names, phones and outstanding balances.
+      //
+      // The scope is the caller's, resolved from the session by
+      // `BusinessSwitcherController.shopIdsForRead`. It is never derived here:
+      // `resolveWritableShopId` would invent a shop on a read and could mint a
+      // `shops` row as a side effect of merely listing customers.
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return const [];
+        final all = <db.Customer>[];
+        for (final shopId in shopIds) {
+          all.addAll(
+            await _customers.query(
+              search: search,
+              active: active,
+              shopId: shopId,
+            ),
+          );
+        }
+        // Each per-shop query is already name-sorted; merging keeps that order
+        // stable without a second comparison pass.
+        return all.map(_customerFromRow).toList();
+      }
+      final rows = await _customers.query(search: search, active: active);
       return rows.map(_customerFromRow).toList();
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load customers', error, stackTrace);
@@ -125,10 +146,16 @@ final class DriftCustomersRepository implements CustomersRepository {
   }
 
   @override
-  Future<Customer?> customerById(String id) async {
+  Future<Customer?> customerById(String id, {List<String>? shopIds}) async {
     try {
-      final shopId = await resolveWritableShopId(_database);
-      final row = await _customers.byId(id, shopId: shopId);
+      if (shopIds != null) {
+        for (final shopId in shopIds) {
+          final row = await _customers.byId(id, shopId: shopId);
+          if (row != null) return _customerFromRow(row);
+        }
+        return null;
+      }
+      final row = await _customers.byId(id);
       return row == null ? null : _customerFromRow(row);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load customer', error, stackTrace);
@@ -138,12 +165,10 @@ final class DriftCustomersRepository implements CustomersRepository {
   @override
   Future<bool> phoneExists(String phone, {String? exceptId}) async {
     try {
-      final shopId = await resolveWritableShopId(_database);
-      return await _customers.phoneExists(
-        phone,
-        exceptId: exceptId,
-        shopId: shopId,
-      );
+      // Unscoped on purpose — see the interface doc. `customers.phone` is
+      // globally UNIQUE, so a shop-narrowed check would miss a clash the
+      // database will reject.
+      return await _customers.phoneExists(phone, exceptId: exceptId);
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to check phone number', error, stackTrace);
     }

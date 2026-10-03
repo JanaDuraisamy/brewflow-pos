@@ -91,6 +91,7 @@ final class _DashboardContent extends ConsumerWidget {
             ),
             children: [
               _DashboardHeader(
+                isCompact: breakpoint.isCompact,
                 selected: selected,
                 alerts: snapshot.lowStockCount + snapshot.outOfStockCount,
                 onPickDate: () => _pickDate(context, ref, selected),
@@ -161,6 +162,7 @@ final class _DashboardContent extends ConsumerWidget {
 
 final class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader({
+    required this.isCompact,
     required this.selected,
     required this.alerts,
     required this.onPickDate,
@@ -170,6 +172,13 @@ final class _DashboardHeader extends StatelessWidget {
     required this.shopName,
     this.ownerName,
   });
+
+  /// Compact (phone-like) content, driven by the [ResponsiveBuilder]
+  /// breakpoint — i.e. the CONTENT width after the shell's collapsed rail
+  /// gutter — never the raw window width, so a 650dp window with a collapsed
+  /// rail does not take the tablet Row while its ~586dp content needs the
+  /// stacked phone header.
+  final bool isCompact;
 
   final DateTime selected;
   final int alerts;
@@ -197,7 +206,6 @@ final class _DashboardHeader extends StatelessWidget {
         ? 'Good afternoon'
         : 'Good evening';
     final displayName = ownerName ?? avatarName.split('@').first;
-    final isCompact = MediaQuery.sizeOf(context).width < 600;
 
     final dateChip = InkWell(
       onTap: onPickDate,
@@ -332,6 +340,7 @@ final class _DashboardHeader extends StatelessWidget {
                 children: [
                   Text(
                     '$greeting, $displayName!',
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.headlineSmall?.copyWith(
                       color: context.appColors.charcoal,

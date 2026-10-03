@@ -144,6 +144,31 @@ abstract interface class RemoteMasterDataGateway
     required int limit,
   });
 
+  // ---- Staff attendance -----------------------------------------------------
+
+  /// Pushes attendance shifts. Idempotent UPSERTS keyed by the shift UUID:
+  /// retrying the same operation (clock-in, then clock-out of the same shift)
+  /// converges on one row, never duplicates.
+  ///
+  /// [authUserId] is the cross-device identity the row is stamped with;
+  /// [SyncStaffAttendance.staffUserId] is the authoring device's local profile
+  /// id, carried for attribution only.
+  Future<void> upsertStaffAttendance(List<SyncStaffAttendance> rows);
+
+  Future<PullPage<SyncStaffAttendance>> pullStaffAttendance({
+    required DateTime since,
+    required int limit,
+  });
+
+  /// Hard-deletes one attendance shift in the cloud, scoped to the shop and
+  /// the cross-device staff identity. Owner-only by RLS (0027), exactly like
+  /// the direct payroll gateway's delete.
+  Future<void> deleteStaffAttendance({
+    required String shopId,
+    required String authUserId,
+    required String shiftId,
+  });
+
   // ---- Deletions -------------------------------------------------------------
 
   /// Hard-deletes the `customers` row in the cloud.
@@ -156,6 +181,21 @@ abstract interface class RemoteMasterDataGateway
   /// freshly provisioned device pulls and deletes it again on every first sync,
   /// and deleted customers accumulate in the cloud table invisibly.
   Future<void> deleteCustomer(String id);
+
+  /// Hard-deletes the `products` row in the cloud.
+  ///
+  /// Same reasoning as [deleteCustomer], and needed for the same reason. The
+  /// PRODUCT tombstone alone makes peers converge — `_drainDeletions` runs last
+  /// in the pull — but the row would otherwise linger in `products` and be
+  /// re-pulled by every freshly provisioned device on every first sync.
+  ///
+  /// Safe unconditionally as of schema v31 / cloud migration 0037: the six
+  /// historical `sale_items` / `purchase_items` / `stock_movements` foreign keys
+  /// are already gone (so history cannot block it), and
+  /// `product_variants.product_id` is `ON DELETE CASCADE`, so the variants leave
+  /// with the product instead of raising a foreign-key violation. `master_
+  /// deletions` is never FK-referenced, so the tombstone insert is unaffected.
+  Future<void> deleteProduct(String id);
 
   /// Records that an entity row was hard-deleted on this device, so other
   /// devices can learn about it through their next pull.

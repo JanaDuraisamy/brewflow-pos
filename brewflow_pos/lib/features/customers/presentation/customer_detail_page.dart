@@ -2,6 +2,7 @@ import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/core/authorization/authorization.dart';
 import 'package:brewflow_pos/core/router/app_routes.dart';
 import 'package:brewflow_pos/core/sharing/share_service.dart';
+import 'package:brewflow_pos/core/theme/app_breakpoints.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
@@ -218,10 +219,17 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
           ),
         ],
       ),
-      body: ListView(
-        padding: AppInsets.screen,
-        children: [
-          AppCard(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          // On a phone the whole page does not fit on one screen, so the
+          // section order decides what a customer actually sees first. The
+          // money is why this screen is opened — Outstanding, lifetime totals
+          // and Collect Payment — so it goes directly under the profile and
+          // the reference data (contact, active toggle) follows. Where
+          // everything fits together the order is irrelevant, so it stays as
+          // it was.
+          final phone = constraints.maxWidth < AppBreakpoints.compact;
+          final profile = AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -236,6 +244,13 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
                         children: [
                           Text(
                             customer.name,
+                            // A long name shares this row with the avatar and
+                            // the status badge, so it can be left with about
+                            // 140dp on a 360dp phone. Unbounded it wraps onto
+                            // seven lines and shoves the contact, activity and
+                            // financial sections off the screen.
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
                                   color: context.appColors.textPrimary,
@@ -257,15 +272,13 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          SectionCard(
+          );
+          final contact = SectionCard(
             title: 'Contact details',
             subtitle: 'Phone is unique when present.',
             child: _ContactList(customer: customer),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          SectionCard(
+          );
+          final activity = SectionCard(
             title: 'Activity',
             child: SwitchListTile(
               contentPadding: AppInsets.zero,
@@ -278,9 +291,8 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
               value: customer.isActive,
               onChanged: _busy ? null : (_) => _toggleActive(customer),
             ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          ledger.when(
+          );
+          final summary = ledger.when(
             skipLoadingOnRefresh: true,
             loading: () => SectionCard(
               title: 'Financial summary',
@@ -316,8 +328,29 @@ final class CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
                 ],
               );
             },
-          ),
-        ],
+          );
+          const gap = SizedBox(height: AppSpacing.lg);
+          return ListView(
+            padding: AppInsets.screen,
+            children: [
+              profile,
+              gap,
+              if (phone) ...[
+                summary,
+                gap,
+                contact,
+                gap,
+                activity,
+              ] else ...[
+                contact,
+                gap,
+                activity,
+                gap,
+                summary,
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -356,31 +389,27 @@ final class _FinancialSummaryCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: KpiCard(
+          // Three-across only fits tablet+ widths: at ~93dp per card on a
+          // 360dp phone the labels truncate and values shrink unreadably, so
+          // compact content stacks the same cards vertically instead.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cards = [
+                KpiCard(
                   label: 'Outstanding',
                   value: Money.formatPaise(summary.outstandingPaise),
                   icon: Icons.account_balance_wallet_outlined,
                   accent: hasDue ? AppColors.error : AppColors.success,
                   caption: '$billCount bill${billCount == 1 ? '' : 's'}',
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: KpiCard(
+                KpiCard(
                   label: 'Total purchases',
                   value: Money.formatPaise(summary.totalPurchasesPaise),
                   icon: Icons.receipt_long_outlined,
                   accent: AppColors.primary,
                   caption: 'All customer bills',
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: KpiCard(
+                KpiCard(
                   label: 'Total paid',
                   value: Money.formatPaise(summary.totalPaidPaise),
                   icon: Icons.payments_outlined,
@@ -388,8 +417,28 @@ final class _FinancialSummaryCard extends StatelessWidget {
                   caption:
                       '$paymentCount payment${paymentCount == 1 ? '' : 's'}',
                 ),
-              ),
-            ],
+              ];
+              if (constraints.maxWidth >= 600) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < cards.length; i++) ...[
+                      if (i > 0) const SizedBox(width: AppSpacing.md),
+                      Expanded(child: cards[i]),
+                    ],
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < cards.length; i++) ...[
+                    if (i > 0) const SizedBox(height: AppSpacing.md),
+                    cards[i],
+                  ],
+                ],
+              );
+            },
           ),
           if (canCollect) ...[
             const SizedBox(height: AppSpacing.lg),
@@ -726,8 +775,8 @@ final class _CollectPaymentDialogState
     );
     return AlertDialog(
       title: const Text('Collect Payment'),
-      content: SizedBox(
-        width: 420,
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -898,8 +947,8 @@ final class _AddOpeningDueDialogState
     );
     return AlertDialog(
       title: const Text('Add Opening Due'),
-      content: SizedBox(
-        width: 420,
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

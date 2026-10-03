@@ -35,7 +35,6 @@ import 'package:brewflow_pos/features/reports/presentation/reports_page.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_page.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,6 +53,7 @@ import '../helpers/fake_purchases_repository.dart';
 import '../helpers/fake_settings_repository.dart';
 import '../helpers/fake_staff_repository.dart';
 import '../helpers/fake_suppliers_repository.dart';
+import '../helpers/test_providers.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -85,8 +85,10 @@ void main() {
       suppliersRepositoryProvider.overrideWithValue(FakeSuppliersRepository()),
       purchasesRepositoryProvider.overrideWithValue(FakePurchasesRepository()),
       expensesRepositoryProvider.overrideWithValue(FakeExpensesRepository()),
-      staffRepositoryProvider.overrideWithValue(staff ?? FakeStaffRepository()),
       offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+      // Inventory/category reads are shop-scoped, so the fixture has to declare
+      // the signed-in owner session (this also supplies the staff repository).
+      ...businessScopeOverrides(staff: staff),
       if (closing != null)
         dailyClosingRepositoryProvider.overrideWithValue(closing),
     ],

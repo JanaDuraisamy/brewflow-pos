@@ -81,16 +81,33 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   Future<List<Supplier>> suppliers({
     String? search,
     SupplierStatusFilter status = SupplierStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     try {
-      final rows = await _suppliers.query(
-        search: search,
-        active: switch (status) {
-          SupplierStatusFilter.all => null,
-          SupplierStatusFilter.active => true,
-          SupplierStatusFilter.inactive => false,
-        },
-      );
+      final active = switch (status) {
+        SupplierStatusFilter.all => null,
+        SupplierStatusFilter.active => true,
+        SupplierStatusFilter.inactive => false,
+      };
+      // A non-null [shopIds] is a hard scope, so an empty list must yield
+      // NOTHING rather than every business's supplier book.
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return const [];
+        final all = <db.Supplier>[];
+        for (final shopId in shopIds) {
+          all.addAll(
+            await _suppliers.query(
+              search: search,
+              active: active,
+              shopId: shopId,
+            ),
+          );
+        }
+        // Each per-shop query is already name-sorted; merging keeps that order
+        // stable without a second comparison pass.
+        return all.map(_supplierFromRow).toList();
+      }
+      final rows = await _suppliers.query(search: search, active: active);
       return rows.map(_supplierFromRow).toList();
     } on Exception catch (error, stackTrace) {
       throw _unexpected('Failed to load suppliers', error, stackTrace);
@@ -98,8 +115,15 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   }
 
   @override
-  Future<Supplier?> supplierById(String id) async {
+  Future<Supplier?> supplierById(String id, {List<String>? shopIds}) async {
     try {
+      if (shopIds != null) {
+        for (final shopId in shopIds) {
+          final row = await _suppliers.byId(id, shopId: shopId);
+          if (row != null) return _supplierFromRow(row);
+        }
+        return null;
+      }
       final row = await _suppliers.byId(id);
       return row == null ? null : _supplierFromRow(row);
     } on Exception catch (error, stackTrace) {

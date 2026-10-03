@@ -7,12 +7,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_suppliers_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   late FakeSuppliersRepository fake;
 
   ProviderContainer buildContainer() => ProviderContainer(
-    overrides: [suppliersRepositoryProvider.overrideWithValue(fake)],
+    overrides: [
+      suppliersRepositoryProvider.overrideWithValue(fake),
+      // Supplier reads are shop-scoped, so the fixture has to declare the
+      // signed-in owner session.
+      ...businessScopeOverrides(),
+    ],
   );
 
   final now = DateTime.now().toUtc();
@@ -257,9 +263,17 @@ void main() {
 
       await container.read(suppliersProvider.notifier).setActive('s1', false);
 
+      // The scoped read resolves the shop scope before querying, so the
+      // invalidation-triggered rebuild needs more than one event-loop turn to
+      // settle; a still-loading value is "not there yet", not a failure.
       await awaitUntil(
         container,
-        () => container.read(suppliersProvider).value!.single.isActive == false,
+        () => container
+            .read(suppliersProvider)
+            .maybeWhen(
+              data: (list) => list.single.isActive == false,
+              orElse: () => false,
+            ),
       );
       expect(container.read(suppliersProvider).value!.single.isActive, isFalse);
     });
@@ -275,7 +289,12 @@ void main() {
 
       await awaitUntil(
         container,
-        () => container.read(suppliersProvider).value!.single.isActive,
+        () => container
+            .read(suppliersProvider)
+            .maybeWhen(
+              data: (list) => list.single.isActive,
+              orElse: () => false,
+            ),
       );
       expect(container.read(suppliersProvider).value!.single.isActive, isTrue);
     });

@@ -394,8 +394,12 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     final switcher = ref.read(businessSwitcherProvider.notifier);
     final labels = <String, String>{};
     try {
-      final cafeId = await switcher.shopIdFor(BusinessContext.cafe);
-      labels[cafeId] = BusinessContext.cafe.label;
+      // Read-only resolution. `shopIdFor` is the WRITE path: it calls
+      // `ensureShop()`, so building a report's labels would insert a `shops`
+      // row as a side effect of reading. A missing Cafe just means an
+      // unlabelled slice, which `_businessBreakdown` already handles.
+      final cafeId = await switcher.existingCafeShopId();
+      if (cafeId != null) labels[cafeId] = BusinessContext.cafe.label;
       final ftId = await switcher.existingFoodTruckShopId();
       if (ftId != null && ftId != cafeId) {
         labels[ftId] = BusinessContext.foodTruck.label;

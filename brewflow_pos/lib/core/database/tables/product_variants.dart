@@ -14,9 +14,13 @@ import 'shops.dart';
 ///
 /// Conventions:
 /// - Money is stored as INTEGER minor units (paise), exactly like [Products].
-/// - Variants are never hard-deleted: they are soft-deactivated through
-///   [ProductVariants.isActive] to protect order and movement history
-///   (parent products follow the same rule, so RESTRICT is safe).
+/// - A variant is part of its product's *definition*, not its history: it is
+///   hard-deleted by the product's CASCADE, never soft-deactivated. No
+///   historical row can block that, because every historical variant
+///   reference is a plain FK-free column (schema v31) carrying a name
+///   snapshot of its own.
+/// - [ProductVariants.isActive] still exists for hiding a variant from sale
+///   without deleting it.
 /// - [ProductVariants.stockQuantity] is the authoritative stock for a variant;
 ///   when a product has variants, the parent [Products.stockQuantity] is a
 ///   derived mirror maintained by the repository.
@@ -43,10 +47,15 @@ class ProductVariants extends Table {
   TextColumn get shopId =>
       text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
-  /// Owning product. Products are never hard-deleted (soft deactivation
-  /// instead); RESTRICT keeps variant history bound to its owner.
+  /// Owning product. CASCADE so deleting a product takes its variants with it:
+  /// a variant is part of the product's *definition*, not of its history, so a
+  /// true product delete must not leave an orphan variant row behind. Every
+  /// historical reference to a variant (sale_items, purchase_items,
+  /// stock_movements) is a plain, FK-free column, so nothing blocks the cascade
+  /// and no historical row is touched — the variantName snapshot on each line is
+  /// what receipts and reports read.
   TextColumn get productId =>
-      text().references(Products, #id, onDelete: KeyAction.restrict)();
+      text().references(Products, #id, onDelete: KeyAction.cascade)();
 
   /// Variant display name, e.g. '250 ml'.
   TextColumn get name => text()();

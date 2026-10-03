@@ -869,10 +869,20 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
-  Future<DueCustomersSummary> dueCustomersSummary() async {
+  Future<DueCustomersSummary> dueCustomersSummary({
+    List<String>? shopIds,
+  }) async {
     try {
-      final sales = await _dao.salesTotalsByCustomer();
-      final payments = await _dao.paymentsTotalByCustomer();
+      // A non-null [shopIds] is a hard scope, so an empty list must yield a
+      // zeroed summary rather than every business's outstanding debt.
+      if (shopIds != null && shopIds.isEmpty) {
+        return const DueCustomersSummary(
+          dueCustomerCount: 0,
+          totalOutstandingPaise: 0,
+        );
+      }
+      final sales = await _dao.salesTotalsByCustomer(shopIds: shopIds);
+      final payments = await _dao.paymentsTotalByCustomer(shopIds: shopIds);
       var dueCustomerCount = 0;
       var totalOutstandingPaise = 0;
       for (final entry in sales.entries) {

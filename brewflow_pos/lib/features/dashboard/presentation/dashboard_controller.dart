@@ -264,8 +264,8 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
           if (_localDay(order.createdAt) == selected) order,
       ];
 
-      final products = await inventory.products();
-      final categories = await inventory.categories();
+      final products = await inventory.products(shopIds: shopIds);
+      final categories = await inventory.categories(shopIds: shopIds);
 
       final weekly = List<int>.filled(_windowDays, 0);
       for (final order in windowOrders) {
@@ -368,7 +368,7 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         lowStockThreshold: lowStockThreshold,
         outOfStockCount: outOfStockCount,
         categoryCount: categories.length,
-        dueCustomers: await ledger.dueCustomersSummary(),
+        dueCustomers: await ledger.dueCustomersSummary(shopIds: shopIds),
         businessBreakdown: showBreakdown
             ? _businessBreakdown(selectedDayOrders, labelsById)
             : const [],

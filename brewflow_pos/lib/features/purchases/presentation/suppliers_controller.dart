@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
+import '../../staff/presentation/business_switcher.dart';
 import '../../staff/presentation/staff_controller.dart';
 
 /// ---------------------------------------------------------------------------
@@ -95,9 +96,14 @@ final class SuppliersController extends AsyncNotifier<List<Supplier>> {
     final filter = ref.watch(suppliersFilterProvider);
     final repository = ref.watch(suppliersRepositoryProvider);
     try {
+      // Scoped: one business's supplier book (names, phones, notes) must never
+      // be listed under another's. A staff session is pinned to its own shop.
       return await repository.suppliers(
         search: filter.query,
         status: filter.status,
+        shopIds: await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdsForRead(ref.watch(businessSwitcherProvider)),
       );
     } on SuppliersFailure {
       rethrow;
@@ -114,7 +120,14 @@ final class SuppliersController extends AsyncNotifier<List<Supplier>> {
 
   Future<Supplier?> byId(String id) async {
     try {
-      return await ref.read(suppliersRepositoryProvider).supplierById(id);
+      return await ref
+          .read(suppliersRepositoryProvider)
+          .supplierById(
+            id,
+            shopIds: await ref
+                .read(businessSwitcherProvider.notifier)
+                .shopIdsForRead(ref.read(businessSwitcherProvider)),
+          );
     } on SuppliersFailure {
       rethrow;
     } catch (error, stackTrace) {

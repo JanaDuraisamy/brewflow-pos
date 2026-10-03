@@ -27,13 +27,18 @@ final class ProductVariantsDao {
   }
 
   /// All variants grouped by product id, oldest first within each product.
+  ///
+  /// [shopIds] is a HARD scope: pass the same businesses the products were read
+  /// with so a list can never attach another business's variants. An empty list
+  /// returns an empty map; null keeps the legacy unscoped read.
   Future<Map<String, List<ProductVariant>>> allByProduct({
-    String? shopId,
+    List<String>? shopIds,
   }) async {
     final base = _db.select(_db.productVariants)
       ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
-    if (shopId != null) {
-      base.where((t) => t.shopId.equals(shopId));
+    if (shopIds != null) {
+      if (shopIds.isEmpty) return const {};
+      base.where((t) => t.shopId.isIn(shopIds));
     }
     final rows = await base.get();
     final byProduct = <String, List<ProductVariant>>{};

@@ -138,14 +138,20 @@ final class CustomerLedgerDao {
   /// Null `saleId`s (reserved for future advance payments) never offset debt.
   /// Voided sales never accept collection (same `voided = false` premise as
   /// the collection RPC and [openCreditSalesFor]), so they are excluded too.
-  Expression<bool> _isOpenCreditSale(Column<String> saleId) {
+  Expression<bool> _isOpenCreditSale(
+    Column<String> saleId, [
+    List<String>? shopIds,
+  ]) {
     final salesTable = _db.sales;
     return saleId.isInQuery(
       _db.selectOnly(salesTable)
         ..addColumns([salesTable.id])
         ..where(
           salesTable.paymentStatus.equals('NOT_PAID') &
-              salesTable.voided.equals(false),
+              salesTable.voided.equals(false) &
+              (shopIds != null
+                  ? salesTable.shopId.isIn(shopIds)
+                  : const Constant(true)),
         ),
     );
   }
@@ -153,13 +159,18 @@ final class CustomerLedgerDao {
   /// Sum of NOT_PAID (credit) sale totals per customer. PAID sales never
   /// create debt and are excluded, as are voided sales (the collection RPC
   /// only ever aggregates `voided = false`).
-  Future<Map<String, int>> salesTotalsByCustomer() async {
+  Future<Map<String, int>> salesTotalsByCustomer({
+    List<String>? shopIds,
+  }) async {
     final query = _db.selectOnly(_db.sales)
       ..addColumns([_db.sales.customerId, _db.sales.totalPaise.sum()])
       ..where(
         _db.sales.customerId.isNotNull() &
             _db.sales.paymentStatus.equals('NOT_PAID') &
-            _db.sales.voided.equals(false),
+            _db.sales.voided.equals(false) &
+            (shopIds != null
+                ? _db.sales.shopId.isIn(shopIds)
+                : const Constant(true)),
       )
       ..groupBy([_db.sales.customerId]);
     final rows = await query.get();
@@ -172,7 +183,9 @@ final class CustomerLedgerDao {
   /// Sum of non-reversed payments per customer, restricted to payments on
   /// still-open NOT_PAID (credit) sales. Payments on settled (PAID) sales no
   /// longer offset any outstanding, so a fully-settled bill stays at zero.
-  Future<Map<String, int>> paymentsTotalByCustomer() async {
+  Future<Map<String, int>> paymentsTotalByCustomer({
+    List<String>? shopIds,
+  }) async {
     final query = _db.selectOnly(_db.customerPayments)
       ..addColumns([
         _db.customerPayments.customerId,
@@ -180,7 +193,7 @@ final class CustomerLedgerDao {
       ])
       ..where(
         _db.customerPayments.reversed.equals(false) &
-            _isOpenCreditSale(_db.customerPayments.saleId),
+            _isOpenCreditSale(_db.customerPayments.saleId, shopIds),
       )
       ..groupBy([_db.customerPayments.customerId]);
     final rows = await query.get();
@@ -253,9 +266,7 @@ final class CustomerLedgerDao {
             (toUtc != null
                 ? t.createdAt.isSmallerOrEqualValue(toUtc)
                 : const Constant(true)) &
-            (shopIds != null && shopIds.isNotEmpty
-                ? t.shopId.isIn(shopIds)
-                : const Constant(true)),
+            (shopIds != null ? t.shopId.isIn(shopIds) : const Constant(true)),
       )
       ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
     final openSales = await query.get();
@@ -330,9 +341,7 @@ final class CustomerLedgerDao {
             t.customerId.isNotNull() &
             t.voided.equals(false) &
             t.createdAt.isSmallerOrEqualValue(toUtc) &
-            (shopIds != null && shopIds.isNotEmpty
-                ? t.shopId.isIn(shopIds)
-                : const Constant(true)),
+            (shopIds != null ? t.shopId.isIn(shopIds) : const Constant(true)),
       );
     final sales = await query.get();
     if (sales.isEmpty) return const [];

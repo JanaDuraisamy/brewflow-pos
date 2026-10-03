@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// Captures shared content instead of opening the platform share sheet.
 final class FakeShareService implements ShareService {
@@ -82,6 +83,9 @@ void main() {
               FakeCustomersRepository(),
             ),
             shareServiceProvider.overrideWithValue(share),
+            // The POS shelf read is shop-scoped, so the fixture has to declare
+            // the signed-in owner session.
+            ...businessScopeOverrides(),
           ],
           child: const MaterialApp(home: Scaffold(body: PosPage())),
         ),
@@ -162,6 +166,9 @@ void main() {
             FakeCustomersRepository(),
           ),
           shareServiceProvider.overrideWithValue(share),
+          // The POS shelf read is shop-scoped, so the fixture has to declare the
+          // signed-in owner session.
+          ...businessScopeOverrides(),
         ],
         child: const MaterialApp(home: Scaffold(body: PosPage())),
       ),

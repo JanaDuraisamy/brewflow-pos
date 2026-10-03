@@ -30,6 +30,9 @@ final class CategoryManagementPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Categories')),
       floatingActionButton: FloatingActionButton.extended(
+        // Unique hero tag: pushed pages can share a transition subtree with
+        // shell branches, so the default shared tag collides on navigation.
+        heroTag: 'categories-add-fab',
         onPressed: () => _showCategoryDialog(context),
         icon: const Icon(Icons.add),
         label: const Text('Add Category'),

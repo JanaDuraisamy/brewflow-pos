@@ -186,6 +186,11 @@ final class SyncEngine {
         }
       case MasterEntity.product:
         if (entry.operation == 'DELETE') {
+          // Remove the row in the cloud FIRST, then broadcast the tombstone.
+          // Same ordering rationale as CUSTOMER: a peer that pulls in between
+          // must find the row gone, and a device that never had the row must not
+          // be able to re-pull it from the still-present remote row.
+          await _gateway.deleteProduct(entry.entityId);
           await _gateway.recordDeletion(_deletionOf(entry));
         } else {
           await _gateway.upsertProducts([
@@ -262,6 +267,27 @@ final class SyncEngine {
         } else {
           await _gateway.upsertOffers([
             SyncOffer.fromJson(decodePayload(entry.payload)),
+          ]);
+        }
+      case MasterEntity.staffAttendance:
+        if (entry.operation == 'DELETE') {
+          // Remove the row in the cloud FIRST, then broadcast the tombstone —
+          // the same ordering as PRODUCT/CUSTOMER, so a peer pulling in
+          // between finds the row gone and a fresh device can never re-pull a
+          // deleted shift. The payload carries the shop + cross-device
+          // identity the cloud delete is scoped to.
+          final payload = SyncStaffAttendance.fromJson(
+            decodePayload(entry.payload),
+          );
+          await _gateway.deleteStaffAttendance(
+            shopId: payload.shopId,
+            authUserId: payload.authUserId ?? '',
+            shiftId: entry.entityId,
+          );
+          await _gateway.recordDeletion(_deletionOf(entry));
+        } else {
+          await _gateway.upsertStaffAttendance([
+            SyncStaffAttendance.fromJson(decodePayload(entry.payload)),
           ]);
         }
       case MasterEntity.staffProfile:
@@ -357,6 +383,10 @@ final class SyncEngine {
       await _drainCustomerPayments(since),
       await _drainExpensePayments(since),
       await _drainOffers(since),
+      // Staff attendance rides the same incremental cursor as every other
+      // entity, so a shift pushed from Phone A lands on Phone B on the next
+      // cycle — no separate attendance poller, no second sync system.
+      await _drainStaffAttendance(since),
       await _drainDeletions(since),
     ];
 
@@ -456,6 +486,13 @@ final class SyncEngine {
     since,
     pull: (since, limit) => _gateway.pullOffers(since: since, limit: limit),
     apply: (rows, at) => _applier.applyOfferPage(rows, at),
+  );
+
+  Future<DateTime> _drainStaffAttendance(DateTime since) => _drainPage(
+    since,
+    pull: (since, limit) =>
+        _gateway.pullStaffAttendance(since: since, limit: limit),
+    apply: (rows, at) => _applier.applyStaffAttendancePage(rows, at),
   );
 
   Future<DateTime> _drainDeletions(DateTime since) async {

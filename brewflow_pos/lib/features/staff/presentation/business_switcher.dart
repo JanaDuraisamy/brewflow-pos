@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/core/storage/app_storage.dart';
+import 'package:brewflow_pos/features/staff/data/cloud_shop_resolver.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 
@@ -240,7 +241,10 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
           .listManagedShops();
       if (managed.isEmpty) return null;
 
-      final cafeId = await _cafeShopId(ref.read(staffRepositoryProvider));
+      // Resolve the Cafe from the list already in hand. Calling _cafeShopId()
+      // here made this method mutually recursive with existingCafeShopId() and
+      // fetched the same managed shops a second time on every recovery.
+      final cafeId = await existingCafeShopId(managed: managed);
       final candidates = managed
           .where((shop) => shop.isActive && shop.shopId != cafeId)
           .toList();
@@ -263,16 +267,92 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
     }
   }
 
+  /// Resolves the Cafe id for a WRITE target, materialising the row if needed.
+  ///
+  /// This is the only place allowed to create a `shops` row, and it is reached
+  /// only from [shopIdFor] / [activeShopId] / [requireWritableShopId]. Read
+  /// paths must use [existingCafeShopId] or [shopIdsForRead] instead — routing a
+  /// read through here would insert a shop as a side effect of listing
+  /// inventory.
   Future<String> _cafeShopId(StaffRepository repo) async {
     // Authoritative shop: the one the signed-in profile is bound to. Reading
     // `.value` is safe — null while loading/error, so fresh single-shop
     // installs and tests without a resolved profile keep the legacy path.
     final profileShopId = ref.read(userProfileProvider).value?.shopId;
     if (profileShopId != null && profileShopId.isNotEmpty) {
+      // A Food Truck staff member is bound to the *truck*, so their own
+      // profile.shopId is not the Cafe. Resolving "Cafe" from it would make the
+      // truck look like its own catalogue owner and hide every genuinely
+      // shared Cafe product from them.
+      final cafeId = await existingCafeShopId();
+      if (cafeId != null) {
+        final shop = await repo.ensureShopWithId(cafeId);
+        return shop.id;
+      }
       final shop = await repo.ensureShopWithId(profileShopId);
       return shop.id;
     }
     return (await repo.ensureShop()).id;
+  }
+
+  /// The Cafe shop id, resolved deterministically and read-only.
+  ///
+  /// Read-only guarantees, in resolution order:
+  ///   1. the authenticated profile's own shop, when that shop is not the
+  ///      persisted Food Truck — this covers the owner and every Cafe staff
+  ///      member, and needs no network and no database;
+  ///   2. otherwise (a Food Truck session, where the profile points at the
+  ///      truck) the other active shop from [managed], when the caller already
+  ///      holds a managed-shop list.
+  ///
+  /// It never calls `listManagedShops()` itself. Self-fetching here is what
+  /// made the resolver non-deterministic on the read path: every inventory and
+  /// POS read would reach the network, which broke offline-first and dragged
+  /// cloud clients into widget tests. Callers that already have the list pass
+  /// it in; everyone else gets the offline answer or null.
+  ///
+  /// It never touches the staff repository either, so it cannot mint a `shops`
+  /// row. Returns null when the Cafe identity is not locally determinable,
+  /// which callers must treat as "fail closed", never as "every shop".
+  Future<String?> existingCafeShopId({List<CloudManagedShop>? managed}) async {
+    final profileShopId = ref.read(userProfileProvider).value?.shopId;
+
+    final persistedFoodTruckId = await _persistedFoodTruckId();
+
+    // Owner, or staff assigned to the Cafe: the profile IS the Cafe.
+    if (profileShopId != null &&
+        profileShopId.isNotEmpty &&
+        profileShopId != persistedFoodTruckId) {
+      return profileShopId;
+    }
+
+    if (managed == null) return null;
+    final cafe = managed.where(
+      (shop) => shop.isActive && shop.shopId != persistedFoodTruckId,
+    );
+    return cafe.isEmpty ? null : cafe.first.shopId;
+  }
+
+  /// The persisted Food Truck id, or null when storage cannot answer.
+  ///
+  /// Reads fail closed on a storage error rather than guessing, because a
+  /// guessed identity scopes a query to the wrong shop.
+  Future<String?> _persistedFoodTruckId() async {
+    try {
+      final stored = await AppStorage.preferences.readString(
+        foodTruckShopIdKey,
+      );
+      if (stored != null && stored.isNotEmpty) return stored;
+    } on Object catch (error, stackTrace) {
+      AppTrace.warn('shop.identity_read_fail', {'identity': 'foodTruck'});
+      AppLog.warning(
+        'Could not read the persisted Food Truck shop id',
+        tag: 'Shop',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    return null;
   }
 
   /// Food Truck shop id for READ scoping, if there is a real second business.
@@ -300,10 +380,69 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
     return (await _recoverFoodTruckShop())?.id;
   }
 
+  /// The shop a STAFF session is pinned to by its authenticated profile.
+  ///
+  /// Returns null for an OWNER (who keeps the full multi-business switcher) and
+  /// for a staff profile that has not resolved yet. Callers must treat null as
+  /// "cannot determine the staff shop" and fail closed — never as "no scope",
+  /// because a null scope is read as "every shop" by the repositories.
+  ///
+  /// This is the single authority for staff isolation: a Food Truck staff can
+  /// never be re-scoped to the Cafe just because [state] defaulted to it.
+  String? get staffAssignedShopId {
+    final profile = ref.read(userProfileProvider).value;
+    if (profile == null || profile.isOwner) return null;
+    final shopId = profile.shopId;
+    if (shopId == null || shopId.isEmpty) return null;
+    return shopId;
+  }
+
+  /// Which business the STAFF session's assigned shop represents, resolved
+  /// read-only against the persisted Food Truck identity.
+  ///
+  /// Comparing against the persisted Food Truck id keeps this free of the
+  /// `ensureShop` minting path: a read must never create a shop row. Anything
+  /// that is not the Food Truck is treated as the Cafe, which is also the
+  /// backward-compatible answer for a single-shop install.
+  Future<BusinessContext> contextForAssignedShop(String shopId) async {
+    if (await _persistedFoodTruckId() == shopId) {
+      return BusinessContext.foodTruck;
+    }
+    return BusinessContext.cafe;
+  }
+
   /// Shop ids for reads. All returns both (Cafe + Food Truck if one exists).
   /// Reads must never create Food Truck rows — only a persisted id is used.
   Future<List<String>> shopIdsForRead(BusinessContext context) async {
-    final cafeId = await shopIdFor(BusinessContext.cafe);
+    // A STAFF session is pinned to its own shop for EVERY read, whatever the
+    // persisted selection says. Combined is an owner concept, and a selection
+    // left behind by a previous owner login (or defaulted to Cafe) must never
+    // be able to widen a staff read past their assigned shop.
+    final staffShopId = staffAssignedShopId;
+    if (staffShopId != null) {
+      if (context == BusinessContext.all) {
+        AppTrace.warn('shop.staff_scope', {
+          'requested': context.name,
+          'applied': 'assigned_shop',
+          'shops': 1,
+        });
+      }
+      return <String>[staffShopId];
+    }
+    final cafeId = await existingCafeShopId();
+    if (cafeId == null) {
+      // Reads must not mint a Cafe row. With no resolvable Cafe identity the
+      // scope is empty, which every scoped repository reads as "no rows" —
+      // the safe direction. Falling back to [shopIdFor] here would call
+      // `ensureShop()` on a read, inserting a shop row as a side effect of
+      // merely listing inventory.
+      AppTrace.warn('shop.read_scope', {
+        'context': context.name,
+        'shops': 0,
+        'reason': 'no_cafe_identity',
+      });
+      return <String>[];
+    }
     if (context == BusinessContext.cafe) return [cafeId];
     if (context == BusinessContext.foodTruck) {
       final ftId = await existingFoodTruckShopId();
@@ -330,7 +469,13 @@ final class BusinessSwitcherController extends Notifier<BusinessContext> {
   Future<String> get activeShopId => shopIdFor(state);
 
   /// Like [activeShopId] but throws StateError when All is selected.
+  ///
+  /// A STAFF session always writes to its assigned shop: the Combined view is
+  /// owner-only and read-only, so it can never block a staff member from
+  /// recording work in the shop they are actually assigned to.
   Future<String> requireWritableShopId() async {
+    final staffShopId = staffAssignedShopId;
+    if (staffShopId != null) return staffShopId;
     if (state == BusinessContext.all) {
       throw StateError('All businesses view is read-only');
     }

@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../helpers/fake_cloud_shop_resolver.dart';
 import '../../helpers/fake_preferences_storage.dart';
 import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// Regression for the clear-data Food Truck identity loss.
 ///
@@ -53,15 +54,18 @@ void main() {
 
   /// Container with the switcher's dependencies faked.
   ///
-  /// The Cafe is pinned by pre-seeding the fake repository's shop row, which
-  /// [BusinessSwitcherController] falls back to when no profile is resolved.
-  /// Overriding `userProfileProvider` is not an option: its controller is a
-  /// `final class`, and standing up the real one would drag the whole auth
-  /// chain into a test about shop identity.
+  /// The signed-in owner is pinned to [cafeId], which is what makes the Cafe
+  /// identity locally determinable: `shopIdsForRead` fails closed to an empty
+  /// scope when it cannot resolve a Cafe, so a read-scoping test has to stand up
+  /// the session those reads are scoped by. The Cafe shop row is pre-seeded in
+  /// the fake repository for the write paths that materialise it.
   ProviderContainer buildContainer() {
     final container = ProviderContainer(
       overrides: [
-        staffRepositoryProvider.overrideWithValue(repo),
+        ...businessScopeOverrides(
+          staff: repo,
+          profile: testOwnerProfile(shopId: cafeId),
+        ),
         cloudShopResolverProvider.overrideWithValue(resolver),
       ],
     );

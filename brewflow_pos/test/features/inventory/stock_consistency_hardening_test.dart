@@ -23,6 +23,7 @@ import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Stock Consistency Hardening (Step 9)
@@ -426,7 +427,9 @@ void main() {
           settingsRepositoryProvider.overrideWithValue(
             FakeSettingsRepository(),
           ),
-          staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+          // The dashboard/inventory reads below are shop-scoped, so the fixture
+          // has to declare the signed-in owner session.
+          ...businessScopeOverrides(),
         ],
       );
       addTearDown(container.dispose);

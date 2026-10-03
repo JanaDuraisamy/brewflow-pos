@@ -119,16 +119,27 @@ abstract interface class PurchaseRepository {
   });
 
   /// All purchases, newest first.
-  Future<List<Purchase>> purchases();
+  ///
+  /// [shopIds] scopes the read to businesses (Cafe/Food Truck isolation). A
+  /// non-null value is a HARD scope: an empty list yields nothing rather than
+  /// every business's purchases, so a missing Food Truck can never leak the
+  /// Cafe's purchase history. Null keeps the legacy unscoped read for the
+  /// single-shop install and for internal repair paths.
+  Future<List<Purchase>> purchases({List<String>? shopIds});
 
-  Future<Purchase?> purchaseById(String id);
+  /// One purchase by id, or null when it does not exist **within [shopIds]**.
+  Future<Purchase?> purchaseById(String id, {List<String>? shopIds});
 
-  /// Snapshot lines of one purchase, in insertion order.
-  Future<List<PurchaseItem>> purchaseItems(String purchaseId);
+  /// Snapshot lines of one purchase, in insertion order, restricted to
+  /// [shopIds] when supplied.
+  Future<List<PurchaseItem>> purchaseItems(
+    String purchaseId, {
+    List<String>? shopIds,
+  });
 
   /// Voids a received purchase: reverses the stock each line added, then
   /// removes the purchase header, its line items and its purchase stock
   /// movements in a single transaction. Throws [PurchasesFailure] when the
   /// purchase is missing.
-  Future<void> voidPurchase(String id);
+  Future<void> voidPurchase(String id, {List<String>? shopIds});
 }

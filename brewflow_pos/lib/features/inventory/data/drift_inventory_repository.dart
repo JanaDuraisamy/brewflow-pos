@@ -255,7 +255,12 @@ final class DriftInventoryRepository implements InventoryRepository {
   @override
   Future<List<Category>> categories({List<String>? shopIds}) async {
     try {
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        // A non-null [shopIds] is a hard scope, so an EMPTY list means "this
+        // business has no shop of its own" and must yield NOTHING. Falling
+        // through to the unscoped read would hand the caller every other
+        // business's categories, exactly like the product catalogue leak.
+        if (shopIds.isEmpty) return const [];
         final allRows = <db.Category>[];
         for (final id in shopIds) {
           final rows = await _categories.getAll(shopId: id);
@@ -300,7 +305,11 @@ final class DriftInventoryRepository implements InventoryRepository {
           );
           allRows.addAll(rows);
         }
-        final variantsByProduct = await _variants.allByProduct();
+        // Scoped with the same businesses as the products above, so a list
+        // cannot attach another business's variants to a product.
+        final variantsByProduct = await _variants.allByProduct(
+          shopIds: shopIds,
+        );
         return [
           for (final row in allRows)
             _productFromRow(
@@ -318,6 +327,7 @@ final class DriftInventoryRepository implements InventoryRepository {
           ProductStatusFilter.inactive => false,
         },
       );
+      // Legacy unscoped product read, so the variants stay unscoped to match.
       final variantsByProduct = await _variants.allByProduct();
       return [
         for (final row in rows)
@@ -349,7 +359,14 @@ final class DriftInventoryRepository implements InventoryRepository {
         shopId: shopId,
         catalogOwnerShopId: catalogOwnerShopId,
       );
-      final variantsByProduct = await _variants.allByProduct();
+      // `queryForBusiness` exposes exactly these two businesses (the viewing
+      // shop plus the shared catalogue owner), so variants are scoped to the
+      // same pair instead of every row in the table.
+      final variantsByProduct = await _variants.allByProduct(
+        shopIds: shopId == catalogOwnerShopId
+            ? [shopId]
+            : [shopId, catalogOwnerShopId],
+      );
       return [
         for (final row in rows)
           _productFromRow(row, variants: variantsByProduct[row.id] ?? const []),
@@ -1088,90 +1105,71 @@ final class DriftInventoryRepository implements InventoryRepository {
         throw const ForeignShopRowFailure();
       }
       if (_connectivity != null) await _requireOnline();
-      // Decide the branch once: a product that is referenced (variants, sale
-      // lines, purchase lines or stock movements) degrades to a safe soft
-      // deactivation; a fully unreferenced one is hard-deleted.
-      final decision = await _database.transaction(() async {
-        final row = await _products.byId(id);
-        if (row == null) {
+      // The row is read BEFORE the delete because the write needs its image
+      // paths and owning shop, and afterwards there is nothing left to read.
+      // There is deliberately no "is this referenced?" branch any more: schema
+      // v31 made a product with history genuinely deletable.
+      final row = await _database.transaction(() async {
+        final found = await _products.byId(id);
+        if (found == null) {
           throw const UnexpectedInventoryFailure('Product not found.');
         }
-        final referenced = await _products.countReferences(id) > 0;
-        return (referenced: referenced, row: row);
+        return found;
       });
 
       if (_supabase != null) {
-        final shopId =
-            decision.row.shopId ?? await resolveWritableShopId(_database);
-        if (decision.referenced) {
-          await _database.transaction(
-            () async => _products.updateActive(id, false),
-          );
-          final updated = await _products.byId(id);
-          if (updated != null)
-            await _pushProductToCloud(_productFromRow(updated), shopId);
-          // Delete cloud image directly when online
-          if (decision.row.cloudImagePath != null) {
+        final shopId = row.shopId ?? await resolveWritableShopId(_database);
+        try {
+          // Cloud first. The remote `products` row has to actually go, or a
+          // later pull would resurrect the product on every other device —
+          // the `master_deletions` tombstone alone only *stops* it being
+          // pushed again. `product_variants.product_id` is ON DELETE CASCADE
+          // there, so the variants disappear with it.
+          await _supabase!.from('products').delete().eq('id', id);
+          await _supabase!.from('master_deletions').upsert({
+            'entity': 'PRODUCT',
+            'id': id,
+            'shop_id': shopId,
+          }, onConflict: 'entity,id');
+          if (row.cloudImagePath != null) {
             try {
               await _supabase!.storage.from('product-images').remove([
-                decision.row.cloudImagePath!,
+                row.cloudImagePath!,
               ]);
             } catch (_) {}
           }
-          return ProductDeleteResult.deactivated;
-        } else {
-          try {
-            await _supabase!.from('products').delete().eq('id', id);
-            await _supabase!.from('master_deletions').upsert({
-              'entity': 'PRODUCT',
-              'id': id,
-              'shop_id': shopId,
-            }, onConflict: 'entity,id');
-            if (decision.row.cloudImagePath != null) {
-              try {
-                await _supabase!.storage.from('product-images').remove([
-                  decision.row.cloudImagePath!,
-                ]);
-              } catch (_) {}
-            }
-          } catch (e) {
-            if (e.toString().contains('SocketException'))
-              throw const OfflineException();
-            rethrow;
+        } catch (e) {
+          if (e.toString().contains('SocketException')) {
+            throw const OfflineException();
           }
-          await _database.transaction(() async => _products.deleteById(id));
-          return ProductDeleteResult.deleted;
+          rethrow;
         }
+        // Variants and this business's stock overlay go with the products row
+        // through their CASCADE keys; sale/purchase/stock history does not,
+        // because those columns no longer reference it.
+        await _database.transaction(() => _products.deleteById(id));
+        return ProductDeleteResult.deleted;
       }
 
       final coordinator = _outbox;
       final imageQueue = _imageQueue;
       Future<ProductDeleteResult> commit() async {
-        final ProductDeleteResult result;
-        if (decision.referenced) {
-          await _products.updateActive(id, false);
-          result = ProductDeleteResult.deactivated;
-        } else {
-          await _products.deleteById(id);
-          result = ProductDeleteResult.deleted;
-        }
+        await _products.deleteById(id);
         // Enqueue a cloud-image DELETE (cloud object + local cache) for the
         // product. Both the cloud path and any local file are removed later
         // by the image sync coordinator. Fire-and-forget: the queue is
         // durable and deduplicated, and the app must never fail a delete
         // because image sync is unavailable.
         if (imageQueue != null &&
-            (decision.row.cloudImagePath != null ||
-                decision.row.imagePath != null)) {
+            (row.cloudImagePath != null || row.imagePath != null)) {
           await imageQueue.enqueueDelete(
-            shopId:
-                decision.row.shopId ?? (await resolveWritableShopId(_database)),
+            shopId: row.shopId ?? await resolveWritableShopId(_database),
             productId: id,
-            cloudPath: decision.row.cloudImagePath ?? '',
-            localPath: decision.row.imagePath,
+            cloudPath: row.cloudImagePath ?? '',
+            localPath: row.imagePath,
           );
         }
-        return result;
+        return ProductDeleteResult.deleted;
       }
 
       if (coordinator == null) {
@@ -1179,10 +1177,11 @@ final class DriftInventoryRepository implements InventoryRepository {
       }
       return coordinator.run<ProductDeleteResult>(
         write: () => _database.transaction(commit),
+        // A single DELETE append. Re-reading the row here would be wrong:
+        // there is no row left to describe, and shipping an UPSERT snapshot
+        // instead is exactly what used to resurrect a deleted product on
+        // other devices.
         snapshots: (_, context) async {
-          if (decision.referenced) {
-            return [_productAppend(_productFromRow(decision.row), context)];
-          }
           return [
             OutboxAppend(
               entity: MasterEntity.product,

@@ -518,6 +518,10 @@ final class ProductFormPageState extends ConsumerState<ProductFormPage> {
                     initialValue: categories.any((c) => c.id == _categoryId)
                         ? _categoryId
                         : null,
+                    // Fill the field width (never size to the longest
+                    // category name): the selected value ellipsizes instead of
+                    // overflowing the form on narrow phones.
+                    isExpanded: true,
                     decoration: const InputDecoration(
                       labelText: 'Category *',
                       border: OutlineInputBorder(),
@@ -527,7 +531,11 @@ final class ProductFormPageState extends ConsumerState<ProductFormPage> {
                       for (final category in categories)
                         DropdownMenuItem(
                           value: category.id,
-                          child: Text(category.name),
+                          child: Text(
+                            category.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                     ],
                     onChanged: (value) => setState(() => _categoryId = value),
@@ -775,13 +783,23 @@ final class _StockUnitSection extends StatelessWidget {
       subtitle: 'How this product is counted across the shop.',
       child: DropdownButtonFormField<StockUnit>(
         initialValue: stockUnit,
+        // Fill the field width so long unit labels ellipsize instead of
+        // sizing the button past the form on narrow phones.
+        isExpanded: true,
         decoration: const InputDecoration(
           labelText: 'Stock unit',
           border: OutlineInputBorder(),
         ),
         items: [
           for (final unit in StockUnit.values)
-            DropdownMenuItem(value: unit, child: Text(unit.label)),
+            DropdownMenuItem(
+              value: unit,
+              child: Text(
+                unit.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
         ],
         onChanged: (value) => onChanged(value!),
       ),
@@ -809,6 +827,8 @@ final class _LowStockSection extends StatelessWidget {
         children: [
           DropdownButtonFormField<LowStockMode>(
             initialValue: mode,
+            // Fill the field width like every other form dropdown.
+            isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Alert mode',
               border: OutlineInputBorder(),
@@ -1105,6 +1125,8 @@ final class _VariantEditorCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           DropdownButtonFormField<LowStockMode>(
             initialValue: variant.lowStockMode,
+            // Fill the field width like every other form dropdown.
+            isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Low stock alert',
               border: OutlineInputBorder(),

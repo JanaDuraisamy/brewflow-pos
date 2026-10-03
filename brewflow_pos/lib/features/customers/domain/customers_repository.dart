@@ -44,16 +44,34 @@ abstract interface class CustomersRepository {
   ///
   /// [search] matches name, phone or email (case-insensitive substring).
   /// [status] restricts to active/inactive customers (default: all).
+  ///
+  /// [shopIds] scopes the read to businesses (Cafe/Food Truck isolation). A
+  /// non-null value is a HARD scope: an empty list yields nothing rather than
+  /// every business's customers, so one business's debtor book can never
+  /// leak into another's. Null keeps the legacy unscoped read for the
+  /// single-shop install.
+  ///
+  /// The scope comes from the session, never from a writable-shop fallback:
+  /// resolving a shop on a read would let a missing Food Truck silently invent
+  /// one, and would let a read mint a `shops` row as a side effect.
   Future<List<Customer>> customers({
     String? search,
     CustomerStatusFilter status,
+    List<String>? shopIds,
   });
 
-  Future<Customer?> customerById(String id);
+  /// One customer by id, or null when it does not exist **within [shopIds]**.
+  Future<Customer?> customerById(String id, {List<String>? shopIds});
 
   /// Whether another customer already uses this phone number
   /// (case-insensitive). [exceptId] excludes one customer so an edit can
   /// keep its own phone.
+  ///
+  /// Deliberately NOT shop-scoped: `customers.phone` carries a single global
+  /// UNIQUE index, so the insert this predicts is rejected by SQLite even when
+  /// the clash lives under another shop. Narrowing the check to [shopIds] would
+  /// report "free" for a number the database then refuses. The answer reveals
+  /// only that a phone number is taken, never any customer's data.
   Future<bool> phoneExists(String phone, {String? exceptId});
 
   Future<Customer> createCustomer({

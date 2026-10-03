@@ -533,8 +533,21 @@ final class DriftPurchaseRepository implements PurchaseRepository {
   }
 
   @override
-  Future<List<Purchase>> purchases() async {
+  Future<List<Purchase>> purchases({List<String>? shopIds}) async {
     try {
+      // A non-null [shopIds] is a hard scope, so an empty list must yield
+      // NOTHING. Treating it as "unscoped" would hand a Food Truck session
+      // every Cafe purchase in the history list.
+      if (shopIds != null && shopIds.isEmpty) return const [];
+      if (shopIds != null) {
+        final all = <db.Purchase>[];
+        for (final shopId in shopIds) {
+          all.addAll(await _purchases.all(shopId: shopId));
+        }
+        // Each shop query is already newest-first; a stable id tie-break keeps
+        // the merged list deterministic without re-sorting timestamps.
+        return all.map(_purchaseFromRow).toList();
+      }
       final rows = await _purchases.all();
       return rows.map(_purchaseFromRow).toList();
     } on Exception catch (error, stackTrace) {
@@ -543,8 +556,15 @@ final class DriftPurchaseRepository implements PurchaseRepository {
   }
 
   @override
-  Future<Purchase?> purchaseById(String id) async {
+  Future<Purchase?> purchaseById(String id, {List<String>? shopIds}) async {
     try {
+      if (shopIds != null) {
+        for (final shopId in shopIds) {
+          final scoped = await _purchases.byId(id, shopId: shopId);
+          if (scoped != null) return _purchaseFromRow(scoped);
+        }
+        return null;
+      }
       final row = await _purchases.byId(id);
       return row == null ? null : _purchaseFromRow(row);
     } on Exception catch (error, stackTrace) {
@@ -553,8 +573,19 @@ final class DriftPurchaseRepository implements PurchaseRepository {
   }
 
   @override
-  Future<List<PurchaseItem>> purchaseItems(String purchaseId) async {
+  Future<List<PurchaseItem>> purchaseItems(
+    String purchaseId, {
+    List<String>? shopIds,
+  }) async {
     try {
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return const [];
+        final all = <db.PurchaseItem>[];
+        for (final shopId in shopIds) {
+          all.addAll(await _items.byPurchase(purchaseId, shopId: shopId));
+        }
+        return all.map(_purchaseItemFromRow).toList();
+      }
       final rows = await _items.byPurchase(purchaseId);
       return rows.map(_purchaseItemFromRow).toList();
     } on Exception catch (error, stackTrace) {
@@ -562,8 +593,44 @@ final class DriftPurchaseRepository implements PurchaseRepository {
     }
   }
 
+  /// The purchase to void, restricted to [shopIds].
+  ///
+  /// A non-null [shopIds] is a hard scope, so a void aimed at another
+  /// business's purchase resolves to null and the transaction aborts — the
+  /// caller cannot reverse stock it is not allowed to see.
+  Future<db.Purchase?> _scopedPurchaseForVoid(
+    String id,
+    List<String> shopIds,
+  ) async {
+    if (shopIds.isEmpty) return null;
+    for (final shopId in shopIds) {
+      final row = await _purchases.byId(id, shopId: shopId);
+      if (row != null) return row;
+    }
+    return null;
+  }
+
+  /// Snapshot lines of the purchase being voided.
+  ///
+  /// Pinned to the purchase's OWN shop rather than the caller's scope list: the
+  /// header has already been resolved as in-scope, so its shop is exactly the
+  /// scope the lines must come from. Reading them under the wider caller scope
+  /// could pick up a same-id line row belonging to another shop.
+  ///
+  /// A legacy row with no `shopId` cannot be scope-checked, so it is reported
+  /// as "not found" rather than voided blindly — refusing is the safe
+  /// direction, because a wrong void silently reverses real stock.
+  Future<List<db.PurchaseItem>> _scopedItemsForVoid(
+    String purchaseId,
+    db.Purchase purchase,
+  ) async {
+    final ownerShopId = purchase.shopId;
+    if (ownerShopId == null) return const [];
+    return _items.byPurchase(purchaseId, shopId: ownerShopId);
+  }
+
   @override
-  Future<void> voidPurchase(String id) async {
+  Future<void> voidPurchase(String id, {List<String>? shopIds}) async {
     try {
       // Cloud-authoritative path when gateway wired. Purchases are created
       // server-side (receive_purchase_atomic); voiding must commit on the
@@ -603,11 +670,15 @@ final class DriftPurchaseRepository implements PurchaseRepository {
         }
       }
       await _database.transaction(() async {
-        final purchase = await _purchases.byId(id);
+        final purchase = shopIds == null
+            ? await _purchases.byId(id)
+            : await _scopedPurchaseForVoid(id, shopIds);
         if (purchase == null) {
           throw const UnexpectedPurchasesFailure('Purchase not found.');
         }
-        final items = await _items.byPurchase(id);
+        final items = shopIds == null
+            ? await _items.byPurchase(id)
+            : await _scopedItemsForVoid(id, purchase);
         final now = DateTime.now().toUtc().toIso8601String();
         // Reverse exactly the stock each line added, targeting the same stock
         // entity (product or variant) the line was received into.

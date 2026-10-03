@@ -52,12 +52,12 @@ final class CustomersDao {
   /// (case-insensitive).
   ///
   /// [exceptId] excludes one customer so an edit can keep its own phone.
-  /// When [shopId] is provided the check is scoped to that business.
-  Future<bool> phoneExists(
-    String phone, {
-    String? exceptId,
-    String? shopId,
-  }) async {
+  ///
+  /// Deliberately has NO shop scope: `customers.phone` carries a single global
+  /// UNIQUE index, so a shop-narrowed check would report a number as free while
+  /// the insert is still rejected by SQLite. Do not add a `shopId` parameter
+  /// here — that is the bug this removal prevents.
+  Future<bool> phoneExists(String phone, {String? exceptId}) async {
     final table = _db.customers;
     final query = _db.selectOnly(table)..addColumns([table.id]);
     final conditions = <Expression<bool>>[
@@ -65,9 +65,6 @@ final class CustomersDao {
     ];
     if (exceptId != null) {
       conditions.add(table.id.isNotValue(exceptId));
-    }
-    if (shopId != null) {
-      conditions.add(table.shopId.equals(shopId));
     }
     query.where(conditions.reduce((a, b) => a & b));
     query.limit(1);

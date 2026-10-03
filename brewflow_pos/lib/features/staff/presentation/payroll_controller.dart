@@ -1,9 +1,11 @@
 import 'package:brewflow_pos/app/providers.dart';
+import 'package:brewflow_pos/core/services/app_trace.dart';
 import 'package:brewflow_pos/features/staff/data/drift_staff_payroll_repository.dart';
 import 'package:brewflow_pos/features/staff/data/staff_payroll_cloud_gateway.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_payroll_models.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_payroll_repository.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
+import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -33,14 +35,17 @@ final staffPayrollCloudGatewayProvider = Provider<StaffPayrollCloudGateway?>((
   }
 });
 
-/// The payroll repository for the app scope (cloud-authoritative when the
-/// gateway is present, local mirror fallback offline; override with a fake
-/// in tests).
+/// The payroll repository for the app scope. Attendance writes are local-first:
+/// the shared [syncOutboxCoordinatorProvider] commits the local row and its
+/// durable queue entry atomically and kicks a fast background sync, so Check
+/// In/Out never wait for the cloud round trip. Reads serve the local mirror
+/// with best-effort scoped pulls; override with a fake in tests.
 final staffPayrollRepositoryProvider = Provider<StaffPayrollRepository>((ref) {
   return DriftStaffPayrollRepository(
     ref.watch(appDatabaseProvider),
     cloudGateway: ref.watch(staffPayrollCloudGatewayProvider),
     connectivityService: ref.watch(connectivityServiceProvider),
+    outboxCoordinator: ref.watch(syncOutboxCoordinatorProvider),
   );
 });
 
@@ -113,20 +118,72 @@ final class PayrollSummaryController
     );
   }
 
-  /// Reads scoped to the staff profile's own shop (strict Cafe/Food Truck
-  /// isolation). Falls back to unscoped reads when the profile is unknown
-  /// (legacy rows without a shop still surface instead of vanishing).
-  Future<List<String>?> _scopeShopIds() async {
+  /// The shops whose payroll rows may be read for [staffUserId].
+  ///
+  /// Always returns a list, never null. `null` is the repositories' "every
+  /// business" scope, so the previous `null` fallbacks — for a staff row with
+  /// no `shop_id`, and for *any* exception while reading the profile — turned a
+  /// lookup failure into a cross-business payroll read. Payroll carries
+  /// attendance hours, salary and advances, so that leak is not acceptable;
+  /// both paths now resolve to "no rows" instead.
+  ///
+  /// Two rules decide the scope:
+  ///  1. A STAFF session may read only its OWN payroll, and only inside the shop
+  ///     its authenticated profile is assigned to.
+  ///  2. An OWNER may read any staff member's payroll, but only scoped to that
+  ///     staff member's own business — so Cafe and Food Truck payroll stay
+  ///     separate even from the "All businesses" view.
+  Future<List<String>> _scopeShopIds() async {
+    // An unresolved profile cannot be classified as owner or staff, so it must
+    // not be trusted with a payroll read.
+    final profile = ref.read(userProfileProvider).value;
+    if (profile == null) {
+      AppTrace.warn('payroll.read_scope', {
+        'reason': 'profile_unresolved',
+        'staffRef': staffUserId,
+      });
+      return const [];
+    }
+
+    if (!profile.isOwner) {
+      // Staff are single-shop by contract: never another member's payroll, and
+      // never a shop other than the one the profile is assigned to.
+      if (profile.id != staffUserId) {
+        AppTrace.warn('payroll.read_scope', {
+          'reason': 'staff_other_member',
+          'shopRef': AppTrace.userRef(profile.shopId),
+        });
+        return const [];
+      }
+      final own = profile.shopId;
+      if (own == null || own.isEmpty) return const [];
+      return [own];
+    }
+
+    final targetShopId = await _staffShopId();
+    if (targetShopId == null || targetShopId.isEmpty) {
+      AppTrace.warn('payroll.read_scope', {
+        'reason': 'target_shop_unresolved',
+        'staffRef': staffUserId,
+      });
+      return const [];
+    }
+    return [targetShopId];
+  }
+
+  /// The shop the viewed staff member belongs to, or null when the row is
+  /// missing or carries no business. Never throws.
+  Future<String?> _staffShopId() async {
     try {
       final database = ref.read(appDatabaseProvider);
       final query = database.select(database.users)
         ..where((t) => t.id.equals(staffUserId))
         ..limit(1);
       final profile = await query.getSingleOrNull();
-      final shopId = profile?.shopId;
-      if (shopId == null || shopId.isEmpty) return null;
-      return [shopId];
+      return profile?.shopId;
     } on Object {
+      // A failed lookup must not widen the scope; the caller treats null as
+      // "no rows".
       return null;
     }
   }

@@ -1,6 +1,7 @@
 import 'package:brewflow_pos/app/app.dart';
 import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
+import 'package:brewflow_pos/core/theme/app_breakpoints.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
@@ -11,10 +12,12 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/product_form_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../helpers/test_providers.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
@@ -72,7 +75,10 @@ void main() {
   /// [staff] is only supplied by owner-gated tests. The default empty roster
   /// keeps every other test a non-owner, which is what the owner-only delete
   /// actions rely on to stay hidden.
-  Widget app({FakeStaffRepository? staff}) => ProviderScope(
+  Widget app({
+    FakeStaffRepository? staff,
+    UserProfile? profile,
+  }) => ProviderScope(
     overrides: [
       authRepositoryProvider.overrideWithValue(fakeAuth),
       inventoryRepositoryProvider.overrideWithValue(fakeInventory),
@@ -81,15 +87,25 @@ void main() {
         FakeCustomerLedgerRepository(),
       ),
       staffRepositoryProvider.overrideWithValue(staff ?? FakeStaffRepository()),
+      // Shop-scoped reads resolve their scope from the signed-in profile and
+      // fail closed without one, so the fixture always pins a session. It
+      // defaults to the OWNER; tests that assert an owner-only action is hidden
+      // must pass [profile] explicitly so the session really is a staff one.
+      userProfileProvider.overrideWithBuild(
+        (ref, notifier) => profile ?? testOwnerProfile(),
+      ),
       // Offline, so UserProfileController takes the local fast path instead of
-      // reaching for the cloud identity resolver.
+      // reaching the cloud identity resolver.
       connectivityServiceProvider.overrideWithValue(fakeConnectivityService()),
     ],
     child: const BrewFlowApp(),
   );
 
-  Future<void> pumpAuthenticated(WidgetTester tester) async {
-    await tester.pumpWidget(app());
+  Future<void> pumpAuthenticated(
+    WidgetTester tester, {
+    UserProfile? profile,
+  }) async {
+    await tester.pumpWidget(app(profile: profile));
     fakeAuth.emit(_owner);
     await tester.pumpAndSettle();
   }
@@ -572,7 +588,9 @@ void main() {
       fakeInventory.storedProducts.add(
         product('p1', 'Milk 1L', categoryId: 'c1'),
       );
-      await pumpAuthenticated(tester);
+      // A staff session: the empty roster alone is not enough, the profile has
+      // to really be a staff one for owner-gated actions to stay hidden.
+      await pumpAuthenticated(tester, profile: testStaffProfile());
       await openCategories(tester);
 
       expect(find.byTooltip('Delete category'), findsNothing);
@@ -654,10 +672,12 @@ void main() {
       },
     );
 
-    testWidgets('tablet table still scrolls horizontally', (tester) async {
+    testWidgets('squeezed tablet uses cards, not the wide table', (
+      tester,
+    ) async {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetDevicePixelRatio);
-      // A moderately narrow tablet where the seven-column table overflows.
+      // A wide-ish tablet whose CONTENT is still too narrow for seven columns.
       tester.view.physicalSize = const Size(820, 900);
       addTearDown(tester.view.resetPhysicalSize);
       fakeInventory.storedCategories.add(category('c1', 'Beverages'));
@@ -672,26 +692,91 @@ void main() {
       await openInventory(tester);
 
       expect(tester.takeException(), isNull);
-      expect(find.byType(DataTable), findsOneWidget);
 
-      final horizontalScrollable = find
-          .ancestor(
-            of: find.byType(DataTable),
-            matching: find.byWidgetPredicate(
-              (widget) =>
-                  widget is Scrollable &&
-                  widget.axisDirection == AxisDirection.right,
-            ),
-          )
-          .first;
-      expect(horizontalScrollable, findsOneWidget);
+      // The table-vs-cards branch is decided on AVAILABLE CONTENT WIDTH, so
+      // measure what the shell actually handed the list instead of trusting
+      // the 820dp window. The rail gutter and screen padding both come out of
+      // it, which is why an 820dp window legitimately lands below the
+      // threshold the seven-column table needs.
+      final listWidth = tester.getSize(find.byType(ListView).first).width;
+      expect(
+        listWidth,
+        lessThan(AppBreakpoints.denseTable),
+        reason: 'this viewport is meant to exercise the card branch',
+      );
+      expect(find.byType(DataTable), findsNothing);
 
-      // Dragging a wide table leftward must not throw and must move the
-      // horizontal scroll position.
-      await tester.drag(horizontalScrollable, const Offset(-400, 0));
-      await tester.pump();
-      expect(tester.takeException(), isNull);
+      // The card branch really rendered the product, not an empty list.
+      expect(
+        find.text('Very Long Product Name That Forces Wide Columns'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Beverages · SKU EXTREMELY-LONG-SKU-IDENTIFIER-999999999'),
+        findsOneWidget,
+      );
+
+      // No horizontal overflow anywhere on the page at this width.
+      final window = tester.view.physicalSize;
+      for (final element in tester.elementList(find.byType(Card))) {
+        final box = element.renderObject! as RenderBox;
+        final rect = box.localToGlobal(Offset.zero) & box.size;
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(window.width));
+      }
+
+      // The edit affordance is reachable on this branch too: tapping the
+      // product opens the editor, exactly as the table's row tap and the phone
+      // card's tap do.
+      await tester.tap(
+        find.text('Very Long Product Name That Forces Wide Columns'),
+      );
+      await pumpAsync(tester);
+      expect(find.byType(ProductFormPage), findsOneWidget);
+      expect(find.text('Edit Product'), findsOneWidget);
     });
+
+    testWidgets(
+      'wide tablet still uses the table and scrolls it horizontally',
+      (tester) async {
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        // Wide enough that the CONTENT clears the dense-table threshold.
+        tester.view.physicalSize = const Size(1440, 900);
+        addTearDown(tester.view.resetPhysicalSize);
+        fakeInventory.storedCategories.add(category('c1', 'Beverages'));
+        fakeInventory.storedProducts.add(
+          product(
+            'p1',
+            'Very Long Product Name That Forces Wide Columns',
+            sku: 'EXTREMELY-LONG-SKU-IDENTIFIER-999999999',
+          ),
+        );
+        await pumpAuthenticated(tester);
+        await openInventory(tester);
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(DataTable), findsOneWidget);
+
+        final horizontalScrollable = find
+            .ancestor(
+              of: find.byType(DataTable),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Scrollable &&
+                    widget.axisDirection == AxisDirection.right,
+              ),
+            )
+            .first;
+        expect(horizontalScrollable, findsOneWidget);
+
+        // Dragging a wide table leftward must not throw and must move the
+        // horizontal scroll position.
+        await tester.drag(horizontalScrollable, const Offset(-400, 0));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('phone inventory still shows cards and scrolls the list', (
       tester,

@@ -41,9 +41,13 @@ final class _OwnerStorageUsagePageState
   void initState() {
     super.initState();
     // Hydrate local notification + last-cleanup, then run a fresh scan once.
+    // Mounted-guarded: a fast navigation away before the frame (or during
+    // the awaits) must silently drop the scan, never touch a dead ref.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
       final controller = ref.read(storageCleanupControllerProvider.notifier);
       await controller.hydrate();
+      if (!mounted) return;
       await controller.scan();
     });
   }

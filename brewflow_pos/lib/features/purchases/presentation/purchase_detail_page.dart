@@ -2,6 +2,7 @@ import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
+import 'package:brewflow_pos/core/theme/app_breakpoints.dart';
 import 'package:brewflow_pos/core/utils/dates.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/purchases/domain/purchases_models.dart';
@@ -164,7 +165,7 @@ final class _ItemsList extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth >= 640) {
+        if (constraints.maxWidth >= AppBreakpoints.compactTable) {
           return _ItemsTable(items: items);
         }
         return _ItemsCards(items: items);
@@ -180,41 +181,48 @@ final class _ItemsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Vertical scroll for short viewports, horizontal scroll for narrow ones:
+    // every other wide table in the app nests the two axes this way, so the
+    // Line Total column stays reachable instead of clipping at 640dp with
+    // long SKUs or scaled text.
     return SingleChildScrollView(
-      child: DataTable(
-        columns: [
-          const DataColumn(
-            label: Text('Product'),
-            columnWidth: IntrinsicColumnWidth(flex: 1),
-          ),
-          const DataColumn(label: Text('SKU')),
-          const DataColumn(label: Text('Quantity')),
-          const DataColumn(label: Text('Unit Cost')),
-          const DataColumn(label: Text('Line Total')),
-        ],
-        rows: [
-          for (final item in items)
-            DataRow(
-              cells: [
-                DataCell(
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 200),
-                    child: Text(
-                      item.variantName == null
-                          ? item.productName
-                          : '${item.productName} — ${item.variantName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          columns: [
+            const DataColumn(
+              label: Text('Product'),
+              columnWidth: IntrinsicColumnWidth(flex: 1),
+            ),
+            const DataColumn(label: Text('SKU')),
+            const DataColumn(label: Text('Quantity')),
+            const DataColumn(label: Text('Unit Cost')),
+            const DataColumn(label: Text('Line Total')),
+          ],
+          rows: [
+            for (final item in items)
+              DataRow(
+                cells: [
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 200),
+                      child: Text(
+                        item.variantName == null
+                            ? item.productName
+                            : '${item.productName} — ${item.variantName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
-                ),
-                DataCell(Text(item.sku ?? '—')),
-                DataCell(Text('${item.quantity}')),
-                DataCell(Text(Money.formatPaise(item.unitCostPaise))),
-                DataCell(Text(Money.formatPaise(item.lineTotalPaise))),
-              ],
-            ),
-        ],
+                  DataCell(Text(item.sku ?? '—')),
+                  DataCell(Text('${item.quantity}')),
+                  DataCell(Text(Money.formatPaise(item.unitCostPaise))),
+                  DataCell(Text(Money.formatPaise(item.lineTotalPaise))),
+                ],
+              ),
+          ],
+        ),
       ),
     );
   }

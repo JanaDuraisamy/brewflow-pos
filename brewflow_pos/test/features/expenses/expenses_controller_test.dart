@@ -9,12 +9,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_expenses_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   late FakeExpensesRepository fake;
 
   ProviderContainer buildContainer() => ProviderContainer(
-    overrides: [expensesRepositoryProvider.overrideWithValue(fake)],
+    overrides: [
+      expensesRepositoryProvider.overrideWithValue(fake),
+      // Expense reads are scoped, so the fixture must declare the owner
+      // session the same way the app does.
+      ...businessScopeOverrides(),
+    ],
   );
 
   final now = DateTime.now().toUtc();
@@ -414,7 +420,7 @@ void main() {
 
       await awaitUntil(
         container,
-        () => container.read(expensesProvider).value!.single.isActive == false,
+        () => container.read(expensesProvider).value?.single.isActive == false,
       );
       expect(container.read(expensesProvider).value!.single.isActive, isFalse);
     });
@@ -505,6 +511,12 @@ void main() {
       await awaitUntil(
         container,
         () => container.read(shopPayableProvider).value == 5000000,
+      );
+      // The list refreshes on its own invalidation, so wait for it rather than
+      // assuming the payable total settled first.
+      await awaitUntil(
+        container,
+        () => container.read(expensesProvider).value?.isNotEmpty == true,
       );
       expect(
         container.read(expensesProvider).value!.single.paymentStatus,

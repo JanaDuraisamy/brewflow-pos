@@ -4658,7 +4658,7 @@ class $ProductVariantsTable extends ProductVariants
     type: DriftSqlType.string,
     requiredDuringInsert: true,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES products (id) ON DELETE RESTRICT',
+      'REFERENCES products (id) ON DELETE CASCADE',
     ),
   );
   static const VerificationMeta _nameMeta = const VerificationMeta('name');
@@ -5043,8 +5043,13 @@ class ProductVariant extends DataClass implements Insertable<ProductVariant> {
   /// Business/shop that owns this product variant.
   final String? shopId;
 
-  /// Owning product. Products are never hard-deleted (soft deactivation
-  /// instead); RESTRICT keeps variant history bound to its owner.
+  /// Owning product. CASCADE so deleting a product takes its variants with it:
+  /// a variant is part of the product's *definition*, not of its history, so a
+  /// true product delete must not leave an orphan variant row behind. Every
+  /// historical reference to a variant (sale_items, purchase_items,
+  /// stock_movements) is a plain, FK-free column, so nothing blocks the cascade
+  /// and no historical row is touched — the variantName snapshot on each line is
+  /// what receipts and reports read.
   final String productId;
 
   /// Variant display name, e.g. '250 ml'.
@@ -9542,9 +9547,6 @@ class $SaleItemsTable extends SaleItems
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES products (id) ON DELETE RESTRICT',
-    ),
   );
   static const VerificationMeta _variantIdMeta = const VerificationMeta(
     'variantId',
@@ -9556,9 +9558,6 @@ class $SaleItemsTable extends SaleItems
     true,
     type: DriftSqlType.string,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES product_variants (id) ON DELETE RESTRICT',
-    ),
   );
   static const VerificationMeta _productNameMeta = const VerificationMeta(
     'productName',
@@ -9915,10 +9914,17 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
   /// Owning sale. Deleting a sale with items is rejected (RESTRICT).
   final String saleId;
 
-  /// Product sold. Deleting a product with sale history is rejected.
+  /// Product sold at the time. NOT a foreign key (schema v31): a product with
+  /// billing history must still be deletable, so the id is PRESERVED as a plain
+  /// column and a deleted product simply leaves a dangling id. Nothing about
+  /// this line depends on the products row — [productName], [sku] and
+  /// [variantName] are the snapshots receipts and reports render, which is why
+  /// historical bills survive a true product delete untouched.
   final String productId;
 
-  /// Variant sold; NULL for non-variant lines. RESTRICT protects history.
+  /// Variant sold; NULL for non-variant lines. Plain column for the same reason
+  /// as [productId] — a deleted variant must not block the delete, and
+  /// [variantName] is the snapshot that keeps the line readable.
   final String? variantId;
 
   /// Product name at the time of the sale (snapshot).
@@ -11109,9 +11115,6 @@ class $StockMovementsTable extends StockMovements
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES products (id) ON DELETE RESTRICT',
-    ),
   );
   static const VerificationMeta _variantIdMeta = const VerificationMeta(
     'variantId',
@@ -11123,9 +11126,6 @@ class $StockMovementsTable extends StockMovements
     true,
     type: DriftSqlType.string,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES product_variants (id) ON DELETE RESTRICT',
-    ),
   );
   static const VerificationMeta _movementTypeMeta = const VerificationMeta(
     'movementType',
@@ -11455,13 +11455,15 @@ class StockMovement extends DataClass implements Insertable<StockMovement> {
   /// Business/shop that owns this movement.
   final String? shopId;
 
-  /// The product the movement belongs to. Products are never hard-deleted
-  /// (soft deactivation instead); RESTRICT keeps history bound to its owner.
+  /// The product the movement belongs to. NOT a foreign key (schema v31): the id
+  /// is PRESERVED so the stock ledger keeps its attribution, and a deleted
+  /// product simply leaves a dangling id on rows that already happened. Stock
+  /// history is never rewritten or dropped because a product was removed from the
+  /// catalogue.
   final String productId;
 
   /// The variant the movement belongs to; NULL for movements against the
-  /// product itself. Variants are never hard-deleted (soft deactivation
-  /// instead); RESTRICT keeps history bound to its owner.
+  /// product itself. Plain column, as above.
   final String? variantId;
 
   /// What happened to stock: OPENING, SALE, PURCHASE, ADJUSTMENT_IN or
@@ -13207,9 +13209,6 @@ class $PurchaseItemsTable extends PurchaseItems
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES products (id) ON DELETE RESTRICT',
-    ),
   );
   static const VerificationMeta _variantIdMeta = const VerificationMeta(
     'variantId',
@@ -13221,9 +13220,6 @@ class $PurchaseItemsTable extends PurchaseItems
     true,
     type: DriftSqlType.string,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES product_variants (id) ON DELETE RESTRICT',
-    ),
   );
   static const VerificationMeta _productNameMeta = const VerificationMeta(
     'productName',
@@ -13477,10 +13473,13 @@ class PurchaseItem extends DataClass implements Insertable<PurchaseItem> {
   /// Owning purchase. Deleting a purchase with items is rejected (RESTRICT).
   final String purchaseId;
 
-  /// Product received. Deleting a product with purchase history is rejected.
+  /// Product received. NOT a foreign key (schema v31), for the same reason as
+  /// [SaleItems.productId]: the id is preserved so the purchase ledger keeps its
+  /// attribution, and [productName]/[variantName] are the snapshots a purchase
+  /// history renders. A deleted product must never block or rewrite a receipt.
   final String productId;
 
-  /// Variant received; NULL for non-variant lines. RESTRICT protects history.
+  /// Variant received; NULL for non-variant lines. Plain column, as above.
   final String? variantId;
 
   /// Product name at the time of the purchase (snapshot).
@@ -15478,7 +15477,7 @@ class $ShopProductStockTable extends ShopProductStock
     type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES product_variants (id) ON DELETE RESTRICT',
+      'REFERENCES product_variants (id) ON DELETE SET NULL',
     ),
   );
   static const VerificationMeta _quantityMeta = const VerificationMeta(
@@ -15644,9 +15643,9 @@ class ShopProductStockData extends DataClass
   final String productId;
 
   /// The variant this quantity belongs to, or NULL when the row tracks the
-  /// product itself. RESTRICT mirrors [ProductVariants]' own rule that
-  /// variants are soft-deactivated, never hard-deleted, so an overlay row can
-  /// never lose the variant its number describes.
+  /// product itself. SET NULL so a variant being deleted with its product can
+  /// never block the product delete: the overlay row itself is removed anyway
+  /// by [productId]'s CASCADE, and nulling keeps SQLite's ordering irrelevant.
   ///
   /// [productId] and [variantId] travel together and the two indexes below are
   /// both keyed on the pair, so a row can never claim a variant under the
@@ -20308,6 +20307,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
+        'products',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('product_variants', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
         'shops',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -20410,6 +20416,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('shop_product_stock', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'product_variants',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('shop_product_stock', kind: UpdateKind.update)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -25604,63 +25617,6 @@ final class $$ProductsTableReferences
     );
   }
 
-  static MultiTypedResultKey<$SaleItemsTable, List<SaleItem>>
-  _saleItemsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
-    db.saleItems,
-    aliasName: $_aliasNameGenerator(db.products.id, db.saleItems.productId),
-  );
-
-  $$SaleItemsTableProcessedTableManager get saleItemsRefs {
-    final manager = $$SaleItemsTableTableManager(
-      $_db,
-      $_db.saleItems,
-    ).filter((f) => f.productId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_saleItemsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
-    );
-  }
-
-  static MultiTypedResultKey<$StockMovementsTable, List<StockMovement>>
-  _stockMovementsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
-    db.stockMovements,
-    aliasName: $_aliasNameGenerator(
-      db.products.id,
-      db.stockMovements.productId,
-    ),
-  );
-
-  $$StockMovementsTableProcessedTableManager get stockMovementsRefs {
-    final manager = $$StockMovementsTableTableManager(
-      $_db,
-      $_db.stockMovements,
-    ).filter((f) => f.productId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_stockMovementsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
-    );
-  }
-
-  static MultiTypedResultKey<$PurchaseItemsTable, List<PurchaseItem>>
-  _purchaseItemsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
-    db.purchaseItems,
-    aliasName: $_aliasNameGenerator(db.products.id, db.purchaseItems.productId),
-  );
-
-  $$PurchaseItemsTableProcessedTableManager get purchaseItemsRefs {
-    final manager = $$PurchaseItemsTableTableManager(
-      $_db,
-      $_db.purchaseItems,
-    ).filter((f) => f.productId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_purchaseItemsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
-    );
-  }
-
   static MultiTypedResultKey<$ShopProductStockTable, List<ShopProductStockData>>
   _shopProductStockRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
     db.shopProductStock,
@@ -25841,81 +25797,6 @@ class $$ProductsTableFilterComposer
           }) => $$ProductVariantsTableFilterComposer(
             $db: $db,
             $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<bool> saleItemsRefs(
-    Expression<bool> Function($$SaleItemsTableFilterComposer f) f,
-  ) {
-    final $$SaleItemsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.saleItems,
-      getReferencedColumn: (t) => t.productId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$SaleItemsTableFilterComposer(
-            $db: $db,
-            $table: $db.saleItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<bool> stockMovementsRefs(
-    Expression<bool> Function($$StockMovementsTableFilterComposer f) f,
-  ) {
-    final $$StockMovementsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.stockMovements,
-      getReferencedColumn: (t) => t.productId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$StockMovementsTableFilterComposer(
-            $db: $db,
-            $table: $db.stockMovements,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<bool> purchaseItemsRefs(
-    Expression<bool> Function($$PurchaseItemsTableFilterComposer f) f,
-  ) {
-    final $$PurchaseItemsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.purchaseItems,
-      getReferencedColumn: (t) => t.productId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$PurchaseItemsTableFilterComposer(
-            $db: $db,
-            $table: $db.purchaseItems,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -26241,81 +26122,6 @@ class $$ProductsTableAnnotationComposer
     return f(composer);
   }
 
-  Expression<T> saleItemsRefs<T extends Object>(
-    Expression<T> Function($$SaleItemsTableAnnotationComposer a) f,
-  ) {
-    final $$SaleItemsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.saleItems,
-      getReferencedColumn: (t) => t.productId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$SaleItemsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.saleItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<T> stockMovementsRefs<T extends Object>(
-    Expression<T> Function($$StockMovementsTableAnnotationComposer a) f,
-  ) {
-    final $$StockMovementsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.stockMovements,
-      getReferencedColumn: (t) => t.productId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$StockMovementsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.stockMovements,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<T> purchaseItemsRefs<T extends Object>(
-    Expression<T> Function($$PurchaseItemsTableAnnotationComposer a) f,
-  ) {
-    final $$PurchaseItemsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.purchaseItems,
-      getReferencedColumn: (t) => t.productId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$PurchaseItemsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.purchaseItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
   Expression<T> shopProductStockRefs<T extends Object>(
     Expression<T> Function($$ShopProductStockTableAnnotationComposer a) f,
   ) {
@@ -26359,9 +26165,6 @@ class $$ProductsTableTableManager
             bool shopId,
             bool categoryId,
             bool productVariantsRefs,
-            bool saleItemsRefs,
-            bool stockMovementsRefs,
-            bool purchaseItemsRefs,
             bool shopProductStockRefs,
           })
         > {
@@ -26477,18 +26280,12 @@ class $$ProductsTableTableManager
                 shopId = false,
                 categoryId = false,
                 productVariantsRefs = false,
-                saleItemsRefs = false,
-                stockMovementsRefs = false,
-                purchaseItemsRefs = false,
                 shopProductStockRefs = false,
               }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
                     if (productVariantsRefs) db.productVariants,
-                    if (saleItemsRefs) db.saleItems,
-                    if (stockMovementsRefs) db.stockMovements,
-                    if (purchaseItemsRefs) db.purchaseItems,
                     if (shopProductStockRefs) db.shopProductStock,
                   ],
                   addJoins:
@@ -26559,69 +26356,6 @@ class $$ProductsTableTableManager
                               ),
                           typedResults: items,
                         ),
-                      if (saleItemsRefs)
-                        await $_getPrefetchedData<
-                          Product,
-                          $ProductsTable,
-                          SaleItem
-                        >(
-                          currentTable: table,
-                          referencedTable: $$ProductsTableReferences
-                              ._saleItemsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $$ProductsTableReferences(
-                                db,
-                                table,
-                                p0,
-                              ).saleItemsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.productId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
-                      if (stockMovementsRefs)
-                        await $_getPrefetchedData<
-                          Product,
-                          $ProductsTable,
-                          StockMovement
-                        >(
-                          currentTable: table,
-                          referencedTable: $$ProductsTableReferences
-                              ._stockMovementsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $$ProductsTableReferences(
-                                db,
-                                table,
-                                p0,
-                              ).stockMovementsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.productId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
-                      if (purchaseItemsRefs)
-                        await $_getPrefetchedData<
-                          Product,
-                          $ProductsTable,
-                          PurchaseItem
-                        >(
-                          currentTable: table,
-                          referencedTable: $$ProductsTableReferences
-                              ._purchaseItemsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $$ProductsTableReferences(
-                                db,
-                                table,
-                                p0,
-                              ).purchaseItemsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.productId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
                       if (shopProductStockRefs)
                         await $_getPrefetchedData<
                           Product,
@@ -26667,9 +26401,6 @@ typedef $$ProductsTableProcessedTableManager =
         bool shopId,
         bool categoryId,
         bool productVariantsRefs,
-        bool saleItemsRefs,
-        bool stockMovementsRefs,
-        bool purchaseItemsRefs,
         bool shopProductStockRefs,
       })
     >;
@@ -26755,69 +26486,6 @@ final class $$ProductVariantsTableReferences
     if (item == null) return manager;
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
-
-  static MultiTypedResultKey<$SaleItemsTable, List<SaleItem>>
-  _saleItemsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
-    db.saleItems,
-    aliasName: $_aliasNameGenerator(
-      db.productVariants.id,
-      db.saleItems.variantId,
-    ),
-  );
-
-  $$SaleItemsTableProcessedTableManager get saleItemsRefs {
-    final manager = $$SaleItemsTableTableManager(
-      $_db,
-      $_db.saleItems,
-    ).filter((f) => f.variantId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_saleItemsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
-    );
-  }
-
-  static MultiTypedResultKey<$StockMovementsTable, List<StockMovement>>
-  _stockMovementsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
-    db.stockMovements,
-    aliasName: $_aliasNameGenerator(
-      db.productVariants.id,
-      db.stockMovements.variantId,
-    ),
-  );
-
-  $$StockMovementsTableProcessedTableManager get stockMovementsRefs {
-    final manager = $$StockMovementsTableTableManager(
-      $_db,
-      $_db.stockMovements,
-    ).filter((f) => f.variantId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_stockMovementsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
-    );
-  }
-
-  static MultiTypedResultKey<$PurchaseItemsTable, List<PurchaseItem>>
-  _purchaseItemsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
-    db.purchaseItems,
-    aliasName: $_aliasNameGenerator(
-      db.productVariants.id,
-      db.purchaseItems.variantId,
-    ),
-  );
-
-  $$PurchaseItemsTableProcessedTableManager get purchaseItemsRefs {
-    final manager = $$PurchaseItemsTableTableManager(
-      $_db,
-      $_db.purchaseItems,
-    ).filter((f) => f.variantId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_purchaseItemsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
     );
   }
 
@@ -26963,81 +26631,6 @@ class $$ProductVariantsTableFilterComposer
           ),
     );
     return composer;
-  }
-
-  Expression<bool> saleItemsRefs(
-    Expression<bool> Function($$SaleItemsTableFilterComposer f) f,
-  ) {
-    final $$SaleItemsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.saleItems,
-      getReferencedColumn: (t) => t.variantId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$SaleItemsTableFilterComposer(
-            $db: $db,
-            $table: $db.saleItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<bool> stockMovementsRefs(
-    Expression<bool> Function($$StockMovementsTableFilterComposer f) f,
-  ) {
-    final $$StockMovementsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.stockMovements,
-      getReferencedColumn: (t) => t.variantId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$StockMovementsTableFilterComposer(
-            $db: $db,
-            $table: $db.stockMovements,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<bool> purchaseItemsRefs(
-    Expression<bool> Function($$PurchaseItemsTableFilterComposer f) f,
-  ) {
-    final $$PurchaseItemsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.purchaseItems,
-      getReferencedColumn: (t) => t.variantId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$PurchaseItemsTableFilterComposer(
-            $db: $db,
-            $table: $db.purchaseItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
   }
 
   Expression<bool> shopProductStockRefs(
@@ -27295,81 +26888,6 @@ class $$ProductVariantsTableAnnotationComposer
     return composer;
   }
 
-  Expression<T> saleItemsRefs<T extends Object>(
-    Expression<T> Function($$SaleItemsTableAnnotationComposer a) f,
-  ) {
-    final $$SaleItemsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.saleItems,
-      getReferencedColumn: (t) => t.variantId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$SaleItemsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.saleItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<T> stockMovementsRefs<T extends Object>(
-    Expression<T> Function($$StockMovementsTableAnnotationComposer a) f,
-  ) {
-    final $$StockMovementsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.stockMovements,
-      getReferencedColumn: (t) => t.variantId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$StockMovementsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.stockMovements,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<T> purchaseItemsRefs<T extends Object>(
-    Expression<T> Function($$PurchaseItemsTableAnnotationComposer a) f,
-  ) {
-    final $$PurchaseItemsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.purchaseItems,
-      getReferencedColumn: (t) => t.variantId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$PurchaseItemsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.purchaseItems,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
   Expression<T> shopProductStockRefs<T extends Object>(
     Expression<T> Function($$ShopProductStockTableAnnotationComposer a) f,
   ) {
@@ -27412,9 +26930,6 @@ class $$ProductVariantsTableTableManager
           PrefetchHooks Function({
             bool shopId,
             bool productId,
-            bool saleItemsRefs,
-            bool stockMovementsRefs,
-            bool purchaseItemsRefs,
             bool shopProductStockRefs,
           })
         > {
@@ -27515,17 +27030,11 @@ class $$ProductVariantsTableTableManager
               ({
                 shopId = false,
                 productId = false,
-                saleItemsRefs = false,
-                stockMovementsRefs = false,
-                purchaseItemsRefs = false,
                 shopProductStockRefs = false,
               }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
-                    if (saleItemsRefs) db.saleItems,
-                    if (stockMovementsRefs) db.stockMovements,
-                    if (purchaseItemsRefs) db.purchaseItems,
                     if (shopProductStockRefs) db.shopProductStock,
                   ],
                   addJoins:
@@ -27579,69 +27088,6 @@ class $$ProductVariantsTableTableManager
                       },
                   getPrefetchedDataCallback: (items) async {
                     return [
-                      if (saleItemsRefs)
-                        await $_getPrefetchedData<
-                          ProductVariant,
-                          $ProductVariantsTable,
-                          SaleItem
-                        >(
-                          currentTable: table,
-                          referencedTable: $$ProductVariantsTableReferences
-                              ._saleItemsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $$ProductVariantsTableReferences(
-                                db,
-                                table,
-                                p0,
-                              ).saleItemsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.variantId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
-                      if (stockMovementsRefs)
-                        await $_getPrefetchedData<
-                          ProductVariant,
-                          $ProductVariantsTable,
-                          StockMovement
-                        >(
-                          currentTable: table,
-                          referencedTable: $$ProductVariantsTableReferences
-                              ._stockMovementsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $$ProductVariantsTableReferences(
-                                db,
-                                table,
-                                p0,
-                              ).stockMovementsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.variantId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
-                      if (purchaseItemsRefs)
-                        await $_getPrefetchedData<
-                          ProductVariant,
-                          $ProductVariantsTable,
-                          PurchaseItem
-                        >(
-                          currentTable: table,
-                          referencedTable: $$ProductVariantsTableReferences
-                              ._purchaseItemsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $$ProductVariantsTableReferences(
-                                db,
-                                table,
-                                p0,
-                              ).purchaseItemsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.variantId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
                       if (shopProductStockRefs)
                         await $_getPrefetchedData<
                           ProductVariant,
@@ -27686,9 +27132,6 @@ typedef $$ProductVariantsTableProcessedTableManager =
       PrefetchHooks Function({
         bool shopId,
         bool productId,
-        bool saleItemsRefs,
-        bool stockMovementsRefs,
-        bool purchaseItemsRefs,
         bool shopProductStockRefs,
       })
     >;
@@ -30517,44 +29960,6 @@ final class $$SaleItemsTableReferences
       manager.$state.copyWith(prefetchedData: [item]),
     );
   }
-
-  static $ProductsTable _productIdTable(_$AppDatabase db) =>
-      db.products.createAlias(
-        $_aliasNameGenerator(db.saleItems.productId, db.products.id),
-      );
-
-  $$ProductsTableProcessedTableManager get productId {
-    final $_column = $_itemColumn<String>('product_id')!;
-
-    final manager = $$ProductsTableTableManager(
-      $_db,
-      $_db.products,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_productIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
-
-  static $ProductVariantsTable _variantIdTable(_$AppDatabase db) =>
-      db.productVariants.createAlias(
-        $_aliasNameGenerator(db.saleItems.variantId, db.productVariants.id),
-      );
-
-  $$ProductVariantsTableProcessedTableManager? get variantId {
-    final $_column = $_itemColumn<String>('variant_id');
-    if ($_column == null) return null;
-    final manager = $$ProductVariantsTableTableManager(
-      $_db,
-      $_db.productVariants,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_variantIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
 }
 
 class $$SaleItemsTableFilterComposer
@@ -30568,6 +29973,16 @@ class $$SaleItemsTableFilterComposer
   });
   ColumnFilters<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get variantId => $composableBuilder(
+    column: $table.variantId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -30666,52 +30081,6 @@ class $$SaleItemsTableFilterComposer
     );
     return composer;
   }
-
-  $$ProductsTableFilterComposer get productId {
-    final $$ProductsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableFilterComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableFilterComposer get variantId {
-    final $$ProductVariantsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableFilterComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$SaleItemsTableOrderingComposer
@@ -30725,6 +30094,16 @@ class $$SaleItemsTableOrderingComposer
   });
   ColumnOrderings<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get variantId => $composableBuilder(
+    column: $table.variantId,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -30823,52 +30202,6 @@ class $$SaleItemsTableOrderingComposer
     );
     return composer;
   }
-
-  $$ProductsTableOrderingComposer get productId {
-    final $$ProductsTableOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableOrderingComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableOrderingComposer get variantId {
-    final $$ProductVariantsTableOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableOrderingComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$SaleItemsTableAnnotationComposer
@@ -30882,6 +30215,12 @@ class $$SaleItemsTableAnnotationComposer
   });
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get productId =>
+      $composableBuilder(column: $table.productId, builder: (column) => column);
+
+  GeneratedColumn<String> get variantId =>
+      $composableBuilder(column: $table.variantId, builder: (column) => column);
 
   GeneratedColumn<String> get productName => $composableBuilder(
     column: $table.productName,
@@ -30974,52 +30313,6 @@ class $$SaleItemsTableAnnotationComposer
     );
     return composer;
   }
-
-  $$ProductsTableAnnotationComposer get productId {
-    final $$ProductsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableAnnotationComposer get variantId {
-    final $$ProductVariantsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$SaleItemsTableTableManager
@@ -31035,12 +30328,7 @@ class $$SaleItemsTableTableManager
           $$SaleItemsTableUpdateCompanionBuilder,
           (SaleItem, $$SaleItemsTableReferences),
           SaleItem,
-          PrefetchHooks Function({
-            bool shopId,
-            bool saleId,
-            bool productId,
-            bool variantId,
-          })
+          PrefetchHooks Function({bool shopId, bool saleId})
         > {
   $$SaleItemsTableTableManager(_$AppDatabase db, $SaleItemsTable table)
     : super(
@@ -31133,92 +30421,60 @@ class $$SaleItemsTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback:
-              ({
-                shopId = false,
-                saleId = false,
-                productId = false,
-                variantId = false,
-              }) {
-                return PrefetchHooks(
-                  db: db,
-                  explicitlyWatchedTables: [],
-                  addJoins:
-                      <
-                        T extends TableManagerState<
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic
-                        >
-                      >(state) {
-                        if (shopId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.shopId,
-                                    referencedTable: $$SaleItemsTableReferences
-                                        ._shopIdTable(db),
-                                    referencedColumn: $$SaleItemsTableReferences
-                                        ._shopIdTable(db)
-                                        .id,
-                                  )
-                                  as T;
-                        }
-                        if (saleId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.saleId,
-                                    referencedTable: $$SaleItemsTableReferences
-                                        ._saleIdTable(db),
-                                    referencedColumn: $$SaleItemsTableReferences
-                                        ._saleIdTable(db)
-                                        .id,
-                                  )
-                                  as T;
-                        }
-                        if (productId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.productId,
-                                    referencedTable: $$SaleItemsTableReferences
-                                        ._productIdTable(db),
-                                    referencedColumn: $$SaleItemsTableReferences
-                                        ._productIdTable(db)
-                                        .id,
-                                  )
-                                  as T;
-                        }
-                        if (variantId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.variantId,
-                                    referencedTable: $$SaleItemsTableReferences
-                                        ._variantIdTable(db),
-                                    referencedColumn: $$SaleItemsTableReferences
-                                        ._variantIdTable(db)
-                                        .id,
-                                  )
-                                  as T;
-                        }
+          prefetchHooksCallback: ({shopId = false, saleId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (shopId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.shopId,
+                                referencedTable: $$SaleItemsTableReferences
+                                    ._shopIdTable(db),
+                                referencedColumn: $$SaleItemsTableReferences
+                                    ._shopIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
+                    if (saleId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.saleId,
+                                referencedTable: $$SaleItemsTableReferences
+                                    ._saleIdTable(db),
+                                referencedColumn: $$SaleItemsTableReferences
+                                    ._saleIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
 
-                        return state;
-                      },
-                  getPrefetchedDataCallback: (items) async {
-                    return [];
+                    return state;
                   },
-                );
+              getPrefetchedDataCallback: (items) async {
+                return [];
               },
+            );
+          },
         ),
       );
 }
@@ -31235,12 +30491,7 @@ typedef $$SaleItemsTableProcessedTableManager =
       $$SaleItemsTableUpdateCompanionBuilder,
       (SaleItem, $$SaleItemsTableReferences),
       SaleItem,
-      PrefetchHooks Function({
-        bool shopId,
-        bool saleId,
-        bool productId,
-        bool variantId,
-      })
+      PrefetchHooks Function({bool shopId, bool saleId})
     >;
 typedef $$SalePaymentsTableCreateCompanionBuilder =
     SalePaymentsCompanion Function({
@@ -31910,47 +31161,6 @@ final class $$StockMovementsTableReferences
       manager.$state.copyWith(prefetchedData: [item]),
     );
   }
-
-  static $ProductsTable _productIdTable(_$AppDatabase db) =>
-      db.products.createAlias(
-        $_aliasNameGenerator(db.stockMovements.productId, db.products.id),
-      );
-
-  $$ProductsTableProcessedTableManager get productId {
-    final $_column = $_itemColumn<String>('product_id')!;
-
-    final manager = $$ProductsTableTableManager(
-      $_db,
-      $_db.products,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_productIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
-
-  static $ProductVariantsTable _variantIdTable(_$AppDatabase db) =>
-      db.productVariants.createAlias(
-        $_aliasNameGenerator(
-          db.stockMovements.variantId,
-          db.productVariants.id,
-        ),
-      );
-
-  $$ProductVariantsTableProcessedTableManager? get variantId {
-    final $_column = $_itemColumn<String>('variant_id');
-    if ($_column == null) return null;
-    final manager = $$ProductVariantsTableTableManager(
-      $_db,
-      $_db.productVariants,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_variantIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
 }
 
 class $$StockMovementsTableFilterComposer
@@ -31964,6 +31174,16 @@ class $$StockMovementsTableFilterComposer
   });
   ColumnFilters<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get variantId => $composableBuilder(
+    column: $table.variantId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -32039,52 +31259,6 @@ class $$StockMovementsTableFilterComposer
     );
     return composer;
   }
-
-  $$ProductsTableFilterComposer get productId {
-    final $$ProductsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableFilterComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableFilterComposer get variantId {
-    final $$ProductVariantsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableFilterComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$StockMovementsTableOrderingComposer
@@ -32098,6 +31272,16 @@ class $$StockMovementsTableOrderingComposer
   });
   ColumnOrderings<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get variantId => $composableBuilder(
+    column: $table.variantId,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -32173,52 +31357,6 @@ class $$StockMovementsTableOrderingComposer
     );
     return composer;
   }
-
-  $$ProductsTableOrderingComposer get productId {
-    final $$ProductsTableOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableOrderingComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableOrderingComposer get variantId {
-    final $$ProductVariantsTableOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableOrderingComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$StockMovementsTableAnnotationComposer
@@ -32232,6 +31370,12 @@ class $$StockMovementsTableAnnotationComposer
   });
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get productId =>
+      $composableBuilder(column: $table.productId, builder: (column) => column);
+
+  GeneratedColumn<String> get variantId =>
+      $composableBuilder(column: $table.variantId, builder: (column) => column);
 
   GeneratedColumn<String> get movementType => $composableBuilder(
     column: $table.movementType,
@@ -32295,52 +31439,6 @@ class $$StockMovementsTableAnnotationComposer
     );
     return composer;
   }
-
-  $$ProductsTableAnnotationComposer get productId {
-    final $$ProductsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableAnnotationComposer get variantId {
-    final $$ProductVariantsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$StockMovementsTableTableManager
@@ -32356,7 +31454,7 @@ class $$StockMovementsTableTableManager
           $$StockMovementsTableUpdateCompanionBuilder,
           (StockMovement, $$StockMovementsTableReferences),
           StockMovement,
-          PrefetchHooks Function({bool shopId, bool productId, bool variantId})
+          PrefetchHooks Function({bool shopId})
         > {
   $$StockMovementsTableTableManager(
     _$AppDatabase db,
@@ -32447,80 +31545,48 @@ class $$StockMovementsTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback:
-              ({shopId = false, productId = false, variantId = false}) {
-                return PrefetchHooks(
-                  db: db,
-                  explicitlyWatchedTables: [],
-                  addJoins:
-                      <
-                        T extends TableManagerState<
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic
-                        >
-                      >(state) {
-                        if (shopId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.shopId,
-                                    referencedTable:
-                                        $$StockMovementsTableReferences
-                                            ._shopIdTable(db),
-                                    referencedColumn:
-                                        $$StockMovementsTableReferences
-                                            ._shopIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
-                        if (productId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.productId,
-                                    referencedTable:
-                                        $$StockMovementsTableReferences
-                                            ._productIdTable(db),
-                                    referencedColumn:
-                                        $$StockMovementsTableReferences
-                                            ._productIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
-                        if (variantId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.variantId,
-                                    referencedTable:
-                                        $$StockMovementsTableReferences
-                                            ._variantIdTable(db),
-                                    referencedColumn:
-                                        $$StockMovementsTableReferences
-                                            ._variantIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
+          prefetchHooksCallback: ({shopId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (shopId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.shopId,
+                                referencedTable: $$StockMovementsTableReferences
+                                    ._shopIdTable(db),
+                                referencedColumn:
+                                    $$StockMovementsTableReferences
+                                        ._shopIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
 
-                        return state;
-                      },
-                  getPrefetchedDataCallback: (items) async {
-                    return [];
+                    return state;
                   },
-                );
+              getPrefetchedDataCallback: (items) async {
+                return [];
               },
+            );
+          },
         ),
       );
 }
@@ -32537,7 +31603,7 @@ typedef $$StockMovementsTableProcessedTableManager =
       $$StockMovementsTableUpdateCompanionBuilder,
       (StockMovement, $$StockMovementsTableReferences),
       StockMovement,
-      PrefetchHooks Function({bool shopId, bool productId, bool variantId})
+      PrefetchHooks Function({bool shopId})
     >;
 typedef $$SuppliersTableCreateCompanionBuilder =
     SuppliersCompanion Function({
@@ -33711,44 +32777,6 @@ final class $$PurchaseItemsTableReferences
       manager.$state.copyWith(prefetchedData: [item]),
     );
   }
-
-  static $ProductsTable _productIdTable(_$AppDatabase db) =>
-      db.products.createAlias(
-        $_aliasNameGenerator(db.purchaseItems.productId, db.products.id),
-      );
-
-  $$ProductsTableProcessedTableManager get productId {
-    final $_column = $_itemColumn<String>('product_id')!;
-
-    final manager = $$ProductsTableTableManager(
-      $_db,
-      $_db.products,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_productIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
-
-  static $ProductVariantsTable _variantIdTable(_$AppDatabase db) =>
-      db.productVariants.createAlias(
-        $_aliasNameGenerator(db.purchaseItems.variantId, db.productVariants.id),
-      );
-
-  $$ProductVariantsTableProcessedTableManager? get variantId {
-    final $_column = $_itemColumn<String>('variant_id');
-    if ($_column == null) return null;
-    final manager = $$ProductVariantsTableTableManager(
-      $_db,
-      $_db.productVariants,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_variantIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
 }
 
 class $$PurchaseItemsTableFilterComposer
@@ -33762,6 +32790,16 @@ class $$PurchaseItemsTableFilterComposer
   });
   ColumnFilters<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get variantId => $composableBuilder(
+    column: $table.variantId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -33840,52 +32878,6 @@ class $$PurchaseItemsTableFilterComposer
     );
     return composer;
   }
-
-  $$ProductsTableFilterComposer get productId {
-    final $$ProductsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableFilterComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableFilterComposer get variantId {
-    final $$ProductVariantsTableFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableFilterComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$PurchaseItemsTableOrderingComposer
@@ -33899,6 +32891,16 @@ class $$PurchaseItemsTableOrderingComposer
   });
   ColumnOrderings<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get productId => $composableBuilder(
+    column: $table.productId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get variantId => $composableBuilder(
+    column: $table.variantId,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -33977,52 +32979,6 @@ class $$PurchaseItemsTableOrderingComposer
     );
     return composer;
   }
-
-  $$ProductsTableOrderingComposer get productId {
-    final $$ProductsTableOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableOrderingComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableOrderingComposer get variantId {
-    final $$ProductVariantsTableOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableOrderingComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$PurchaseItemsTableAnnotationComposer
@@ -34036,6 +32992,12 @@ class $$PurchaseItemsTableAnnotationComposer
   });
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get productId =>
+      $composableBuilder(column: $table.productId, builder: (column) => column);
+
+  GeneratedColumn<String> get variantId =>
+      $composableBuilder(column: $table.variantId, builder: (column) => column);
 
   GeneratedColumn<String> get productName => $composableBuilder(
     column: $table.productName,
@@ -34108,52 +33070,6 @@ class $$PurchaseItemsTableAnnotationComposer
     );
     return composer;
   }
-
-  $$ProductsTableAnnotationComposer get productId {
-    final $$ProductsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.productId,
-      referencedTable: $db.products,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.products,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-
-  $$ProductVariantsTableAnnotationComposer get variantId {
-    final $$ProductVariantsTableAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.variantId,
-      referencedTable: $db.productVariants,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $$ProductVariantsTableAnnotationComposer(
-            $db: $db,
-            $table: $db.productVariants,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
 }
 
 class $$PurchaseItemsTableTableManager
@@ -34169,12 +33085,7 @@ class $$PurchaseItemsTableTableManager
           $$PurchaseItemsTableUpdateCompanionBuilder,
           (PurchaseItem, $$PurchaseItemsTableReferences),
           PurchaseItem,
-          PrefetchHooks Function({
-            bool shopId,
-            bool purchaseId,
-            bool productId,
-            bool variantId,
-          })
+          PrefetchHooks Function({bool shopId, bool purchaseId})
         > {
   $$PurchaseItemsTableTableManager(_$AppDatabase db, $PurchaseItemsTable table)
     : super(
@@ -34251,100 +33162,60 @@ class $$PurchaseItemsTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback:
-              ({
-                shopId = false,
-                purchaseId = false,
-                productId = false,
-                variantId = false,
-              }) {
-                return PrefetchHooks(
-                  db: db,
-                  explicitlyWatchedTables: [],
-                  addJoins:
-                      <
-                        T extends TableManagerState<
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic,
-                          dynamic
-                        >
-                      >(state) {
-                        if (shopId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.shopId,
-                                    referencedTable:
-                                        $$PurchaseItemsTableReferences
-                                            ._shopIdTable(db),
-                                    referencedColumn:
-                                        $$PurchaseItemsTableReferences
-                                            ._shopIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
-                        if (purchaseId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.purchaseId,
-                                    referencedTable:
-                                        $$PurchaseItemsTableReferences
-                                            ._purchaseIdTable(db),
-                                    referencedColumn:
-                                        $$PurchaseItemsTableReferences
-                                            ._purchaseIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
-                        if (productId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.productId,
-                                    referencedTable:
-                                        $$PurchaseItemsTableReferences
-                                            ._productIdTable(db),
-                                    referencedColumn:
-                                        $$PurchaseItemsTableReferences
-                                            ._productIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
-                        if (variantId) {
-                          state =
-                              state.withJoin(
-                                    currentTable: table,
-                                    currentColumn: table.variantId,
-                                    referencedTable:
-                                        $$PurchaseItemsTableReferences
-                                            ._variantIdTable(db),
-                                    referencedColumn:
-                                        $$PurchaseItemsTableReferences
-                                            ._variantIdTable(db)
-                                            .id,
-                                  )
-                                  as T;
-                        }
+          prefetchHooksCallback: ({shopId = false, purchaseId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (shopId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.shopId,
+                                referencedTable: $$PurchaseItemsTableReferences
+                                    ._shopIdTable(db),
+                                referencedColumn: $$PurchaseItemsTableReferences
+                                    ._shopIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
+                    if (purchaseId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.purchaseId,
+                                referencedTable: $$PurchaseItemsTableReferences
+                                    ._purchaseIdTable(db),
+                                referencedColumn: $$PurchaseItemsTableReferences
+                                    ._purchaseIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
 
-                        return state;
-                      },
-                  getPrefetchedDataCallback: (items) async {
-                    return [];
+                    return state;
                   },
-                );
+              getPrefetchedDataCallback: (items) async {
+                return [];
               },
+            );
+          },
         ),
       );
 }
@@ -34361,12 +33232,7 @@ typedef $$PurchaseItemsTableProcessedTableManager =
       $$PurchaseItemsTableUpdateCompanionBuilder,
       (PurchaseItem, $$PurchaseItemsTableReferences),
       PurchaseItem,
-      PrefetchHooks Function({
-        bool shopId,
-        bool purchaseId,
-        bool productId,
-        bool variantId,
-      })
+      PrefetchHooks Function({bool shopId, bool purchaseId})
     >;
 typedef $$PurchaseSequencesTableCreateCompanionBuilder =
     PurchaseSequencesCompanion Function({

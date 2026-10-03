@@ -64,11 +64,17 @@ final class AppMigrations {
   ///   membership_active flag (default false) and an optional
   ///   membership_fee_paise snapshot; purely additive, every existing
   ///   customer stays a non-member.
-  ///   - v11 → v12 adds owner/staff access control: a shops table (the
+  /// - v11 → v12 adds owner/staff access control: a shops table (the
   ///   single local business context, populated at owner bootstrap), users
   ///   gain auth_user_id (Supabase identity linkage, unique when present)
   ///   and shop_id (shop scope), and staff_permissions stores normalized
   ///   per-staff capability rows. Append-only; existing data untouched.
+  /// - v30 → v31 makes a product truly deletable: the six historical
+  ///   product/variant foreign keys on sale_items, purchase_items and
+  ///   stock_movements are dropped (the id is kept as a plain column, so every
+  ///   bill, purchase and stock movement survives with its own name/price
+  ///   snapshot), product_variants.product_id becomes `ON DELETE CASCADE` and
+  ///   shop_product_stock.variant_id becomes `ON DELETE SET NULL`.
   ///
   /// Everything lives in the drift-generated [versions.stepByStep]; unknown
   /// versions fail loudly.
@@ -823,6 +829,230 @@ final class AppMigrations {
         await m.createTable(schema.salePayments);
         await m.createIndex(schema.idxSalePaymentsSale);
       },
+      from30To31: (m, schema) async {
+        // Product true-delete. A product that had any sale, purchase or stock
+        // history could never be deleted: `sale_items.product_id`,
+        // `purchase_items.product_id` and `stock_movements.product_id` (plus all
+        // three `variant_id` columns) carried `ON DELETE RESTRICT`, so the app
+        // had to fake deletion with a hidden, deactivated row. This step makes a
+        // real hard delete possible while history is untouched.
+        //
+        // Two halves, and they mean opposite things:
+        //
+        //  * HISTORICAL ledgers — the six foreign keys are DROPPED and the id is
+        //    KEPT as a plain column, exactly as `sales.customer_id` was treated
+        //    in v25 -> v26. Nothing is nulled and no historical row is rewritten
+        //    beyond the rebuild: each of those rows already carries its own
+        //    `product_name` / `variant_name` / `sku` / price snapshot, which is
+        //    what receipts and reports actually render, so a deleted product
+        //    simply leaves a dangling id and the bill still reads correctly.
+        //  * OPERATIONAL rows — `product_variants.product_id` becomes `CASCADE`
+        //    so a variant (part of the product's definition, not its history)
+        //    dies with its product instead of blocking it, and
+        //    `shop_product_stock.variant_id` becomes `SET NULL` so a current
+        //    stock overlay can never veto a variant's removal. That overlay row
+        //    is itself removed by `shop_product_stock.product_id`'s existing
+        //    `CASCADE`, so no dangling *active* stock is left behind.
+        //
+        // Every rebuild is guarded per foreign key (see
+        // [_foreignKeyOnDeleteIs]), so an already-migrated device is left
+        // completely alone rather than having its history rewritten twice.
+        // `defer_foreign_keys` postpones enforcement to COMMIT, which is what
+        // lets the referenced `product_variants` table be dropped and recreated
+        // while `shop_product_stock` still points at it. Verified against a
+        // populated v30 database in
+        // `test/core/database/product_true_delete_migration_test.dart`.
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'sale_items',
+          backup: 'sale_items_bak_v31',
+          columns: const [
+            'id',
+            'shop_id',
+            'sale_id',
+            'product_id',
+            'variant_id',
+            'product_name',
+            'variant_name',
+            'sku',
+            'unit_price_paise',
+            'quantity',
+            'line_total_paise',
+            'offer_discount_paise',
+            'applied_offer_id',
+            'applied_offer_name',
+            'applied_offer_type',
+          ],
+          needsRebuild:
+              await _foreignKeyOnDeleteIs(
+                m.database,
+                'sale_items',
+                'product_id',
+                'products',
+                'RESTRICT',
+              ) ||
+              await _foreignKeyOnDeleteIs(
+                m.database,
+                'sale_items',
+                'variant_id',
+                'product_variants',
+                'RESTRICT',
+              ),
+          create: () async {
+            await m.createTable(schema.saleItems);
+            await m.createIndex(schema.idxSaleItemsShop);
+            await m.createIndex(schema.idxSaleItemsSaleId);
+          },
+        );
+
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'purchase_items',
+          backup: 'purchase_items_bak_v31',
+          columns: const [
+            'id',
+            'shop_id',
+            'purchase_id',
+            'product_id',
+            'variant_id',
+            'product_name',
+            'variant_name',
+            'sku',
+            'unit_cost_paise',
+            'quantity',
+            'line_total_paise',
+          ],
+          needsRebuild:
+              await _foreignKeyOnDeleteIs(
+                m.database,
+                'purchase_items',
+                'product_id',
+                'products',
+                'RESTRICT',
+              ) ||
+              await _foreignKeyOnDeleteIs(
+                m.database,
+                'purchase_items',
+                'variant_id',
+                'product_variants',
+                'RESTRICT',
+              ),
+          create: () async {
+            await m.createTable(schema.purchaseItems);
+            await m.createIndex(schema.idxPurchaseItemsShop);
+            await m.createIndex(schema.idxPurchaseItemsPurchaseId);
+          },
+        );
+
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'stock_movements',
+          backup: 'stock_movements_bak_v31',
+          columns: const [
+            'id',
+            'shop_id',
+            'product_id',
+            'variant_id',
+            'movement_type',
+            'quantity',
+            'stock_before',
+            'stock_after',
+            'reason',
+            'note',
+            'reference_type',
+            'reference_id',
+            'created_at',
+            'updated_at',
+          ],
+          needsRebuild:
+              await _foreignKeyOnDeleteIs(
+                m.database,
+                'stock_movements',
+                'product_id',
+                'products',
+                'RESTRICT',
+              ) ||
+              await _foreignKeyOnDeleteIs(
+                m.database,
+                'stock_movements',
+                'variant_id',
+                'product_variants',
+                'RESTRICT',
+              ),
+          create: () async {
+            await m.createTable(schema.stockMovements);
+            await m.createIndex(schema.idxStockMovementsShop);
+            await m.createIndex(schema.idxStockMovementsProductCreatedAt);
+            await m.createIndex(schema.idxStockMovementsVariantCreatedAt);
+          },
+        );
+
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'product_variants',
+          backup: 'product_variants_bak_v31',
+          columns: const [
+            'id',
+            'shop_id',
+            'product_id',
+            'name',
+            'sku',
+            'selling_price_paise',
+            'cost_price_paise',
+            'stock_quantity',
+            'low_stock_mode',
+            'low_stock_threshold',
+            'membership_enabled',
+            'member_price_paise',
+            'is_active',
+            'created_at',
+            'updated_at',
+          ],
+          needsRebuild: await _foreignKeyOnDeleteIs(
+            m.database,
+            'product_variants',
+            'product_id',
+            'products',
+            'RESTRICT',
+          ),
+          create: () async {
+            await m.createTable(schema.productVariants);
+            await m.createIndex(schema.idxProductVariantsShop);
+            await m.createIndex(schema.idxProductVariantsProductId);
+            await m.createIndex(schema.idxProductVariantsSku);
+            await m.createIndex(schema.idxProductVariantsUpdatedAt);
+          },
+        );
+
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'shop_product_stock',
+          backup: 'shop_product_stock_bak_v31',
+          columns: const [
+            'id',
+            'shop_id',
+            'product_id',
+            'variant_id',
+            'quantity',
+            'created_at',
+            'updated_at',
+          ],
+          needsRebuild: await _foreignKeyOnDeleteIs(
+            m.database,
+            'shop_product_stock',
+            'variant_id',
+            'product_variants',
+            'RESTRICT',
+          ),
+          create: () async {
+            await m.createTable(schema.shopProductStock);
+            await m.createIndex(schema.idxShopProductStockShop);
+            await m.createIndex(schema.idxShopProductStockProduct);
+            await m.createIndex(schema.uxShopProductStockProductLevel);
+            await m.createIndex(schema.uxShopProductStockVariantLevel);
+          },
+        );
+      },
     )(migrator, from, to);
   }
 
@@ -856,6 +1086,32 @@ final class AppMigrations {
     final ddl = row?.data['sql'] as String?;
     if (ddl == null) return false;
     return ddl.contains('REFERENCES $target');
+  }
+
+  /// True when [table] declares a foreign key from [column] to [target] whose
+  /// `ON DELETE` action is still [onDelete], i.e. the rebuild is still needed.
+  ///
+  /// Deliberately more precise than [_referencesTable], which only asks *whether*
+  /// a foreign key exists. A step that *retargets* one (`RESTRICT` -> `CASCADE`
+  /// or `RESTRICT` -> `SET NULL`) must not keep rebuilding a table that already
+  /// carries the new action, because rebuilding rewrites every historical row —
+  /// not something to do twice. `PRAGMA foreign_key_list` is read per foreign
+  /// key instead of pattern-matching the DDL text, so a second foreign key on
+  /// the same table with a different action cannot be mistaken for this one.
+  static Future<bool> _foreignKeyOnDeleteIs(
+    GeneratedDatabase db,
+    String table,
+    String column,
+    String target,
+    String onDelete,
+  ) async {
+    final rows = await db.customSelect('PRAGMA foreign_key_list($table)').get();
+    return rows.any(
+      (row) =>
+          row.read<String>('from') == column &&
+          row.read<String>('table') == target &&
+          row.read<String>('on_delete') == onDelete,
+    );
   }
 
   /// True when [table]'s DDL does not already mention [value], i.e. the CHECK

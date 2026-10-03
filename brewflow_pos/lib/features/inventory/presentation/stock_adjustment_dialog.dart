@@ -167,13 +167,22 @@ final class StockAdjustmentDialogState
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<ProductVariant>(
                 initialValue: _variant,
+                // Fill the dialog width so long variant names ellipsize.
+                isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Variant',
                   border: OutlineInputBorder(),
                 ),
                 items: [
                   for (final variant in widget.product.variants)
-                    DropdownMenuItem(value: variant, child: Text(variant.name)),
+                    DropdownMenuItem(
+                      value: variant,
+                      child: Text(
+                        variant.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                 ],
                 onChanged: (variant) => setState(() {
                   _variant = variant;
@@ -218,6 +227,8 @@ final class StockAdjustmentDialogState
             SizedBox(height: AppSpacing.md),
             DropdownButtonFormField<StockAdjustmentReason>(
               initialValue: null,
+              // Fill the dialog width like every other form dropdown.
+              isExpanded: true,
               items: [
                 for (final reason in StockAdjustmentReason.values)
                   DropdownMenuItem(

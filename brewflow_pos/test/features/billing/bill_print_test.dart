@@ -14,10 +14,14 @@ import 'package:brewflow_pos/features/printing/domain/printer_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:brewflow_pos/core/storage/app_storage.dart';
+import 'package:brewflow_pos/core/storage/secure_storage.dart';
 
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
+import '../../helpers/fake_preferences_storage.dart';
+import '../../helpers/test_providers.dart';
 
 /// Printer that always fails — used to prove the sale survives print errors.
 final class FailingPrinterService implements PrinterService {
@@ -110,6 +114,9 @@ _pumpCompletedSale(WidgetTester tester) async {
         costPricePaise: null,
         stockQuantity: 5,
         isActive: true,
+        // POS reads are shop-scoped, so the seeded product must belong to the
+        // Cafe the fixture signs in as.
+        shopId: kTestCafeShopId,
         createdAt: DateTime.now().toUtc(),
         updatedAt: DateTime.now().toUtc(),
       ),
@@ -118,6 +125,7 @@ _pumpCompletedSale(WidgetTester tester) async {
   final printer = FailingPrinterService();
   final container = ProviderContainer(
     overrides: [
+      ...businessScopeOverrides(),
       inventoryRepositoryProvider.overrideWithValue(inventory),
       billingRepositoryProvider.overrideWithValue(billing),
       customersRepositoryProvider.overrideWithValue(FakeCustomersRepository()),
@@ -204,6 +212,9 @@ _pumpReceipt(
         costPricePaise: null,
         stockQuantity: 5,
         isActive: true,
+        // POS reads are shop-scoped, so the seeded product must belong to the
+        // Cafe the fixture signs in as.
+        shopId: kTestCafeShopId,
         createdAt: DateTime.now().toUtc(),
         updatedAt: DateTime.now().toUtc(),
       ),
@@ -212,6 +223,7 @@ _pumpReceipt(
   final customersRepo = customers ?? FakeCustomersRepository();
   final container = ProviderContainer(
     overrides: [
+      ...businessScopeOverrides(),
       inventoryRepositoryProvider.overrideWithValue(inventory),
       billingRepositoryProvider.overrideWithValue(billing),
       customersRepositoryProvider.overrideWithValue(customersRepo),
@@ -263,7 +275,47 @@ Future<void> _selectCustomer(WidgetTester tester, String name) async {
   await tester.pumpAndSettle();
 }
 
+/// In-memory [SecureStorage] for this test file.
+class _FakeSecure implements SecureStorage {
+  final Map<String, String> _values = {};
+
+  @override
+  Future<String?> read(String key) async => _values[key];
+
+  @override
+  Future<void> write(String key, String value) async => _values[key] = value;
+
+  @override
+  Future<bool> readBool(String key, {bool defaultValue = false}) async =>
+      _values[key] == 'true';
+
+  @override
+  Future<void> writeBool(String key, bool value) async =>
+      _values[key] = value.toString();
+
+  @override
+  Future<int> readInt(String key, {int defaultValue = 0}) async =>
+      int.tryParse(_values[key] ?? '') ?? defaultValue;
+
+  @override
+  Future<void> writeInt(String key, int value) async =>
+      _values[key] = value.toString();
+
+  @override
+  Future<bool> contains(String key) async => _values.containsKey(key);
+
+  @override
+  Future<void> delete(String key) async => _values.remove(key);
+
+  @override
+  Future<void> clear() async => _values.clear();
+}
+
 void main() {
+  final prefs = FakePreferencesStorage();
+  setUpAll(() async {
+    await AppStorage.init(secure: _FakeSecure(), preferences: prefs);
+  });
   testWidgets('print failure surfaces the message and keeps the sale intact', (
     tester,
   ) async {

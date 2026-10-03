@@ -1,8 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
-import 'product_variants.dart';
-import 'products.dart';
 import 'shops.dart';
 
 /// ---------------------------------------------------------------------------
@@ -25,9 +23,9 @@ import 'shops.dart';
 ///   by design; sales and purchases are immutable in this app and the
 ///   reference is a snapshot.
 /// - [StockMovements.variantId] identifies the variant a movement belongs to
-///   (NULL for movements against the product itself). Variants are never
-///   hard-deleted (soft deactivation instead), so the RESTRICT FK is safe and
-///   keeps the audit trail bound to its owner.
+///   (NULL for movements against the product itself). It carries no FK: a
+///   deleted product or variant must never block or rewrite history, so the
+///   id is simply left dangling on rows that already happened.
 /// - Movements are never edited or deleted; history begins with Phase 9
 ///   implementation — no backfill rows are fabricated for existing data.
 /// - No operator/user column and no price/cost snapshots: neither exists in
@@ -54,19 +52,16 @@ class StockMovements extends Table {
   TextColumn get shopId =>
       text().nullable().references(Shops, #id, onDelete: KeyAction.cascade)();
 
-  /// The product the movement belongs to. Products are never hard-deleted
-  /// (soft deactivation instead); RESTRICT keeps history bound to its owner.
-  TextColumn get productId =>
-      text().references(Products, #id, onDelete: KeyAction.restrict)();
+  /// The product the movement belongs to. NOT a foreign key (schema v31): the id
+  /// is PRESERVED so the stock ledger keeps its attribution, and a deleted
+  /// product simply leaves a dangling id on rows that already happened. Stock
+  /// history is never rewritten or dropped because a product was removed from the
+  /// catalogue.
+  TextColumn get productId => text()();
 
   /// The variant the movement belongs to; NULL for movements against the
-  /// product itself. Variants are never hard-deleted (soft deactivation
-  /// instead); RESTRICT keeps history bound to its owner.
-  TextColumn get variantId => text().nullable().references(
-    ProductVariants,
-    #id,
-    onDelete: KeyAction.restrict,
-  )();
+  /// product itself. Plain column, as above.
+  TextColumn get variantId => text().nullable()();
 
   /// What happened to stock: OPENING, SALE, PURCHASE, ADJUSTMENT_IN or
   /// ADJUSTMENT_OUT.

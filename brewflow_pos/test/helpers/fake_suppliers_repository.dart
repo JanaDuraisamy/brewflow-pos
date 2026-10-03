@@ -21,6 +21,12 @@ final class FakeSuppliersRepository implements SuppliersRepository {
   /// Number of [suppliers] calls.
   int suppliersCalls = 0;
 
+  /// [shopIds] the most recent read was called with.
+  ///
+  /// Lets a test assert the controller resolved and forwarded real scope
+  /// instead of silently falling back to the legacy unscoped read.
+  List<String>? lastSuppliersShopIds;
+
   /// Supplier ids that have purchase history (so delete degrades to
   /// deactivation). Tests can populate this to exercise the safe path.
   final Set<String> suppliersWithPurchases = {};
@@ -60,10 +66,15 @@ final class FakeSuppliersRepository implements SuppliersRepository {
   Future<List<Supplier>> suppliers({
     String? search,
     SupplierStatusFilter status = SupplierStatusFilter.all,
+    List<String>? shopIds,
   }) async {
     suppliersCalls += 1;
     await _gate();
     _throwIfLoadError();
+    lastSuppliersShopIds = shopIds;
+    // A non-null [shopIds] is a hard scope: an empty list means the business
+    // has no shop of its own, so nothing may be returned.
+    if (shopIds != null && shopIds.isEmpty) return const [];
     var result = List<Supplier>.of(storedSuppliers);
     final query = search?.trim() ?? '';
     if (query.isNotEmpty) {
@@ -89,12 +100,12 @@ final class FakeSuppliersRepository implements SuppliersRepository {
   }
 
   @override
-  Future<Supplier?> supplierById(String id) async {
+  Future<Supplier?> supplierById(String id, {List<String>? shopIds}) async {
     _throwIfLoadError();
+    lastSuppliersShopIds = shopIds;
+    if (shopIds != null && shopIds.isEmpty) return null;
     for (final supplier in storedSuppliers) {
-      if (supplier.id == id) {
-        return supplier;
-      }
+      if (supplier.id == id) return supplier;
     }
     return null;
   }

@@ -53,6 +53,9 @@ class OffersPage extends ConsumerWidget {
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        // Unique hero tag: shell branches stay mounted together, so the
+        // default shared tag collides across branches on navigation.
+        heroTag: 'offers-add-fab',
         onPressed: () => _showCreateDialog(context, ref),
         icon: const Icon(Icons.local_offer_outlined),
         label: const Text('New Offer'),
@@ -73,7 +76,9 @@ class OffersPage extends ConsumerWidget {
             );
           }
           return ListView.separated(
-            padding: AppInsets.screen,
+            // Bottom clearance for the extended "New Offer" FAB: the last
+            // offer must scroll fully above it instead of hiding underneath.
+            padding: AppInsets.screen.copyWith(bottom: AppSpacing.mega),
             itemCount: offers.length,
             separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (context, i) {
@@ -426,8 +431,8 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.initial == null ? 'New Offer' : 'Edit Offer'),
-      content: SizedBox(
-        width: 460,
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
         child: Form(
           key: _form,
           child: SingleChildScrollView(
@@ -446,6 +451,9 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                 const SizedBox(height: AppSpacing.md),
                 DropdownButtonFormField<OfferType>(
                   initialValue: _type,
+                  // Fill the dialog width; the type labels must ellipsize,
+                  // never size the button past a 280dp phone dialog.
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Type',
                     border: OutlineInputBorder(),
@@ -851,86 +859,79 @@ class _ProductSelectorState extends ConsumerState<_ProductSelector> {
             ],
           );
 
+    // One scroll owner: the dialog's outer SingleChildScrollView. The product
+    // rows are laid out directly instead of inside a ListView, so they size
+    // to their content, never scroll on their own, and — unlike a viewport —
+    // can still answer the intrinsic-dimension pass AlertDialog runs on its
+    // content (a shrink-wrapped ListView refuses intrinsics, which threw
+    // during layout and left the whole dialog body unbuilt). A nested
+    // same-axis list inside a fixed box used to capture the gesture and trap
+    // the tier rows and actions below it.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          height: 200,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SearchField(
-                controller: _search,
-                hintText: widget.hint,
-                onChanged: (_) {},
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Expanded(
-                child: visible.isEmpty
-                    ? Center(
-                        child: Text(
-                          active.isEmpty
-                              ? 'No products in this business yet.'
-                              : 'No products match your search.',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      )
-                    : ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: visible.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final p = visible[i];
-                          final isSelected = widget.selected.contains(p.id);
-                          return InkWell(
-                            onTap: () => _toggle(p),
-                            child: Padding(
-                              padding: AppInsets.sm,
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    isSelected
-                                        ? Icons.check_circle
-                                        : Icons.radio_button_unchecked,
-                                    size: 20,
-                                    color: isSelected
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                  ),
-                                  const SizedBox(width: AppSpacing.md),
-                                  Expanded(
-                                    child: Text(
-                                      p.name,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.bodyMedium,
-                                    ),
-                                  ),
-                                  const SizedBox(width: AppSpacing.md),
-                                  Text(
-                                    Money.formatPaise(p.sellingPricePaise),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                                ],
+        SearchField(
+          controller: _search,
+          hintText: widget.hint,
+          onChanged: (_) {},
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        visible.isEmpty
+            ? Center(
+                child: Text(
+                  active.isEmpty
+                      ? 'No products in this business yet.'
+                      : 'No products match your search.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < visible.length; i++) ...[
+                    if (i > 0) const Divider(height: 1),
+                    InkWell(
+                      onTap: () => _toggle(visible[i]),
+                      child: Padding(
+                        padding: AppInsets.sm,
+                        child: Row(
+                          children: [
+                            Icon(
+                              widget.selected.contains(visible[i].id)
+                                  ? Icons.check_circle
+                                  : Icons.radio_button_unchecked,
+                              size: 20,
+                              color: widget.selected.contains(visible[i].id)
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: AppSpacing.md),
+                            Expanded(
+                              child: Text(
+                                visible[i].name,
+                                style: Theme.of(context).textTheme.bodyMedium,
                               ),
                             ),
-                          );
-                        },
+                            const SizedBox(width: AppSpacing.md),
+                            Text(
+                              Money.formatPaise(visible[i].sellingPricePaise),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
                       ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
-        ),
         const SizedBox(height: AppSpacing.sm),
         selectedChips,
         if (widget.errorText != null) ...[

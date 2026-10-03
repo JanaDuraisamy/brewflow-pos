@@ -14,6 +14,7 @@ import 'package:brewflow_pos/app/providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../helpers/test_providers.dart';
 
 import '../../helpers/fake_billing_repository.dart';
 import '../../helpers/fake_cloud_shop_resolver.dart';
@@ -175,6 +176,9 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        userProfileProvider.overrideWithBuild(
+          (ref, notifier) => testOwnerProfile(),
+        ),
         inventoryRepositoryProvider.overrideWithValue(inventory),
         billingRepositoryProvider.overrideWithValue(billing),
         customersRepositoryProvider.overrideWithValue(customers),

@@ -122,7 +122,13 @@ final class ManagementReportLoader {
 
     try {
       final shopIds = await readShopIds();
-      final scopedShopIds = shopIds.isEmpty ? null : shopIds;
+      // A resolved scope is a HARD scope and must be forwarded verbatim.
+      // Collapsing an empty list to null — the repositories' "every business"
+      // value — inverted the switcher's fail-closed answer and published the
+      // whole company's takings to a session that resolved no business at all.
+      final scopedShopIds = shopIds;
+      // `staffMembers` takes a single shop, so an empty scope gets no roster
+      // instead of the full one.
       final staffShopId = shopIds.isEmpty ? null : shopIds.first;
 
       final shopSettings = await settings.load();
@@ -231,7 +237,9 @@ final class ManagementReportLoader {
 
       // ---- Staff Salary Details ---------------------------------------------
       final staffRows = <ManagementStaffRow>[];
-      final members = await staff.staffMembers(shopId: staffShopId);
+      final members = shopIds.isEmpty
+          ? const <UserProfile>[]
+          : await staff.staffMembers(shopId: staffShopId);
       for (final member in members) {
         final memberShopIds = member.shopId == null
             ? scopedShopIds

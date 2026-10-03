@@ -40,13 +40,19 @@ final class ExpensesPage extends ConsumerWidget {
     final expenses = ref.watch(expensesProvider);
     final filter = ref.watch(expensesFilterProvider);
     final hasAny = (ref.watch(expensesCountProvider).value ?? 0) > 0;
-    final phone = MediaQuery.sizeOf(context).width < 600;
 
-    return Padding(
-      padding: AppInsets.screen,
-      child: phone
-          ? _buildPhoneLayout(context, ref, expenses, filter, hasAny)
-          : _buildDesktopLayout(context, ref, expenses, filter, hasAny),
+    // Content width, not window width, so the phone/desktop split matches
+    // the width the page actually gets beside the collapsed rail gutter.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final phone = constraints.maxWidth < 600;
+        return Padding(
+          padding: AppInsets.screen,
+          child: phone
+              ? _buildPhoneLayout(context, ref, expenses, filter, hasAny)
+              : _buildDesktopLayout(context, ref, expenses, filter, hasAny),
+        );
+      },
     );
   }
 
@@ -370,9 +376,18 @@ final class _FilterBar extends ConsumerStatefulWidget {
 }
 
 final class _FilterBarState extends ConsumerState<_FilterBar> {
-  late final TextEditingController _search = TextEditingController(
-    text: ref.read(expensesFilterProvider).query,
-  );
+  // Initialized in initState (never lazily): a `late final` initializer runs
+  // on first access, so disposing a state that never built would run
+  // `ref.read` on an unmounted widget and crash fast navigations.
+  late final TextEditingController _search;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(
+      text: ref.read(expensesFilterProvider).query,
+    );
+  }
 
   @override
   void dispose() {
@@ -402,122 +417,128 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
   @override
   Widget build(BuildContext context) {
     final filter = ref.watch(expensesFilterProvider);
-    final search = SizedBox(
-      width: MediaQuery.sizeOf(context).width < 600 ? double.infinity : 320,
-      child: SearchField(
-        controller: _search,
-        hintText: 'Search by name or note',
-        onChanged: (value) =>
-            ref.read(expensesFilterProvider.notifier).setQuery(value),
-      ),
-    );
-    final statusChips = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: _expenseStatusFilterChips(ref, filter),
-    );
-    final compact = MediaQuery.sizeOf(context).width < 600;
-    final dropdownRow = SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _CategoryDropdown(selected: filter.category),
-          const SizedBox(width: AppSpacing.md),
-          _PaymentDropdown(selected: filter.paymentMethod),
-          const SizedBox(width: AppSpacing.md),
-          _DateDropdown(
-            preset: filter.datePreset,
-            onChanged: (preset) {
-              if (preset == OrdersDatePreset.custom) {
-                _pickCustomRange(preset);
-                return;
-              }
-              ref.read(expensesFilterProvider.notifier).setPreset(preset);
-            },
+    // Content width, not window width, so the filter bar matches the width
+    // it actually gets beside the collapsed rail gutter.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 600;
+        final search = SizedBox(
+          width: compact ? double.infinity : 320,
+          child: SearchField(
+            controller: _search,
+            hintText: 'Search by name or note',
+            onChanged: (value) =>
+                ref.read(expensesFilterProvider.notifier).setQuery(value),
           ),
-        ],
-      ),
-    );
-    if (compact) {
-      final notifier = ref.read(expensesFilterProvider.notifier);
-      final activeCount =
-          (filter.status != ExpenseStatusFilter.all ? 1 : 0) +
-          (filter.category != null ? 1 : 0) +
-          (filter.paymentMethod != null ? 1 : 0) +
-          (filter.datePreset != OrdersDatePreset.all ? 1 : 0);
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          search,
-          const SizedBox(height: AppSpacing.md),
-          FilterSheetButton(
-            activeCount: activeCount,
-            onPressed: () => showFilterSheet(
-              context,
-              title: 'Filter Expenses',
-              onReset: notifier.clear,
+        );
+        final statusChips = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: _expenseStatusFilterChips(ref, filter),
+        );
+        final dropdownRow = SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _CategoryDropdown(selected: filter.category),
+              const SizedBox(width: AppSpacing.md),
+              _PaymentDropdown(selected: filter.paymentMethod),
+              const SizedBox(width: AppSpacing.md),
+              _DateDropdown(
+                preset: filter.datePreset,
+                onChanged: (preset) {
+                  if (preset == OrdersDatePreset.custom) {
+                    _pickCustomRange(preset);
+                    return;
+                  }
+                  ref.read(expensesFilterProvider.notifier).setPreset(preset);
+                },
+              ),
+            ],
+          ),
+        );
+        if (compact) {
+          final notifier = ref.read(expensesFilterProvider.notifier);
+          final activeCount =
+              (filter.status != ExpenseStatusFilter.all ? 1 : 0) +
+              (filter.category != null ? 1 : 0) +
+              (filter.paymentMethod != null ? 1 : 0) +
+              (filter.datePreset != OrdersDatePreset.all ? 1 : 0);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              search,
+              const SizedBox(height: AppSpacing.md),
+              FilterSheetButton(
+                activeCount: activeCount,
+                onPressed: () => showFilterSheet(
+                  context,
+                  title: 'Filter Expenses',
+                  onReset: notifier.clear,
+                  children: [
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final live = ref.watch(expensesFilterProvider);
+                        final liveNotifier = ref.read(
+                          expensesFilterProvider.notifier,
+                        );
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _filterSectionLabel(context, 'Status'),
+                            Wrap(
+                              spacing: AppSpacing.sm,
+                              runSpacing: AppSpacing.sm,
+                              children: _expenseStatusFilterChips(ref, live),
+                            ),
+                            const SizedBox(height: AppSpacing.md),
+                            _filterSectionLabel(context, 'Category'),
+                            _CategoryDropdown(selected: live.category),
+                            const SizedBox(height: AppSpacing.md),
+                            _filterSectionLabel(context, 'Payment'),
+                            _PaymentDropdown(selected: live.paymentMethod),
+                            const SizedBox(height: AppSpacing.md),
+                            _filterSectionLabel(context, 'Date'),
+                            _DateDropdown(
+                              preset: live.datePreset,
+                              onChanged: (preset) {
+                                if (preset == OrdersDatePreset.custom) {
+                                  _pickCustomRange(preset);
+                                  return;
+                                }
+                                liveNotifier.setPreset(preset);
+                              },
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Consumer(
-                  builder: (context, ref, child) {
-                    final live = ref.watch(expensesFilterProvider);
-                    final liveNotifier = ref.read(
-                      expensesFilterProvider.notifier,
-                    );
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _filterSectionLabel(context, 'Status'),
-                        Wrap(
-                          spacing: AppSpacing.sm,
-                          runSpacing: AppSpacing.sm,
-                          children: _expenseStatusFilterChips(ref, live),
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        _filterSectionLabel(context, 'Category'),
-                        _CategoryDropdown(selected: live.category),
-                        const SizedBox(height: AppSpacing.md),
-                        _filterSectionLabel(context, 'Payment'),
-                        _PaymentDropdown(selected: live.paymentMethod),
-                        const SizedBox(height: AppSpacing.md),
-                        _filterSectionLabel(context, 'Date'),
-                        _DateDropdown(
-                          preset: live.datePreset,
-                          onChanged: (preset) {
-                            if (preset == OrdersDatePreset.custom) {
-                              _pickCustomRange(preset);
-                              return;
-                            }
-                            liveNotifier.setPreset(preset);
-                          },
-                        ),
-                      ],
-                    );
-                  },
+                search,
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: statusChips,
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            search,
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: statusChips,
-              ),
-            ),
+            const SizedBox(height: AppSpacing.md),
+            dropdownRow,
           ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        dropdownRow,
-      ],
+        );
+      },
     );
   }
 }
@@ -661,28 +682,34 @@ final class _ExpenseList extends ConsumerWidget {
         ),
       );
     }
-    final wide = MediaQuery.sizeOf(context).width >= 800;
-    if (wide) {
-      return SingleChildScrollView(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: _ExpenseTable(
-            expenses: expenses,
-            onDeactivate: (expense) =>
-                _confirmDeactivate(context, ref, expense),
+    // Same content-width rule as the page split above.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 800;
+        if (wide) {
+          return SingleChildScrollView(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: _ExpenseTable(
+                expenses: expenses,
+                onDeactivate: (expense) =>
+                    _confirmDeactivate(context, ref, expense),
+              ),
+            ),
+          );
+        }
+        return ListView.builder(
+          itemCount: expenses.length,
+          itemBuilder: (context, index) => Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: _ExpenseCard(
+              expense: expenses[index],
+              onDeactivate: (expense) =>
+                  _confirmDeactivate(context, ref, expense),
+            ),
           ),
-        ),
-      );
-    }
-    return ListView.builder(
-      itemCount: expenses.length,
-      itemBuilder: (context, index) => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.md),
-        child: _ExpenseCard(
-          expense: expenses[index],
-          onDeactivate: (expense) => _confirmDeactivate(context, ref, expense),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -815,13 +842,36 @@ final class _ExpenseCard extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                Text(
-                  '${expense.category.label} · '
-                  '${paymentMethodLabel(expense.paymentMethod)} · '
-                  '${formatDate(expense.expenseDate)}',
-                  style: textTheme.bodySmall?.copyWith(
-                    color: context.appColors.textSecondary,
-                  ),
+                // Category, payment method and date stay individually rendered rather than
+                // folded into one joined string, so they keep the same meaning
+                // on this card as the separate table columns give them. A Wrap
+                // keeps the compact single-line look when it fits and wraps on
+                // a narrow phone.
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  runSpacing: AppSpacing.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    for (final (index, part) in <String>[
+                      expense.category.label,
+                      paymentMethodLabel(expense.paymentMethod),
+                      formatDate(expense.expenseDate),
+                    ].indexed) ...[
+                      if (index > 0)
+                        Text(
+                          '·',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: context.appColors.textSecondary,
+                          ),
+                        ),
+                      Text(
+                        part,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: context.appColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -1425,6 +1475,8 @@ final class _QuickPinSheetState extends ConsumerState<_QuickPinSheet> {
             SizedBox(height: AppSpacing.md),
             DropdownButtonFormField<ExpenseCategory>(
               initialValue: _category,
+              // Fill the dialog width like every other form dropdown.
+              isExpanded: true,
               decoration: const InputDecoration(labelText: 'Category'),
               items: [
                 for (final category in ExpenseCategory.values)

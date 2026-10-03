@@ -19,7 +19,7 @@ import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   DateTime localDay(DateTime value) =>
@@ -67,7 +67,9 @@ void main() {
         settingsRepositoryProvider.overrideWithValue(
           settings ?? FakeSettingsRepository(),
         ),
-        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        // Shop-scoped dashboard reads resolve their scope from the signed-in
+        // profile, so the fixture must declare the owner session explicitly.
+        ...businessScopeOverrides(),
         connectivityServiceProvider.overrideWithValue(
           fakeConnectivityService(),
         ),

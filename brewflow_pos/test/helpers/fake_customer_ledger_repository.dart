@@ -381,10 +381,20 @@ final class FakeCustomerLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
-  Future<DueCustomersSummary> dueCustomersSummary() async {
+  Future<DueCustomersSummary> dueCustomersSummary({
+    List<String>? shopIds,
+  }) async {
     final error = dueSummaryError;
     if (error != null) {
       throw error;
+    }
+    // Mirror the real repository's fail-closed scope so tests cannot pass with
+    // a global read standing in for a scoped one.
+    if (shopIds != null && shopIds.isEmpty) {
+      return const DueCustomersSummary(
+        dueCustomerCount: 0,
+        totalOutstandingPaise: 0,
+      );
     }
     var count = 0;
     var total = 0;

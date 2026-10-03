@@ -25,7 +25,8 @@ import 'package:drift/drift.dart';
 /// - Hard deletions land as tombstone-driven deletes where legal. Customers
 ///   hard-delete (schema v25 -> v26) because their billing history no longer
 ///   references them through a foreign key; categories and offers hard-delete
-///   when unreferenced. Everything else soft-deactivates — data loss is never
+///   when unreferenced; staff attendance hard-deletes (a deleted shift stops
+///   counting everywhere). Everything else soft-deactivates — data loss is never
 ///   the price of convergence.
 ///
 /// This class writes DIRECTLY to tables (no outbox enqueue): applying remote
@@ -784,6 +785,131 @@ final class LocalMasterDataApplier {
     });
   }
 
+  /// Applies one pull page of staff attendance shifts atomically.
+  ///
+  /// Identity resolution is the whole game here: [SyncStaffAttendance.staffUserId]
+  /// is the AUTHORING device's local id and is never trusted as a lookup key —
+  /// a second device minted a different one. The row is attributed to this
+  /// device's own profile resolved by (shop, [SyncStaffAttendance.authUserId]);
+  /// a row that matches no local profile is skipped (never invented, never
+  /// FK-violating). Rows with a PENDING or FAILED local change are skipped so
+  /// an incoming pull can never revert an edit that has not pushed yet; after
+  /// the local change pushes, the next cycle reconciles.
+  Future<void> applyStaffAttendancePage(
+    List<SyncStaffAttendance> rows,
+    DateTime appliedAt,
+  ) async {
+    await _database.transaction(() async {
+      final skipped = await _unresolvedStaffAttendanceIds(
+        rows.map((r) => r.id),
+      );
+      for (final row in rows) {
+        if (skipped.contains(row.id)) continue;
+        final localStaffUserId = await _localStaffUserIdFor(
+          row.shopId,
+          row.authUserId,
+          row.staffUserId,
+        );
+        if (localStaffUserId == null) {
+          AppLog.info(
+            'Staff attendance ${row.id} skipped (no local profile for its '
+            'cloud identity)',
+            tag: 'SyncEngine',
+          );
+          continue;
+        }
+        final existing = await (_database.select(
+          _database.staffAttendance,
+        )..where((t) => t.id.equals(row.id))).getSingleOrNull();
+        if (existing == null) {
+          await _database
+              .into(_database.staffAttendance)
+              .insert(
+                db.StaffAttendanceCompanion.insert(
+                  id: Value(row.id),
+                  shopId: Value(row.shopId),
+                  staffUserId: localStaffUserId,
+                  inAt: row.inAt,
+                  outAt: Value(row.outAt),
+                  attendanceDate: row.attendanceDate,
+                  workedMinutes: Value(row.workedMinutes),
+                  createdAt: Value(row.createdAt),
+                  updatedAt: Value(appliedAt),
+                ),
+              );
+          continue;
+        }
+        // Pulled truth wins once nothing local is outstanding (same rule as
+        // every other entity): refresh only the mutable clock-out columns, so
+        // an open shift checked out on another device closes here too. The
+        // authoring staff/shop identity is never rewritten.
+        await (_database.update(
+          _database.staffAttendance,
+        )..where((t) => t.id.equals(row.id))).write(
+          db.StaffAttendanceCompanion(
+            outAt: Value(row.outAt),
+            workedMinutes: Value(row.workedMinutes),
+            updatedAt: Value(appliedAt),
+          ),
+        );
+      }
+    });
+  }
+
+  /// Resolves the cloud staff identity to this device's own profile id.
+  ///
+  /// Prefers the cross-device [authUserId] within [shopId]; falls back to the
+  /// authoring [staffUserId] when it already exists here (same-device replay).
+  /// Null when neither matches — the caller skips the row rather than
+  /// inventing a profile or violating the users FK.
+  Future<String?> _localStaffUserIdFor(
+    String shopId,
+    String? authUserId,
+    String staffUserId,
+  ) async {
+    if (authUserId != null) {
+      final byAuth =
+          await (_database.select(_database.users)
+                ..where(
+                  (t) =>
+                      t.shopId.equals(shopId) & t.authUserId.equals(authUserId),
+                )
+                ..limit(1))
+              .getSingleOrNull();
+      if (byAuth != null) return byAuth.id;
+    }
+    final byLocal =
+        await (_database.select(_database.users)
+              ..where((t) => t.id.equals(staffUserId) & t.shopId.equals(shopId))
+              ..limit(1))
+            .getSingleOrNull();
+    return byLocal?.id;
+  }
+
+  /// Entity ids among [ids] carrying a PENDING or FAILED staff-attendance
+  /// change — those rows are NOT overwritten or pruned by pulls until their
+  /// push lands. FAILED is included (unlike the generic pending guard):
+  /// a parked entry still holds a user edit nobody has inspected, and a
+  /// tombstone arriving meanwhile must not silently discard it.
+  Future<Set<String>> _unresolvedStaffAttendanceIds(
+    Iterable<String> ids,
+  ) async {
+    final idList = ids.toList();
+    if (idList.isEmpty) return const {};
+    final query = _database.selectOnly(_database.syncOutbox)
+      ..addColumns([_database.syncOutbox.entityId])
+      ..where(
+        _database.syncOutbox.entity.equals(MasterEntity.staffAttendance.wire) &
+            (_database.syncOutbox.status.equals('PENDING') |
+                _database.syncOutbox.status.equals('FAILED')) &
+            _database.syncOutbox.entityId.isIn(idList),
+      );
+    final found = await query
+        .map((row) => row.read(_database.syncOutbox.entityId))
+        .get();
+    return found.whereType<String>().toSet();
+  }
+
   /// Applies a pulled deletion. Categories and offers hard-delete; customers
   /// hard-delete as of schema v25 -> v26; every other entity soft-deactivates
   /// (their local semantics never hard-delete).
@@ -800,7 +926,20 @@ final class LocalMasterDataApplier {
           await _deactivate(_database.categories, deletion.id);
         }
       case MasterEntity.product:
-        await _deactivate(_database.products, deletion.id);
+        // A real delete, on this device exactly as on the deleting one.
+        // `sale_items` / `purchase_items` / `stock_movements` reference products
+        // through plain columns (schema v31), so no history blocks the row and
+        // none is touched: the ledger keeps the id and its attribution. This
+        // previously deactivated the row, which left a zombie product on every
+        // other device — hidden by the is_active filter while still holding its
+        // globally-unique SKU and blocking a re-create of the same product.
+        // Variants and per-shop stock are product *definition*, not history, and
+        // go with it through their CASCADE keys.
+        await _database.transaction(() async {
+          await (_database.delete(
+            _database.products,
+          )..where((t) => t.id.equals(deletion.id))).go();
+        });
       case MasterEntity.productVariant:
         await _deactivate(_database.productVariants, deletion.id);
       case MasterEntity.supplier:
@@ -835,6 +974,23 @@ final class LocalMasterDataApplier {
         )..where((t) => t.id.equals(deletion.id))).go();
       case MasterEntity.staffProfile:
         await _archiveStaffProfile(deletion.id);
+      case MasterEntity.staffAttendance:
+        // A real delete, exactly as on the deleting device: the shift stops
+        // counting toward working days, hours and salary immediately. Guarded
+        // against tombstones racing an unsynced local edit — a PENDING or
+        // FAILED change for the same shift means this device's own write has
+        // not landed yet, so the tombstone waits for the push to win first.
+        if ((await _unresolvedStaffAttendanceIds([deletion.id])).isNotEmpty) {
+          AppLog.info(
+            'Staff attendance ${deletion.id} tombstone deferred (local change '
+            'still unresolved)',
+            tag: 'SyncEngine',
+          );
+          break;
+        }
+        await (_database.delete(
+          _database.staffAttendance,
+        )..where((t) => t.id.equals(deletion.id))).go();
     }
   }
 

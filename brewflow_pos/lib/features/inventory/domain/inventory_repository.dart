@@ -228,11 +228,18 @@ abstract interface class InventoryRepository {
     List<String>? shopIds,
   });
 
-  /// Removes a product. When the product is unreferenced (no variants, sale
-  /// lines, purchase lines or stock movements) it is hard-deleted and its sync
-  /// tombstone is pushed so other devices learn it; when history exists,
-  /// deletion degrades to a safe soft deactivation and
-  /// [ProductDeleteResult.deactivated] is returned.
+  /// Really removes a product — the catalogue row is deleted, never hidden.
+  ///
+  /// History is deliberately not a reason to refuse. Schema v31 dropped the
+  /// historical foreign keys, so a product with sale lines, purchase lines and
+  /// stock movements is still deletable: those rows keep their own
+  /// name/SKU/price snapshots and simply retain the product id as a plain
+  /// column. Variants and this business's stock overlay are product
+  /// *definition*, not history, and are removed with it through their CASCADE
+  /// keys — no orphan variant or active stock is ever left behind.
+  ///
+  /// The sync tombstone is pushed so other devices learn the deletion and a
+  /// stale row cannot resurrect the product.
   ///
   /// [shopIds] scopes the mutation as in [setProductActive], so a shared Cafe
   /// product can never be deleted from the Food Truck.
@@ -240,4 +247,8 @@ abstract interface class InventoryRepository {
 }
 
 /// Outcome of a [InventoryRepository.deleteProduct] call.
-enum ProductDeleteResult { deleted, deactivated }
+///
+/// Always [ProductDeleteResult.deleted]: there is no longer a deactivation
+/// fallback. Kept as an explicit result so callers read as intent rather than
+/// having to assume, and so the UI can drop the "deactivated" branch.
+enum ProductDeleteResult { deleted }

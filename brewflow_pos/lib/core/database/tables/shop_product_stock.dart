@@ -71,9 +71,9 @@ class ShopProductStock extends Table {
       text().references(Products, #id, onDelete: KeyAction.cascade)();
 
   /// The variant this quantity belongs to, or NULL when the row tracks the
-  /// product itself. RESTRICT mirrors [ProductVariants]' own rule that
-  /// variants are soft-deactivated, never hard-deleted, so an overlay row can
-  /// never lose the variant its number describes.
+  /// product itself. SET NULL so a variant being deleted with its product can
+  /// never block the product delete: the overlay row itself is removed anyway
+  /// by [productId]'s CASCADE, and nulling keeps SQLite's ordering irrelevant.
   ///
   /// [productId] and [variantId] travel together and the two indexes below are
   /// both keyed on the pair, so a row can never claim a variant under the
@@ -85,7 +85,7 @@ class ShopProductStock extends Table {
   TextColumn get variantId => text().nullable().references(
     ProductVariants,
     #id,
-    onDelete: KeyAction.restrict,
+    onDelete: KeyAction.setNull,
   )();
 
   /// This business's own quantity of the unit. Money-free, so the same

@@ -9,7 +9,6 @@ import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dar
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_detail_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_form_page.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,7 +18,7 @@ import 'package:drift/native.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_connectivity_service.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -60,7 +59,7 @@ void main() {
             sellingPricePaise: 15000,
             costPricePaise: const Value(8000),
             stockQuantity: const Value(20),
-            // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so
+            // The Cafe shop id businessScopeOverrides() resolves to, so
             // the seeded row survives the business scope filter.
             shopId: const Value('shop-1'),
           ),
@@ -71,7 +70,9 @@ void main() {
     overrides: [
       appDatabaseProvider.overrideWithValue(database),
       authRepositoryProvider.overrideWithValue(fakeAuth),
-      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      // Catalogue/dashboard reads are shop-scoped, so the fixture has to declare
+      // the signed-in owner session (this also supplies the staff repository).
+      ...businessScopeOverrides(),
       connectivityServiceProvider.overrideWithValue(
         fakeConnectivityServiceOnline(),
       ),

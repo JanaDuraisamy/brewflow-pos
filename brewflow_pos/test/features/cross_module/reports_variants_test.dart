@@ -10,7 +10,6 @@ import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,7 +19,7 @@ import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Reports & Dashboard Variant Support (Todo 11)
@@ -49,7 +48,10 @@ void main() {
         authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
         offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
-        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        // Catalogue/dashboard reads are shop-scoped, so the fixture has to
+        // declare the signed-in owner session (this also supplies the staff
+        // repository that write paths materialise the shop row through).
+        ...businessScopeOverrides(),
         connectivityServiceProvider.overrideWithValue(
           fakeConnectivityServiceOnline(),
         ),
@@ -397,6 +399,34 @@ void main() {
       expect(snapshot.dayOrderCount, 1);
       expect(snapshot.dayItemCount, 2);
       expect(snapshot.dayProfitPaise, 30000 - 2 * 8000);
+    });
+  });
+
+  group('reports read scope', () {
+    // `_businessLabels` resolves shop ids to label the Combined breakdown. The
+    // write-oriented resolver (`shopIdFor`) calls `ensureShop()`, so reading a
+    // report would INSERT a `shops` row as a side effect. This session names
+    // 'shop-1' without the row existing, which is exactly when the old code
+    // minted it.
+    test('loading reports does not create a shop row', () async {
+      expect(await database.select(database.shops).get(), isEmpty);
+
+      final snapshot = await reports();
+
+      // The snapshot itself is meaningless here; the row count is the contract.
+      expect(snapshot.sales.totalPaise, 0);
+      expect(await database.select(database.shops).get(), isEmpty);
+    });
+
+    test('a staff session pinned to the Cafe sees only Cafe sales', () async {
+      await seedCategory();
+      final product = await seedProduct('Chai', stockQuantity: 5);
+      final cart = container.read(cartProvider.notifier);
+      cart.add(product);
+      await cart.checkout(PaymentMethod.cash);
+
+      final snapshot = await reports();
+      expect(snapshot.sales.totalPaise, product.sellingPricePaise);
     });
   });
 }

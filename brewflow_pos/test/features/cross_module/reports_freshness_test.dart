@@ -10,7 +10,6 @@ import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,7 +19,7 @@ import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_connectivity_service.dart';
 import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Reports Freshness After Mutations (Phase 10 Step 9)
@@ -48,7 +47,9 @@ void main() {
         authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
         offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
-        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        // Catalogue/expense reads are shop-scoped, so the fixture has to declare the
+        // signed-in owner session (this also supplies the staff repository).
+        ...businessScopeOverrides(),
         connectivityServiceProvider.overrideWithValue(
           fakeConnectivityServiceOnline(),
         ),

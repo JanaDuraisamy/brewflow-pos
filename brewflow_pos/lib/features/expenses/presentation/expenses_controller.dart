@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/providers.dart';
+import '../../staff/presentation/business_switcher.dart';
 import '../../staff/presentation/staff_controller.dart';
 import '../../sync/presentation/sync_controller.dart';
 
@@ -216,7 +217,13 @@ final expensesProvider =
 /// Rebuilt by [ExpensesController] after every mutation.
 final shopPayableProvider = FutureProvider<int>((ref) async {
   try {
-    return await ref.watch(expensesRepositoryProvider).payablePaise();
+    return await ref
+        .watch(expensesRepositoryProvider)
+        .payablePaise(
+          shopIds: await ref
+              .read(businessSwitcherProvider.notifier)
+              .shopIdsForRead(ref.watch(businessSwitcherProvider)),
+        );
   } on ExpensesFailure {
     rethrow;
   } catch (error, stackTrace) {
@@ -234,7 +241,13 @@ final shopPayableProvider = FutureProvider<int>((ref) async {
 /// balance first. Backs the per-payee detail screen.
 final shopPayablesProvider = FutureProvider<List<ShopPayable>>((ref) async {
   try {
-    return await ref.watch(expensesRepositoryProvider).shopPayables();
+    return await ref
+        .watch(expensesRepositoryProvider)
+        .shopPayables(
+          shopIds: await ref
+              .read(businessSwitcherProvider.notifier)
+              .shopIdsForRead(ref.watch(businessSwitcherProvider)),
+        );
   } on ExpensesFailure {
     rethrow;
   } catch (error, stackTrace) {
@@ -255,7 +268,12 @@ final payablePaymentsProvider =
       try {
         return await ref
             .watch(expensesRepositoryProvider)
-            .payablePayments(payeeName: payeeName);
+            .payablePayments(
+              payeeName: payeeName,
+              shopIds: await ref
+                  .read(businessSwitcherProvider.notifier)
+                  .shopIdsForRead(ref.watch(businessSwitcherProvider)),
+            );
       } on ExpensesFailure {
         rethrow;
       } catch (error, stackTrace) {
@@ -275,7 +293,13 @@ final payablePaymentsProvider =
 /// already narrowed to today. Rebuilt after every expense mutation.
 final expensesCountProvider = FutureProvider<int>((ref) async {
   try {
-    return await ref.watch(expensesRepositoryProvider).expensesCount();
+    return await ref
+        .watch(expensesRepositoryProvider)
+        .expensesCount(
+          shopIds: await ref
+              .read(businessSwitcherProvider.notifier)
+              .shopIdsForRead(ref.watch(businessSwitcherProvider)),
+        );
   } on ExpensesFailure {
     rethrow;
   } catch (error, stackTrace) {
@@ -298,6 +322,9 @@ final class ExpensesController extends AsyncNotifier<List<Expense>> {
     final repository = ref.watch(expensesRepositoryProvider);
     try {
       return await repository.expenses(
+        shopIds: await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdsForRead(ref.watch(businessSwitcherProvider)),
         search: filter.query,
         category: filter.category,
         paymentMethod: filter.paymentMethod,

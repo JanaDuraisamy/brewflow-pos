@@ -171,7 +171,7 @@ abstract interface class CustomerLedgerRepository {
 
   /// Customers with outstanding balances and the total across all of them
   /// (dashboard Due Reminders surface).
-  Future<DueCustomersSummary> dueCustomersSummary();
+  Future<DueCustomersSummary> dueCustomersSummary({List<String>? shopIds});
 
   /// Customer-wise outstanding balances exactly as of [toUtc] (read-only,
   /// the management report's Customer Outstanding snapshot).

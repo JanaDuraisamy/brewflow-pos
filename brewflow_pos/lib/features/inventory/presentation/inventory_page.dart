@@ -44,80 +44,89 @@ final class InventoryPage extends ConsumerWidget {
         filter.status != ProductStatusFilter.all ||
         filter.lowStockOnly;
 
-    final compact = AppBreakpoints.fromWidth(
-      MediaQuery.sizeOf(context).width,
-    ).isCompact;
+    // Content width (after the shell's collapsed rail gutter), not the raw
+    // window width: a 650dp window with a collapsed rail has ~586dp of
+    // content and needs the phone view, not the tablet header.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = AppBreakpoints.fromWidth(
+          constraints.maxWidth,
+        ).isCompact;
 
-    if (compact) {
-      return _MobileInventoryView(
-        products: products,
-        categories: categories.value ?? const [],
-        hasFilters: hasFilters,
-      );
-    }
+        if (compact) {
+          return _MobileInventoryView(
+            products: products,
+            categories: categories.value ?? const [],
+            hasFilters: hasFilters,
+          );
+        }
 
-    return Padding(
-      padding: AppInsets.screen,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final narrow = constraints.maxWidth < 600;
-              final header = const PageHeader(
-                title: 'Inventory',
-                subtitle: 'Manage products, categories and stock levels.',
-              );
-              final actions = const _HeaderActions();
-              if (narrow) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    header,
-                    SizedBox(height: AppSpacing.md),
-                    actions,
-                  ],
-                );
-              }
-              return Row(
-                children: [
-                  Expanded(child: header),
-                  SizedBox(width: AppSpacing.md),
-                  actions,
-                ],
-              );
-            },
-          ),
-          SizedBox(height: AppSpacing.md),
-          _FilterBar(categories: categories.value ?? const []),
-          SizedBox(height: AppSpacing.md),
-          Expanded(
-            child: products.when(
-              skipLoadingOnRefresh: true,
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, stackTrace) => _ErrorState(
-                message: inventoryErrorMessage(error),
-                onRetry: () => ref.invalidate(productsProvider),
+        return Padding(
+          padding: AppInsets.screen,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow = constraints.maxWidth < 600;
+                  final header = const PageHeader(
+                    title: 'Inventory',
+                    subtitle: 'Manage products, categories and stock levels.',
+                  );
+                  final actions = const _HeaderActions();
+                  if (narrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        header,
+                        SizedBox(height: AppSpacing.md),
+                        actions,
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: header),
+                      SizedBox(width: AppSpacing.md),
+                      actions,
+                    ],
+                  );
+                },
               ),
-              data: (items) => items.isEmpty
-                  ? _EmptyState(
-                      filtered: hasFilters,
-                      onClearFilters: hasFilters
-                          ? () => ref
-                                .read(inventoryFilterProvider.notifier)
-                                .clear()
-                          : null,
-                      onAddProduct: () => context.push(AppRoutes.productNew),
-                    )
-                  : _ProductList(
-                      products: items,
-                      categories: categories.value ?? const [],
-                      filtered: hasFilters,
-                    ),
-            ),
+              SizedBox(height: AppSpacing.md),
+              _FilterBar(categories: categories.value ?? const []),
+              SizedBox(height: AppSpacing.md),
+              Expanded(
+                child: products.when(
+                  skipLoadingOnRefresh: true,
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (error, stackTrace) => _ErrorState(
+                    message: inventoryErrorMessage(error),
+                    onRetry: () => ref.invalidate(productsProvider),
+                  ),
+                  data: (items) => items.isEmpty
+                      ? _EmptyState(
+                          filtered: hasFilters,
+                          onClearFilters: hasFilters
+                              ? () => ref
+                                    .read(inventoryFilterProvider.notifier)
+                                    .clear()
+                              : null,
+                          onAddProduct: () =>
+                              context.push(AppRoutes.productNew),
+                        )
+                      : _ProductList(
+                          products: items,
+                          categories: categories.value ?? const [],
+                          filtered: hasFilters,
+                        ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -419,9 +428,18 @@ final class _MobileSearch extends ConsumerStatefulWidget {
 }
 
 final class _MobileSearchState extends ConsumerState<_MobileSearch> {
-  late final TextEditingController _search = TextEditingController(
-    text: ref.read(inventoryFilterProvider).query,
-  );
+  // Initialized in initState (never lazily): a `late final` initializer runs
+  // on first access, so disposing a state that never built would run
+  // `ref.read` on an unmounted widget and crash fast navigations.
+  late final TextEditingController _search;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(
+      text: ref.read(inventoryFilterProvider).query,
+    );
+  }
 
   @override
   void dispose() {
@@ -458,9 +476,18 @@ final class _FilterBar extends ConsumerStatefulWidget {
 }
 
 final class _FilterBarState extends ConsumerState<_FilterBar> {
-  late final TextEditingController _search = TextEditingController(
-    text: ref.read(inventoryFilterProvider).query,
-  );
+  // Initialized in initState (never lazily): a `late final` initializer runs
+  // on first access, so disposing a state that never built would run
+  // `ref.read` on an unmounted widget and crash fast navigations.
+  late final TextEditingController _search;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(
+      text: ref.read(inventoryFilterProvider).query,
+    );
+  }
 
   @override
   void dispose() {
@@ -698,32 +725,41 @@ final class _ProductList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final width = MediaQuery.sizeOf(context).width;
-    if (width < AppBreakpoints.compact) {
-      return _MobileProductList(products: products);
-    }
-    if (width >= 800) {
-      // The table can be taller and wider than the available viewport. The
-      // outer (vertical) scroll view lets rows that fall below the fold be
-      // reached, while the inner (horizontal) scroll view keeps the wide
-      // columns scrollable.
-      return Scrollbar(
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.vertical,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: _ProductTable(products: products, categories: categories),
+    // Content width, not window width (see InventoryPage): the table-vs-cards
+    // decision must agree with the header's narrow-vs-wide decision.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        if (width < AppBreakpoints.compact) {
+          return _MobileProductList(products: products);
+        }
+        if (width >= AppBreakpoints.denseTable) {
+          // The table can be taller and wider than the available viewport. The
+          // outer (vertical) scroll view lets rows that fall below the fold be
+          // reached, while the inner (horizontal) scroll view keeps the wide
+          // columns scrollable.
+          return Scrollbar(
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.vertical,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: _ProductTable(
+                  products: products,
+                  categories: categories,
+                ),
+              ),
+            ),
+          );
+        }
+        return ListView.builder(
+          itemCount: products.length,
+          itemBuilder: (context, index) => _ProductCard(
+            product: products[index],
+            categoryName: _categoryName(categories, products[index].categoryId),
           ),
-        ),
-      );
-    }
-    return ListView.builder(
-      itemCount: products.length,
-      itemBuilder: (context, index) => _ProductCard(
-        product: products[index],
-        categoryName: _categoryName(categories, products[index].categoryId),
-      ),
+        );
+      },
     );
   }
 }
@@ -853,7 +889,6 @@ final class _ProductCard extends ConsumerWidget {
         : isLowStock(stock: product.stockQuantity, threshold: threshold)
         ? AppColors.lowStock
         : context.appColors.textPrimary;
-    final unit = _stockUnitSuffix(product.stockUnit);
     final alert = threshold != null && product.stockQuantity <= 0
         ? const _StockAlertChip(
             label: 'Out of stock',
@@ -882,29 +917,40 @@ final class _ProductCard extends ConsumerWidget {
             ),
             child: Row(
               children: [
-                ProductThumbnail(imagePath: product.imagePath),
-                SizedBox(width: AppSpacing.md),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        product.name,
-                        style: textTheme.titleSmall?.copyWith(
-                          color: context.appColors.textPrimary,
+                  child: InkWell(
+                    onTap: () =>
+                        context.push(AppRoutes.productEdit, extra: product),
+                    borderRadius: AppBorderRadius.md,
+                    child: Row(
+                      children: [
+                        ProductThumbnail(imagePath: product.imagePath),
+                        SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                product.name,
+                                style: textTheme.titleSmall?.copyWith(
+                                  color: context.appColors.textPrimary,
+                                ),
+                              ),
+                              SizedBox(height: AppSpacing.xs),
+                              Text(
+                                [
+                                  categoryName,
+                                  if (product.sku != null) 'SKU ${product.sku}',
+                                ].join(' · '),
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: context.appColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      SizedBox(height: AppSpacing.xs),
-                      Text(
-                        [
-                          categoryName,
-                          if (product.sku != null) 'SKU ${product.sku}',
-                        ].join(' · '),
-                        style: textTheme.bodySmall?.copyWith(
-                          color: context.appColors.textSecondary,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 SizedBox(width: AppSpacing.sm),
@@ -959,14 +1005,49 @@ final class _ProductCard extends ConsumerWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    [
-                      Money.formatPaise(product.sellingPricePaise),
-                      if (product.costPricePaise != null)
-                        'Cost ${Money.formatPaise(product.costPricePaise!)}',
-                      'Stock ${product.stockQuantity}${unit.isEmpty ? '' : ' $unit'}',
-                    ].join('  ·  '),
-                    style: textTheme.bodySmall?.copyWith(color: stockColor),
+                  // Price, cost and stock stay individually rendered instead
+                  // of folded into one joined string, so the stock figure is
+                  // its own Text. It reuses _stockCellText, so a card reports
+                  // the same value the table's 'Stock' column reports instead
+                  // of only ever appearing as part of "Stock 10". A Wrap keeps
+                  // the compact one-line look when it fits and wraps instead of
+                  // overflowing when the three values do not fit.
+                  child: Wrap(
+                    spacing: AppSpacing.xs,
+                    runSpacing: AppSpacing.xs,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        Money.formatPaise(product.sellingPricePaise),
+                        style: textTheme.bodySmall?.copyWith(color: stockColor),
+                      ),
+                      Text(
+                        '·',
+                        style: textTheme.bodySmall?.copyWith(color: stockColor),
+                      ),
+                      if (product.costPricePaise != null) ...[
+                        Text(
+                          'Cost ${Money.formatPaise(product.costPricePaise!)}',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: stockColor,
+                          ),
+                        ),
+                        Text(
+                          '·',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: stockColor,
+                          ),
+                        ),
+                      ],
+                      Text(
+                        'Stock',
+                        style: textTheme.bodySmall?.copyWith(color: stockColor),
+                      ),
+                      Text(
+                        _stockCellText(product),
+                        style: textTheme.bodySmall?.copyWith(color: stockColor),
+                      ),
+                    ],
                   ),
                 ),
                 if (alert != null) ...[SizedBox(width: AppSpacing.sm), alert],
@@ -1570,23 +1651,17 @@ Future<void> _deleteProduct(
     title: 'Delete product',
     subject: product.name,
     consequence:
-        'If this product has variants, sales, purchases or stock history it '
-        'will be deactivated instead. Otherwise it will be permanently '
-        'deleted — on this device and others. This cannot be undone.',
+        'This permanently deletes the product and its variants — on this '
+        'device and others. Past bills, purchases and stock history keep '
+        'their recorded names and prices. This cannot be undone.',
   );
   if (!confirmed) return;
   try {
-    final result = await ref.read(productsProvider.notifier).delete(product.id);
+    await ref.read(productsProvider.notifier).delete(product.id);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          result == ProductDeleteResult.deactivated
-              ? 'Product has history — deactivated instead.'
-              : 'Product deleted.',
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Product deleted.')));
   } on InventoryFailure catch (error) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(

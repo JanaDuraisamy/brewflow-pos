@@ -243,6 +243,8 @@ final class ExpenseFormPageState extends ConsumerState<ExpenseFormPage> {
                 const SizedBox(height: AppSpacing.lg),
                 DropdownButtonFormField<ExpenseCategory>(
                   initialValue: _category,
+                  // Fill the form width like every other form dropdown.
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Category *',
                     border: OutlineInputBorder(),
@@ -265,6 +267,8 @@ final class ExpenseFormPageState extends ConsumerState<ExpenseFormPage> {
                 const SizedBox(height: AppSpacing.lg),
                 DropdownButtonFormField<PaymentMethod>(
                   initialValue: _paymentMethod,
+                  // Fill the form width like every other form dropdown.
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Payment method *',
                     border: OutlineInputBorder(),
@@ -287,6 +291,8 @@ final class ExpenseFormPageState extends ConsumerState<ExpenseFormPage> {
                 const SizedBox(height: AppSpacing.lg),
                 DropdownButtonFormField<ExpensePaymentStatus>(
                   initialValue: _paymentStatus,
+                  // Fill the form width like every other form dropdown.
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Payment status *',
                     border: OutlineInputBorder(),

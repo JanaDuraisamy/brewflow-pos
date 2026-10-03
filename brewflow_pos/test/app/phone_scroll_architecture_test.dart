@@ -30,6 +30,7 @@ import '../helpers/fake_purchases_repository.dart';
 import '../helpers/fake_settings_repository.dart';
 import '../helpers/fake_staff_repository.dart';
 import '../helpers/fake_suppliers_repository.dart';
+import '../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// Scroll architecture contract for phone pages.
@@ -109,6 +110,12 @@ void main() {
       purchasesRepositoryProvider.overrideWithValue(FakePurchasesRepository()),
       expensesRepositoryProvider.overrideWithValue(FakeExpensesRepository()),
       offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+      // The customer list is shop-scoped and fails closed without a session, so
+      // state the signed-in owner. `staffRepositoryProvider` is overridden above
+      // and Riverpod forbids overriding a provider twice.
+      userProfileProvider.overrideWithBuild(
+        (ref, notifier) => testOwnerProfile(),
+      ),
     ],
     child: const BrewFlowApp(),
   );

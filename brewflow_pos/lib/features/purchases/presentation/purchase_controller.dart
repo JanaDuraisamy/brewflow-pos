@@ -18,6 +18,7 @@ import 'package:brewflow_pos/features/reports/presentation/reports_controller.da
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
+import '../../staff/presentation/business_switcher.dart';
 import '../../staff/presentation/staff_controller.dart';
 
 /// ---------------------------------------------------------------------------
@@ -111,10 +112,18 @@ final class PurchasesController extends AsyncNotifier<List<PurchaseRow>> {
     final filter = ref.watch(purchasesFilterProvider);
     final repository = ref.watch(purchasesRepositoryProvider);
     final suppliers = ref.watch(suppliersRepositoryProvider);
+    final business = ref.watch(businessSwitcherProvider);
+    final switcher = ref.read(businessSwitcherProvider.notifier);
     try {
-      final purchases = await repository.purchases();
+      // Purchases and suppliers are shop-owned records, so BOTH reads are
+      // scoped. Without it a Food Truck session would see the Cafe's entire
+      // receiving history and supplier book — cost prices included. A staff
+      // member is pinned to their own shop by the switcher, so this also
+      // enforces staff/shop isolation.
+      final shopIds = await switcher.shopIdsForRead(business);
+      final purchases = await repository.purchases(shopIds: shopIds);
       final supplierNames = <String, String>{
-        for (final supplier in await suppliers.suppliers())
+        for (final supplier in await suppliers.suppliers(shopIds: shopIds))
           supplier.id: supplier.name,
       };
       var rows = [
@@ -156,7 +165,17 @@ final class PurchasesController extends AsyncNotifier<List<PurchaseRow>> {
     // `purchase.received` is exactly the "stock never came back" case.
     AppTrace.event('purchase.void', {'purchaseRef': AppTrace.userRef(id)});
     try {
-      await ref.read(purchasesRepositoryProvider).voidPurchase(id);
+      // Scoped: a void reverses stock, so it must never be aimed at a
+      // purchase outside the caller's businesses.
+      final business = ref.read(businessSwitcherProvider);
+      await ref
+          .read(purchasesRepositoryProvider)
+          .voidPurchase(
+            id,
+            shopIds: await ref
+                .read(businessSwitcherProvider.notifier)
+                .shopIdsForRead(business),
+          );
       AppTrace.event('purchase.voided', {'purchaseRef': AppTrace.userRef(id)});
       ref.invalidateSelf();
     } on PurchasesFailure catch (failure) {
@@ -482,7 +501,13 @@ final class ActiveSuppliersController extends AsyncNotifier<List<Supplier>> {
     // sync so the list refreshes.
     final repository = ref.read(suppliersRepositoryProvider);
     try {
-      return await repository.suppliers(status: SupplierStatusFilter.active);
+      // Scoped: the picker must not offer another business's suppliers.
+      return await repository.suppliers(
+        status: SupplierStatusFilter.active,
+        shopIds: await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdsForRead(ref.read(businessSwitcherProvider)),
+      );
     } on SuppliersFailure {
       rethrow;
     } catch (error, stackTrace) {
@@ -513,7 +538,14 @@ final class PurchaseProductsController extends AsyncNotifier<List<Product>> {
     // pulled products appear without requiring an app restart.
     final repository = ref.read(inventoryRepositoryProvider);
     try {
-      return await repository.products(status: ProductStatusFilter.active);
+      // Scoped: the picker must not offer another business's catalogue, or a
+      // staff member could receive stock into a product they cannot see.
+      return await repository.products(
+        status: ProductStatusFilter.active,
+        shopIds: await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdsForRead(ref.read(businessSwitcherProvider)),
+      );
     } on InventoryFailure {
       rethrow;
     } catch (error, stackTrace) {
@@ -549,7 +581,13 @@ final class PurchaseItemsController extends AsyncNotifier<List<PurchaseItem>> {
   Future<List<PurchaseItem>> build() async {
     final repository = ref.watch(purchasesRepositoryProvider);
     try {
-      return await repository.purchaseItems(purchaseId);
+      // Scoped: snapshot lines carry unit costs and supplier identity.
+      return await repository.purchaseItems(
+        purchaseId,
+        shopIds: await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdsForRead(ref.read(businessSwitcherProvider)),
+      );
     } on PurchasesFailure {
       rethrow;
     } catch (error, stackTrace) {
@@ -565,13 +603,18 @@ final class PurchaseItemsController extends AsyncNotifier<List<PurchaseItem>> {
 }
 
 /// Supplier display name for a purchase detail page; null when the profile
-/// cannot be resolved.
+/// cannot be resolved **or** when the supplier belongs to another business.
 final purchaseSupplierNameProvider = FutureProvider.family<String?, String>((
   ref,
   supplierId,
 ) async {
   final repository = ref.watch(suppliersRepositoryProvider);
-  final supplier = await repository.supplierById(supplierId);
+  final supplier = await repository.supplierById(
+    supplierId,
+    shopIds: await ref
+        .read(businessSwitcherProvider.notifier)
+        .shopIdsForRead(ref.read(businessSwitcherProvider)),
+  );
   return supplier?.name;
 });
 

@@ -615,6 +615,71 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     updatedAt: _utc(j['updated_at']),
   );
 
+  // ---- Staff attendance -------------------------------------------------------
+
+  @override
+  Future<void> upsertStaffAttendance(List<SyncStaffAttendance> rows) => _upsert(
+    'staff_attendance',
+    [for (final row in rows) _staffAttendanceToServer(row)],
+  );
+
+  @override
+  Future<PullPage<SyncStaffAttendance>> pullStaffAttendance({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'staff_attendance',
+    since: since,
+    limit: limit,
+    fromRow: _staffAttendanceFromServer,
+  );
+
+  Map<String, dynamic> _staffAttendanceToServer(SyncStaffAttendance row) => {
+    'id': row.id,
+    'shop_id': row.shopId,
+    'staff_user_id': row.staffUserId,
+    'auth_user_id': row.authUserId,
+    'in_at': row.inAt.toUtc().toIso8601String(),
+    'out_at': row.outAt?.toUtc().toIso8601String(),
+    'attendance_date': row.attendanceDate.toUtc().toIso8601String().substring(
+      0,
+      10,
+    ),
+    'worked_minutes': row.workedMinutes,
+    'client_created_at': row.createdAt.toUtc().toIso8601String(),
+  };
+
+  SyncStaffAttendance _staffAttendanceFromServer(Map<String, dynamic> json) =>
+      SyncStaffAttendance(
+        id: json['id'] as String,
+        shopId: json['shop_id'] as String,
+        staffUserId: json['staff_user_id'] as String,
+        authUserId: json['auth_user_id'] as String?,
+        inAt: _utc(json['in_at']),
+        outAt: json['out_at'] != null ? _utc(json['out_at']) : null,
+        attendanceDate: DateTime.parse('${json['attendance_date']}T00:00:00Z'),
+        workedMinutes: (json['worked_minutes'] as num).toInt(),
+        createdAt: _utc(json['client_created_at']),
+        updatedAt: _utc(json['updated_at']),
+      );
+
+  @override
+  Future<void> deleteStaffAttendance({
+    required String shopId,
+    required String authUserId,
+    required String shiftId,
+  }) async {
+    // Scoped to the row id AND its shop and cross-device identity, so a
+    // compromised client cannot widen the delete. Owner-only is enforced by
+    // RLS (0027), never by these predicates.
+    await _client
+        .from('staff_attendance')
+        .delete()
+        .eq('shop_id', shopId)
+        .eq('auth_user_id', authUserId)
+        .eq('id', shiftId);
+  }
+
   // ---- Deletions -------------------------------------------------------------------
 
   /// Hard-deletes the customer row. See [deleteCustomer] on the interface: the
@@ -629,6 +694,15 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
   @override
   Future<void> deleteCustomer(String id) async {
     await _client.from('customers').delete().eq('id', id);
+  }
+
+  @override
+  Future<void> deleteProduct(String id) async {
+    // No `.is_active = false` fallback and no soft delete. As of migration 0037
+    // nothing references `products` with a restrictive key: the historical ledger
+    // columns are plain, and `product_variants.product_id` cascades. Shop scoping
+    // is enforced by RLS on the delete, exactly as for customers.
+    await _client.from('products').delete().eq('id', id);
   }
 
   @override

@@ -63,64 +63,69 @@ Future<void> showContextActionSheet(
             AppSpacing.sm,
             AppSpacing.md,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Material(
-                color: appColors.surface,
-                borderRadius: AppBorderRadius.xl,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.md,
-                        AppSpacing.lg,
-                        AppSpacing.md,
-                        AppSpacing.xs,
+          // The actions scroll (like FilterSheet) instead of clipping: on a
+          // short landscape viewport the last action and Cancel stay
+          // reachable instead of being pushed out with no way to scroll.
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Material(
+                  color: appColors.surface,
+                  borderRadius: AppBorderRadius.xl,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.md,
+                          AppSpacing.lg,
+                          AppSpacing.md,
+                          AppSpacing.xs,
+                        ),
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: textTheme.titleMedium?.copyWith(
+                            color: appColors.textSecondary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const _MenuSeparator(),
+                      for (final item in items)
+                        _CompactAction(item: item, card: appColors.surface),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Material(
+                  color: appColors.surface,
+                  borderRadius: AppBorderRadius.xl,
+                  child: InkWell(
+                    onTap: () => Navigator.of(sheetContext).pop(),
+                    borderRadius: AppBorderRadius.xl,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md,
                       ),
                       child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        'Cancel',
                         textAlign: TextAlign.center,
-                        style: textTheme.titleMedium?.copyWith(
-                          color: appColors.textSecondary,
+                        style: textTheme.titleSmall?.copyWith(
+                          color: appColors.charcoal,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                    const _MenuSeparator(),
-                    for (final item in items)
-                      _CompactAction(item: item, card: appColors.surface),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Material(
-                color: appColors.surface,
-                borderRadius: AppBorderRadius.xl,
-                child: InkWell(
-                  onTap: () => Navigator.of(sheetContext).pop(),
-                  borderRadius: AppBorderRadius.xl,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: AppSpacing.md,
-                    ),
-                    child: Text(
-                      'Cancel',
-                      textAlign: TextAlign.center,
-                      style: textTheme.titleSmall?.copyWith(
-                        color: appColors.charcoal,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );

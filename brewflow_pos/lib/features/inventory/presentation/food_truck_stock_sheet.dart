@@ -267,6 +267,8 @@ final class _FoodTruckStockDialogState
                 const SizedBox(height: AppSpacing.md),
                 DropdownButtonFormField<ProductVariant>(
                   initialValue: _variant,
+                  // Fill the sheet width so long variant names ellipsize.
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Variant',
                     border: OutlineInputBorder(),
@@ -275,7 +277,11 @@ final class _FoodTruckStockDialogState
                     for (final variant in widget.product.variants)
                       DropdownMenuItem(
                         value: variant,
-                        child: Text(variant.name),
+                        child: Text(
+                          variant.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                   ],
                   onChanged: _selectVariant,

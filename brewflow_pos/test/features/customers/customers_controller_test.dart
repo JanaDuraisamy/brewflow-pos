@@ -1,11 +1,15 @@
 import 'dart:async';
 
 import 'package:brewflow_pos/core/authorization/authorization.dart';
+import 'package:brewflow_pos/core/storage/app_storage.dart';
+import 'package:brewflow_pos/core/storage/secure_storage.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_repository.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
+import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,12 +17,38 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/fake_preferences_storage.dart';
+import '../../helpers/test_providers.dart';
+
+/// Binding `AppStorage` keeps the business switcher's read-only identity
+/// resolution off its throwing path. Without it every scoped read pays a
+/// caught `StateError` round-trip through `_persistedFoodTruckId`, which
+/// widens the `invalidate -> AsyncLoading` window enough for the polling
+/// helpers below to observe a half-built provider.
+class _FakeSecure implements SecureStorage {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    await AppStorage.init(
+      secure: _FakeSecure(),
+      preferences: FakePreferencesStorage(),
+    );
+  });
+
   late FakeCustomersRepository fake;
 
   ProviderContainer buildContainer() => ProviderContainer(
-    overrides: [customersRepositoryProvider.overrideWithValue(fake)],
+    overrides: [
+      customersRepositoryProvider.overrideWithValue(fake),
+      // Customer lists/profiles are shop-scoped, so the fixture has to declare
+      // the signed-in owner session. Without it the switcher fails closed and
+      // the controller correctly reads zero customers.
+      ...businessScopeOverrides(),
+    ],
   );
 
   final now = DateTime.now().toUtc();
@@ -45,6 +75,10 @@ void main() {
 
   /// Waits (in real async) for invalidation-triggered rebuilds to settle,
   /// since reading `.future` right after a mutation can race the rebuild.
+  ///
+  /// Conditions must tolerate a transient `AsyncLoading` (null `.value`) —
+  /// the mutation legitimately invalidates and reloads the provider, and the
+  /// shop-scoped read adds an extra async hop to that rebuild.
   Future<void> awaitUntil(
     ProviderContainer container,
     bool Function() condition,
@@ -81,6 +115,110 @@ void main() {
 
       await container.read(customersProvider.future);
       expect(container.read(customersProvider).value, isEmpty);
+    });
+
+    // Regression: the list used to be read through a writable-shop fallback,
+    // which minted/selected a business instead of honouring the session. The
+    // controller must pass the scope the switcher resolved.
+    test('reads through the owner session scope', () async {
+      fake.storedCustomers.add(customer('c1', 'Priya'));
+      final container = buildContainer();
+      addTearDown(container.dispose);
+
+      await container.read(customersProvider.future);
+
+      expect(fake.lastCustomersShopIds, [kTestCafeShopId]);
+    });
+
+    test('a staff session is pinned to their own shop', () async {
+      fake.storedCustomers.add(customer('c1', 'Priya'));
+      final container = ProviderContainer(
+        overrides: [
+          customersRepositoryProvider.overrideWithValue(fake),
+          ...businessScopeOverrides(
+            profile: testStaffProfile(shopId: kTestFoodTruckShopId),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container.read(customersProvider.future);
+
+      // Staff are single-shop by contract: never the Cafe, never Combined.
+      expect(fake.lastCustomersShopIds, [kTestFoodTruckShopId]);
+    });
+
+    test(
+      'fails closed to no customers when no shop identity resolves',
+      () async {
+        fake.storedCustomers.add(customer('c1', 'Priya'));
+        final container = ProviderContainer(
+          overrides: [
+            customersRepositoryProvider.overrideWithValue(fake),
+            // A profile carrying no shop id leaves the Cafe identity
+            // unresolvable, which is exactly the fail-closed case.
+            ...businessScopeOverrides(
+              profile: const UserProfile(
+                id: 'test-owner',
+                email: 'owner@brewflow.test',
+                role: UserRole.owner,
+                isActive: true,
+                permissions: {},
+              ),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        await container.read(customersProvider.future);
+
+        // Empty scope, never null: a null scope would read as "every shop".
+        expect(fake.lastCustomersShopIds, isNotNull);
+        expect(fake.lastCustomersShopIds, isEmpty);
+        expect(container.read(customersProvider).value, isEmpty);
+      },
+    );
+
+    test('reloads when the business scope changes', () async {
+      // Seed the persisted Food Truck so Combined has a second business to
+      // widen into; otherwise it collapses back to the Cafe alone.
+      await AppStorage.preferences.writeString(
+        BusinessSwitcherController.foodTruckShopIdKey,
+        kTestFoodTruckShopId,
+      );
+      // The switcher's selection is persisted globally, so undo both writes
+      // rather than leaking a Combined/Food Truck session into later tests.
+      addTearDown(() async {
+        await AppStorage.preferences.remove(
+          BusinessSwitcherController.foodTruckShopIdKey,
+        );
+      });
+
+      fake.storedCustomers.add(customer('c1', 'Priya'));
+      final container = buildContainer();
+      addTearDown(container.dispose);
+      // Hold a listener: the page is what keeps this provider subscribed, and
+      // without one an external context change never reaches `build()`.
+      final subscription = container.listen(customersProvider, (_, __) {});
+      addTearDown(subscription.close);
+
+      await container.read(customersProvider.future);
+      expect(fake.lastCustomersShopIds, [kTestCafeShopId]);
+
+      // Switching to Combined widens the scope, which must re-read rather than
+      // keep serving the Cafe-only list.
+      await container
+          .read(businessSwitcherProvider.notifier)
+          .select(BusinessContext.all);
+      addTearDown(() async {
+        await AppStorage.preferences.remove('business_switcher_context');
+      });
+
+      await awaitUntil(container, () => fake.lastCustomersShopIds?.length == 2);
+      expect(
+        fake.lastCustomersShopIds,
+        containsAll([kTestCafeShopId, kTestFoodTruckShopId]),
+      );
     });
 
     test('surfaces CustomersFailure without wrapping it', () async {
@@ -252,7 +390,9 @@ void main() {
 
       await awaitUntil(
         container,
-        () => container.read(customersProvider).value!.single.isActive == false,
+        () =>
+            container.read(customersProvider).value?.singleOrNull?.isActive ==
+            false,
       );
       expect(container.read(customersProvider).value!.single.isActive, isFalse);
     });
@@ -270,7 +410,9 @@ void main() {
 
         await awaitUntil(
           container,
-          () => container.read(customersProvider).value!.single.isActive,
+          () =>
+              container.read(customersProvider).value?.singleOrNull?.isActive ==
+              true,
         );
         final restored = container.read(customersProvider).value!.single;
         expect(restored.isActive, isTrue);

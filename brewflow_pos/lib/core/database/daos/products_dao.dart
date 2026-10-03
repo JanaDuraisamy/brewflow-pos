@@ -161,40 +161,13 @@ final class ProductsDao {
     return query.map((row) => row.read(table.id.count())!).getSingle();
   }
 
-  /// Total number of rows that reference this product across variants, sale
-  /// lines, purchase lines and stock movements. Non-zero means the product
-  /// must be soft-deactivated, never hard-deleted (its audit history stays).
-  Future<int> countReferences(String id) async {
-    final variants = _db.selectOnly(_db.productVariants)
-      ..addColumns([_db.productVariants.id.count()])
-      ..where(_db.productVariants.productId.equals(id));
-    final saleItems = _db.selectOnly(_db.saleItems)
-      ..addColumns([_db.saleItems.id.count()])
-      ..where(_db.saleItems.productId.equals(id));
-    final purchaseItems = _db.selectOnly(_db.purchaseItems)
-      ..addColumns([_db.purchaseItems.id.count()])
-      ..where(_db.purchaseItems.productId.equals(id));
-    final movements = _db.selectOnly(_db.stockMovements)
-      ..addColumns([_db.stockMovements.id.count()])
-      ..where(_db.stockMovements.productId.equals(id));
-    var total = 0;
-    total += await variants
-        .map((row) => row.read(_db.productVariants.id.count())!)
-        .getSingle();
-    total += await saleItems
-        .map((row) => row.read(_db.saleItems.id.count())!)
-        .getSingle();
-    total += await purchaseItems
-        .map((row) => row.read(_db.purchaseItems.id.count())!)
-        .getSingle();
-    total += await movements
-        .map((row) => row.read(_db.stockMovements.id.count())!)
-        .getSingle();
-    return total;
-  }
-
-  /// Permanently removes a product row. Only safe to call after confirming
-  /// [countReferences] returns zero; otherwise a foreign-key failure is thrown.
+  /// Permanently removes a product row.
+  ///
+  /// Safe to call for a product with any history: schema v31 dropped the
+  /// historical foreign keys on sale_items, purchase_items and stock_movements,
+  /// so those rows survive and keep their own snapshots. Variants and per-shop
+  /// stock overlays *are* product definition rather than history and are removed
+  /// by their `ON DELETE CASCADE` keys.
   Future<void> deleteById(String id) async {
     await (_db.delete(_db.products)..where((t) => t.id.equals(id))).go();
   }

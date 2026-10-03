@@ -57,6 +57,12 @@ void main() {
           ),
           offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
           staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+          // Customer reads are shop-scoped and fail closed without a session.
+          // `staffRepositoryProvider` is overridden above, so pin the profile
+          // directly instead of via `businessScopeOverrides`.
+          userProfileProvider.overrideWithBuild(
+            (ref, notifier) => testOwnerProfile(),
+          ),
         ],
       );
       addTearDown(container.dispose);
@@ -271,6 +277,9 @@ void main() {
             settingsRepositoryProvider.overrideWithValue(
               FakeSettingsRepository(),
             ),
+            // Customer reads fail closed without a session; this scope does not
+            // override `staffRepositoryProvider`, so the helper is free.
+            ...businessScopeOverrides(),
           ],
         );
         addTearDown(container.dispose);

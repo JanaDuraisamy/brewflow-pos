@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:brewflow_pos/app/widgets/page_header.dart';
 import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/core/theme/app_breakpoints.dart';
@@ -395,167 +397,180 @@ final class _PosPageState extends ConsumerState<PosPage> {
     // The shelf row below stays full-width with the vertical rail pinned to
     // the navigation-side area. Phone and desktop return false here.
     final tabletCollapsed = TabletNavScope.isCollapsed(context);
-    return Padding(
-      padding: AppInsets.screen,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.only(
-              left: tabletCollapsed ? AppSpacing.ultra : 0,
-            ),
-            child: const PageHeader(
-              title: 'Billing & POS',
-              subtitle: 'Sell products and complete sales at the counter.',
-            ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          _ShelfFilter(categories: categories.value ?? const []),
-          const SizedBox(height: AppSpacing.md),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                // The shell keeps this page wide (shelf + cart) even when the
-                // tablet navigation rail collapses below the 600dp threshold,
-                // so the counter never loses the side-by-side selling layout.
-                final wide =
-                    constraints.maxWidth >= 600 ||
-                    TabletNavScope.isCollapsed(context);
-                if (wide) {
-                  final railMode = _useVerticalCategoryRail(
-                    context,
-                    constraints,
-                  );
-                  final cartWidth =
-                      TabletNavScope.isCollapsed(context) &&
-                          constraints.maxWidth < 880
-                      ? 340.0
-                      : 400.0;
-                  final railWidth =
-                      railMode && TabletNavScope.isCollapsed(context)
-                      ? 176.0
-                      : 104.0;
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (railMode) ...[
-                        _CategoryRail(
-                          width: railWidth,
-                          categories: categories.value ?? const [],
-                        ),
-                        const SizedBox(width: AppSpacing.lg),
-                      ],
-                      Expanded(
-                        child: _ProductShelf(
-                          products: products,
-                          cart: cart,
-                          onAdd: _addToCart,
-                          onRetry: () => ref.invalidate(posProductsProvider),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.xl),
-                      SizedBox(
-                        width: cartWidth,
-                        child: _CartPanel(
-                          cart: cart,
-                          selectedCustomer: selectedCustomer,
-                          payment: _payment,
-                          paymentStatus: _paymentStatus,
-                          checkingOut: _checkingOut,
-                          onPickCustomer: _pickCustomer,
-                          onClearCustomer: () => ref
-                              .read(cartProvider.notifier)
-                              .selectCustomer(null),
-                          onPaymentChanged: (method) =>
-                              setState(() => _payment = method),
-                          onPaymentStatusChanged: (status) =>
-                              setState(() => _paymentStatus = status),
-                          onToggleMemberPricing: () => ref
-                              .read(cartProvider.notifier)
-                              .toggleMemberPricing(),
-                          onComplete: _checkout,
-                          membershipEnabled: membershipEnabled,
-                          heldCount: heldBills.length,
-                          onHold: _holdBill,
-                          onOpenHeldBills: _openHeldBills,
-                          splitMode: _splitMode,
-                          splitReady: _splitDraft != null,
-                          onSplitTapped: () {
-                            setState(() {
-                              _splitMode = !_splitMode;
-                              if (_splitMode) {
-                                // No single method applies to a split, and a
-                                // half-typed draft must never gate a submit.
-                                _payment = null;
-                                _splitDraft = null;
-                              } else {
-                                _splitCash.clear();
-                                _splitUpi.clear();
-                                _splitDraft = null;
-                              }
-                            });
-                            if (_splitMode) _showSplitSheet();
-                          },
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                return _NarrowLayout(
-                  products: products,
-                  cart: cart,
-                  selectedCustomer: selectedCustomer,
-                  payment: _payment,
-                  paymentStatus: _paymentStatus,
-                  checkingOut: _checkingOut,
-                  onAdd: _addToCart,
-                  onRetry: () => ref.invalidate(posProductsProvider),
-                  onPickCustomer: _pickCustomer,
-                  onClearCustomer: () =>
-                      ref.read(cartProvider.notifier).selectCustomer(null),
-                  onPaymentChanged: (method) =>
-                      setState(() => _payment = method),
-                  onPaymentStatusChanged: (status) =>
-                      setState(() => _paymentStatus = status),
-                  onToggleMemberPricing: () =>
-                      ref.read(cartProvider.notifier).toggleMemberPricing(),
-                  onComplete: _checkout,
-                  membershipEnabled: membershipEnabled,
-                  heldCount: heldBills.length,
-                  onHold: _holdBill,
-                  onOpenHeldBills: _openHeldBills,
-                  splitMode: _splitMode,
-                  splitReady: _splitDraft != null,
-                  onSplitTapped: () {
-                    setState(() {
-                      _splitMode = !_splitMode;
-                      // Identical to the wide layout on purpose. This branch
-                      // used to clear only the single method on the way in and
-                      // only the text on the way out, so a draft confirmed
-                      // earlier survived both: the cashier could tap Split,
-                      // dismiss the editor, and still have Complete Sale enabled
-                      // by a split they had abandoned.
-                      if (_splitMode) {
-                        // No single method applies to a split, and a half-typed
-                        // draft must never gate a submit.
-                        _payment = null;
-                        _splitDraft = null;
-                        _splitCash.clear();
-                        _splitUpi.clear();
-                      } else {
-                        _splitCash.clear();
-                        _splitUpi.clear();
-                        _splitDraft = null;
-                      }
-                    });
-                    if (_splitMode) _showSplitSheet();
+    // Short viewports (landscape phones): the title block sheds its subtitle
+    // so the shelf/cart keep usable height. Title stays — only the
+    // dispensable second line yields. Below 500dp of body the whole page runs
+    // in compact chrome (also the shelf/cart toggle below).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compactChrome = constraints.maxHeight < 500;
+        return Padding(
+          padding: AppInsets.screen,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: EdgeInsets.only(
+                  left: tabletCollapsed ? AppSpacing.ultra : 0,
+                ),
+                child: PageHeader(
+                  title: 'Billing & POS',
+                  subtitle: compactChrome
+                      ? null
+                      : 'Sell products and complete sales at the counter.',
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _ShelfFilter(categories: categories.value ?? const []),
+              const SizedBox(height: AppSpacing.md),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // The shell keeps this page wide (shelf + cart) even when the
+                    // tablet navigation rail collapses below the 600dp threshold,
+                    // so the counter never loses the side-by-side selling layout.
+                    final wide =
+                        constraints.maxWidth >= 600 ||
+                        TabletNavScope.isCollapsed(context);
+                    if (wide) {
+                      final railMode = _useVerticalCategoryRail(
+                        context,
+                        constraints,
+                      );
+                      final cartWidth =
+                          TabletNavScope.isCollapsed(context) &&
+                              constraints.maxWidth < 880
+                          ? 340.0
+                          : 400.0;
+                      final railWidth =
+                          railMode && TabletNavScope.isCollapsed(context)
+                          ? 176.0
+                          : 104.0;
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (railMode) ...[
+                            _CategoryRail(
+                              width: railWidth,
+                              categories: categories.value ?? const [],
+                            ),
+                            const SizedBox(width: AppSpacing.lg),
+                          ],
+                          Expanded(
+                            child: _ProductShelf(
+                              products: products,
+                              cart: cart,
+                              onAdd: _addToCart,
+                              onRetry: () =>
+                                  ref.invalidate(posProductsProvider),
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.xl),
+                          SizedBox(
+                            width: cartWidth,
+                            child: _CartPanel(
+                              cart: cart,
+                              selectedCustomer: selectedCustomer,
+                              payment: _payment,
+                              paymentStatus: _paymentStatus,
+                              checkingOut: _checkingOut,
+                              onPickCustomer: _pickCustomer,
+                              onClearCustomer: () => ref
+                                  .read(cartProvider.notifier)
+                                  .selectCustomer(null),
+                              onPaymentChanged: (method) =>
+                                  setState(() => _payment = method),
+                              onPaymentStatusChanged: (status) =>
+                                  setState(() => _paymentStatus = status),
+                              onToggleMemberPricing: () => ref
+                                  .read(cartProvider.notifier)
+                                  .toggleMemberPricing(),
+                              onComplete: _checkout,
+                              membershipEnabled: membershipEnabled,
+                              heldCount: heldBills.length,
+                              onHold: _holdBill,
+                              onOpenHeldBills: _openHeldBills,
+                              splitMode: _splitMode,
+                              splitReady: _splitDraft != null,
+                              onSplitTapped: () {
+                                setState(() {
+                                  _splitMode = !_splitMode;
+                                  if (_splitMode) {
+                                    // No single method applies to a split, and a
+                                    // half-typed draft must never gate a submit.
+                                    _payment = null;
+                                    _splitDraft = null;
+                                  } else {
+                                    _splitCash.clear();
+                                    _splitUpi.clear();
+                                    _splitDraft = null;
+                                  }
+                                });
+                                if (_splitMode) _showSplitSheet();
+                              },
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+                    return _NarrowLayout(
+                      products: products,
+                      cart: cart,
+                      compactChrome: compactChrome,
+                      selectedCustomer: selectedCustomer,
+                      payment: _payment,
+                      paymentStatus: _paymentStatus,
+                      checkingOut: _checkingOut,
+                      onAdd: _addToCart,
+                      onRetry: () => ref.invalidate(posProductsProvider),
+                      onPickCustomer: _pickCustomer,
+                      onClearCustomer: () =>
+                          ref.read(cartProvider.notifier).selectCustomer(null),
+                      onPaymentChanged: (method) =>
+                          setState(() => _payment = method),
+                      onPaymentStatusChanged: (status) =>
+                          setState(() => _paymentStatus = status),
+                      onToggleMemberPricing: () =>
+                          ref.read(cartProvider.notifier).toggleMemberPricing(),
+                      onComplete: _checkout,
+                      membershipEnabled: membershipEnabled,
+                      heldCount: heldBills.length,
+                      onHold: _holdBill,
+                      onOpenHeldBills: _openHeldBills,
+                      splitMode: _splitMode,
+                      splitReady: _splitDraft != null,
+                      onSplitTapped: () {
+                        setState(() {
+                          _splitMode = !_splitMode;
+                          // Identical to the wide layout on purpose. This branch
+                          // used to clear only the single method on the way in and
+                          // only the text on the way out, so a draft confirmed
+                          // earlier survived both: the cashier could tap Split,
+                          // dismiss the editor, and still have Complete Sale enabled
+                          // by a split they had abandoned.
+                          if (_splitMode) {
+                            // No single method applies to a split, and a half-typed
+                            // draft must never gate a submit.
+                            _payment = null;
+                            _splitDraft = null;
+                            _splitCash.clear();
+                            _splitUpi.clear();
+                          } else {
+                            _splitCash.clear();
+                            _splitUpi.clear();
+                            _splitDraft = null;
+                          }
+                        });
+                        if (_splitMode) _showSplitSheet();
+                      },
+                    );
                   },
-                );
-              },
-            ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -580,9 +595,16 @@ final class _ShelfFilter extends ConsumerStatefulWidget {
 }
 
 final class _ShelfFilterState extends ConsumerState<_ShelfFilter> {
-  late final TextEditingController _search = TextEditingController(
-    text: ref.read(posFilterProvider).query,
-  );
+  // Initialized in initState (never lazily): a `late final` initializer runs
+  // on first access, so disposing a state that never built would run
+  // `ref.read` on an unmounted widget and crash fast navigations.
+  late final TextEditingController _search;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(text: ref.read(posFilterProvider).query);
+  }
 
   @override
   void dispose() {
@@ -772,6 +794,7 @@ final class _NarrowLayout extends StatefulWidget {
   const _NarrowLayout({
     required this.products,
     required this.cart,
+    required this.compactChrome,
     required this.selectedCustomer,
     required this.payment,
     required this.paymentStatus,
@@ -795,6 +818,11 @@ final class _NarrowLayout extends StatefulWidget {
 
   final AsyncValue<List<Product>> products;
   final Cart cart;
+
+  /// Page-level compact chrome (short viewport): the segmented switch stays
+  /// collapsed and the summary bar doubles as the toggle.
+  final bool compactChrome;
+
   final Customer? selectedCustomer;
   final PaymentMethod? payment;
   final PaymentStatus paymentStatus;
@@ -826,118 +854,143 @@ final class _NarrowLayoutState extends State<_NarrowLayout> {
   Widget build(BuildContext context) {
     final total = widget.cart.chargedTotalAfterOffersPaise;
     final phone = MediaQuery.sizeOf(context).width < AppBreakpoints.compact;
-    return Column(
-      children: [
-        // Phone cart summary: persistent shelf-side affordance with item
-        // count AND live total, so the counter never has to switch views just
-        // to know what the bill looks like. Hidden while the cart itself is
-        // open (it would be redundant and steal vertical space).
-        if (!_showCart)
-          InkWell(
-            borderRadius: AppBorderRadius.md,
-            onTap: () => setState(() => _showCart = true),
-            child: Container(
-              width: double.infinity,
-              padding: EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: phone ? AppSpacing.md : AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: context.appColors.surfaceVariant,
-                borderRadius: AppBorderRadius.md,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.shopping_cart_outlined,
-                    size: phone ? 20 : 18,
-                    color: AppColors.primary,
-                  ),
-                  SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Text(
-                      widget.cart.isEmpty
-                          ? 'Cart is empty — tap to add items'
-                          : '${widget.cart.itemCount} in cart',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: context.appColors.textPrimary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  if (widget.cart.isNotEmpty)
-                    Text(
-                      total == null ? '—' : Money.formatPaise(total),
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  if (widget.cart.isNotEmpty) SizedBox(width: AppSpacing.sm),
-                  Text(
-                    'Open cart',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Icon(Icons.chevron_right, size: 18, color: AppColors.primary),
-                ],
-              ),
-            ),
-          ),
-        SizedBox(height: AppSpacing.md),
-        Row(
+    // Cramped heights (short landscape phones, or a tall filter stack): the
+    // Products/Cart segmented switch costs ~88dp the shelf/cart cannot
+    // spare, so it collapses and the summary bar below doubles as the toggle
+    // in both directions — same function, no stranded views.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cramped = widget.compactChrome || constraints.maxHeight < 220;
+        return Column(
           children: [
-            Expanded(
-              child: SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(value: false, label: Text('Products')),
-                  ButtonSegment(value: true, label: Text('Cart')),
-                ],
-                selected: {_showCart},
-                showSelectedIcon: false,
-                onSelectionChanged: (selection) =>
-                    setState(() => _showCart = selection.first),
+            // Phone cart summary: persistent shelf-side affordance with item
+            // count AND live total, so the counter never has to switch views just
+            // to know what the bill looks like. Hidden while the cart itself is
+            // open (it would be redundant and steal vertical space) — except on
+            // cramped heights, where it doubles as the shelf/cart toggle.
+            if (!_showCart || cramped)
+              InkWell(
+                borderRadius: AppBorderRadius.md,
+                onTap: () => setState(() => _showCart = !_showCart),
+                child: Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: phone ? AppSpacing.md : AppSpacing.sm,
+                  ),
+                  decoration: BoxDecoration(
+                    color: context.appColors.surfaceVariant,
+                    borderRadius: AppBorderRadius.md,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _showCart && cramped
+                            ? Icons.arrow_back
+                            : Icons.shopping_cart_outlined,
+                        size: phone ? 20 : 18,
+                        color: AppColors.primary,
+                      ),
+                      SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          _showCart && cramped
+                              ? 'Back to products'
+                              : widget.cart.isEmpty
+                              ? 'Cart is empty — tap to add items'
+                              : '${widget.cart.itemCount} in cart',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: context.appColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
+                      if (widget.cart.isNotEmpty && !(_showCart && cramped))
+                        Text(
+                          total == null ? '—' : Money.formatPaise(total),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                      if (widget.cart.isNotEmpty && !(_showCart && cramped))
+                        SizedBox(width: AppSpacing.sm),
+                      Text(
+                        _showCart && cramped ? '' : 'Open cart',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Icon(
+                        _showCart && cramped
+                            ? Icons.expand_more
+                            : Icons.chevron_right,
+                        size: 18,
+                        color: AppColors.primary,
+                      ),
+                    ],
+                  ),
+                ),
               ),
+            if (!cramped) ...[
+              SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: false, label: Text('Products')),
+                        ButtonSegment(value: true, label: Text('Cart')),
+                      ],
+                      selected: {_showCart},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (selection) =>
+                          setState(() => _showCart = selection.first),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: AppSpacing.md),
+            ] else
+              const SizedBox(height: AppSpacing.sm),
+            Expanded(
+              child: _showCart
+                  ? _CartPanel(
+                      cart: widget.cart,
+                      selectedCustomer: widget.selectedCustomer,
+                      payment: widget.payment,
+                      paymentStatus: widget.paymentStatus,
+                      checkingOut: widget.checkingOut,
+                      onPickCustomer: widget.onPickCustomer,
+                      onClearCustomer: widget.onClearCustomer,
+                      onPaymentChanged: widget.onPaymentChanged,
+                      onPaymentStatusChanged: widget.onPaymentStatusChanged,
+                      onToggleMemberPricing: widget.onToggleMemberPricing,
+                      membershipEnabled: widget.membershipEnabled,
+                      onComplete: widget.onComplete,
+                      heldCount: widget.heldCount,
+                      onHold: widget.onHold,
+                      onOpenHeldBills: widget.onOpenHeldBills,
+                      splitMode: widget.splitMode,
+                      splitReady: widget.splitReady,
+                      onSplitTapped: widget.onSplitTapped,
+                    )
+                  : _ProductShelf(
+                      products: widget.products,
+                      cart: widget.cart,
+                      onAdd: widget.onAdd,
+                      onRetry: widget.onRetry,
+                      phone: phone,
+                    ),
             ),
           ],
-        ),
-        SizedBox(height: AppSpacing.md),
-        Expanded(
-          child: _showCart
-              ? _CartPanel(
-                  cart: widget.cart,
-                  selectedCustomer: widget.selectedCustomer,
-                  payment: widget.payment,
-                  paymentStatus: widget.paymentStatus,
-                  checkingOut: widget.checkingOut,
-                  onPickCustomer: widget.onPickCustomer,
-                  onClearCustomer: widget.onClearCustomer,
-                  onPaymentChanged: widget.onPaymentChanged,
-                  onPaymentStatusChanged: widget.onPaymentStatusChanged,
-                  onToggleMemberPricing: widget.onToggleMemberPricing,
-                  membershipEnabled: widget.membershipEnabled,
-                  onComplete: widget.onComplete,
-                  heldCount: widget.heldCount,
-                  onHold: widget.onHold,
-                  onOpenHeldBills: widget.onOpenHeldBills,
-                  phone: phone,
-                  splitMode: widget.splitMode,
-                  splitReady: widget.splitReady,
-                  onSplitTapped: widget.onSplitTapped,
-                )
-              : _ProductShelf(
-                  products: widget.products,
-                  cart: widget.cart,
-                  onAdd: widget.onAdd,
-                  onRetry: widget.onRetry,
-                  phone: phone,
-                ),
-        ),
-      ],
+        );
+      },
     );
   }
 }
@@ -1621,13 +1674,143 @@ final class _CartPanel extends StatelessWidget {
               ],
             ],
           );
+          // Middle + actions as shared pieces so both panel modes below
+          // render the same widgets in the same order.
+          final middleChildren = [
+            lines,
+            const Divider(height: AppSpacing.xl),
+            _SummaryRow(
+              label: cart.isEmpty
+                  ? 'Subtotal'
+                  : 'Subtotal (${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'})',
+              amount: subtotal == null ? '—' : Money.formatPaise(subtotal),
+            ),
+            if (offerDiscount > 0) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _SummaryRow(
+                label: 'Offer Discount',
+                amount: '-${Money.formatPaise(offerDiscount)}',
+              ),
+            ],
+            const SizedBox(height: AppSpacing.xs),
+            _SummaryRow(
+              label: 'Total',
+              amount: total == null ? '—' : Money.formatPaise(total),
+              emphasized: true,
+            ),
+            if (notPaid && selectedCustomer != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              _SummaryRow(
+                label: 'Due Added',
+                amount: total == null ? '—' : Money.formatPaise(total),
+                emphasized: true,
+              ),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            _PaymentStatusPicker(
+              selected: paymentStatus,
+              onChanged: onPaymentStatusChanged,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (notPaid)
+              if (selectedCustomer == null)
+                _NotPaidCustomerHint()
+              else
+                const SizedBox.shrink()
+            else
+              _PaymentPicker(
+                selected: payment,
+                onChanged: onPaymentChanged,
+                splitSelected: splitMode,
+                onSplitTapped: onSplitTapped ?? () {},
+              ),
+          ];
+          final actionChildren = [
+            FilledButton(
+              onPressed: canComplete ? onComplete : null,
+              style: FilledButton.styleFrom(
+                minimumSize: Size.fromHeight(phone ? 56 : 48),
+                backgroundColor: AppColors.primary,
+                disabledBackgroundColor: context.appColors.surfaceVariant,
+                foregroundColor: Colors.white,
+                disabledForegroundColor: context.appColors.textDisabled,
+              ),
+              child: checkingOut
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.receipt_long_outlined),
+                        SizedBox(width: AppSpacing.sm),
+                        Text('Complete Sale'),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: SecondaryButton(
+                    label: 'Hold Bill',
+                    icon: Icons.pause_circle_outline,
+                    minHeight: 44,
+                    onPressed: cart.isNotEmpty && !checkingOut ? onHold : null,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: SecondaryButton(
+                    label: heldCount == 0
+                        ? 'Held Bills'
+                        : 'Held Bills ($heldCount)',
+                    icon: Icons.inventory_2_outlined,
+                    minHeight: 44,
+                    onPressed: onOpenHeldBills,
+                  ),
+                ),
+              ],
+            ),
+          ];
+
+          // A short panel cannot honor the pinned-actions contract: the
+          // capped header plus the fixed action block already exceed it, so
+          // the middle would collapse to zero and hide the payment pickers.
+          // Below 300dp the whole panel becomes one scroll view — same
+          // widgets, same order, everything reachable.
+          if (constraints.maxHeight < 300) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  headerBlock,
+                  const SizedBox(height: AppSpacing.md),
+                  ...middleChildren,
+                  const SizedBox(height: AppSpacing.lg),
+                  ...actionChildren,
+                ],
+              ),
+            );
+          }
+
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // ---- Header: capped on short panels, internally scrollable ----
               ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxHeight: constraints.maxHeight * 0.38,
+                  // Never reserve more than the panel minus the pinned
+                  // actions (~140dp): on a short panel the 38% cap alone
+                  // still exceeds what is left and the whole column
+                  // overflows. The middle then takes whatever remains.
+                  maxHeight: math.min(
+                    constraints.maxHeight * 0.38,
+                    math.max(constraints.maxHeight - 140, 0),
+                  ),
                 ),
                 child: SingleChildScrollView(child: headerBlock),
               ),
@@ -1643,115 +1826,14 @@ final class _CartPanel extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      lines,
-                      const Divider(height: AppSpacing.xl),
-                      _SummaryRow(
-                        label: cart.isEmpty
-                            ? 'Subtotal'
-                            : 'Subtotal (${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'})',
-                        amount: subtotal == null
-                            ? '—'
-                            : Money.formatPaise(subtotal),
-                      ),
-                      if (offerDiscount > 0) ...[
-                        const SizedBox(height: AppSpacing.xs),
-                        _SummaryRow(
-                          label: 'Offer Discount',
-                          amount: '-${Money.formatPaise(offerDiscount)}',
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.xs),
-                      _SummaryRow(
-                        label: 'Total',
-                        amount: total == null ? '—' : Money.formatPaise(total),
-                        emphasized: true,
-                      ),
-                      if (notPaid && selectedCustomer != null) ...[
-                        const SizedBox(height: AppSpacing.sm),
-                        _SummaryRow(
-                          label: 'Due Added',
-                          amount: total == null
-                              ? '—'
-                              : Money.formatPaise(total),
-                          emphasized: true,
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.md),
-                      _PaymentStatusPicker(
-                        selected: paymentStatus,
-                        onChanged: onPaymentStatusChanged,
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (notPaid)
-                        if (selectedCustomer == null)
-                          _NotPaidCustomerHint()
-                        else
-                          const SizedBox.shrink()
-                      else
-                        _PaymentPicker(
-                          selected: payment,
-                          onChanged: onPaymentChanged,
-                          splitSelected: splitMode,
-                          onSplitTapped: onSplitTapped ?? () {},
-                        ),
-                    ],
+                    children: middleChildren,
                   ),
                 ),
               ),
               const SizedBox(height: AppSpacing.lg),
 
               // ---- Pinned actions (always visible) ----
-              FilledButton(
-                onPressed: canComplete ? onComplete : null,
-                style: FilledButton.styleFrom(
-                  minimumSize: Size.fromHeight(phone ? 56 : 48),
-                  backgroundColor: AppColors.primary,
-                  disabledBackgroundColor: context.appColors.surfaceVariant,
-                  foregroundColor: Colors.white,
-                  disabledForegroundColor: context.appColors.textDisabled,
-                ),
-                child: checkingOut
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.receipt_long_outlined),
-                          SizedBox(width: AppSpacing.sm),
-                          Text('Complete Sale'),
-                        ],
-                      ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Row(
-                children: [
-                  Expanded(
-                    child: SecondaryButton(
-                      label: 'Hold Bill',
-                      icon: Icons.pause_circle_outline,
-                      minHeight: 44,
-                      onPressed: cart.isNotEmpty && !checkingOut
-                          ? onHold
-                          : null,
-                    ),
-                  ),
-                  SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: SecondaryButton(
-                      label: heldCount == 0
-                          ? 'Held Bills'
-                          : 'Held Bills ($heldCount)',
-                      icon: Icons.inventory_2_outlined,
-                      minHeight: 44,
-                      onPressed: onOpenHeldBills,
-                    ),
-                  ),
-                ],
-              ),
+              ...actionChildren,
             ],
           );
         },
@@ -2181,6 +2263,27 @@ final class _EmptyCartHint extends StatelessWidget {
 final class _CustomerPickerDialog extends ConsumerStatefulWidget {
   const _CustomerPickerDialog();
 
+  /// Roomy desktop width for the picker, never wider than that.
+  static const double _maxPickerWidth = 420;
+
+  /// Picker height. Fixed so the customer list owns a bounded scroll area and
+  /// the dialog never has to intrinsic-measure the list to size itself.
+  static const double _pickerHeight = 420;
+
+  /// Width the picker can occupy inside the dialog: the room the dialog leaves
+  /// after its own horizontal inset, capped at [_maxPickerWidth].
+  ///
+  /// Returns a definite width on purpose — see the [AlertDialog] comment at the
+  /// call site. [DialogThemeData.insetPadding] is unset in this app, so the
+  /// dialog falls back to the framework's own default, mirrored here.
+  static double _pickerWidth(BuildContext context) {
+    final inset =
+        DialogTheme.of(context).insetPadding ??
+        const EdgeInsets.symmetric(horizontal: 40, vertical: 24);
+    final available = MediaQuery.sizeOf(context).width - inset.horizontal;
+    return available.clamp(1.0, _maxPickerWidth).toDouble();
+  }
+
   @override
   ConsumerState<_CustomerPickerDialog> createState() =>
       _CustomerPickerDialogState();
@@ -2203,9 +2306,19 @@ final class _CustomerPickerDialogState
     final query = _query.trim().toLowerCase();
     return AlertDialog(
       title: const Text('Select Customer'),
+      // AlertDialog measures its content's intrinsic dimensions before it lays
+      // it out, and a viewport (the customer ListView) refuses to answer
+      // intrinsics — as do LayoutBuilder and a max-only ConstrainedBox. While
+      // the content box was loose, that pass reached the list, threw during
+      // layout and left the entire picker unbuilt.
+      //
+      // _pickerWidth() resolves a definite width, so the box answers the
+      // intrinsic pass from its own size and the list is never measured. It
+      // stays responsive: the width is the room the dialog actually offers on
+      // a narrow phone, capped at the roomy 420dp desktop picker.
       content: SizedBox(
-        width: 420,
-        height: 420,
+        width: _CustomerPickerDialog._pickerWidth(context),
+        height: _CustomerPickerDialog._pickerHeight,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -2534,9 +2647,16 @@ final class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
   Future<void> _resolveCustomer() async {
     final customerId = widget.completed.sale.customerId;
     if (customerId == null) return;
+    // Scoped: the receipt prints the customer's name and balance context, so a
+    // Food Truck receipt must not resolve a Cafe customer profile.
     final customer = await ref
         .read(customersRepositoryProvider)
-        .customerById(customerId);
+        .customerById(
+          customerId,
+          shopIds: await ref
+              .read(businessSwitcherProvider.notifier)
+              .shopIdsForRead(ref.read(businessSwitcherProvider)),
+        );
     if (!mounted || customer == null) return;
     setState(() => _customerName = customer.name);
   }
@@ -2647,7 +2767,7 @@ final class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
             if (widget.completed.items.isNotEmpty) ...[
               SizedBox(height: AppSpacing.md),
               Container(
-                width: 360,
+                constraints: const BoxConstraints(maxWidth: 360),
                 decoration: BoxDecoration(
                   color: context.appColors.surfaceVariant,
                   borderRadius: AppBorderRadius.md,
@@ -3035,77 +3155,87 @@ final class _SplitPaymentSheet extends StatelessWidget {
         top: AppInsets.md.top,
         bottom: MediaQuery.of(context).viewInsets.bottom + AppInsets.lg.bottom,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Split Payment', style: textTheme.titleLarge),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            // Money.formatPaise already emits the ₹ symbol.
-            'Total: ${Money.formatPaise(totalPaise)}',
-            style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          TextField(
-            controller: cashController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            // Rupees, because that is what the cashier is holding. The label
-            // used to say "(paise)", which is a unit no customer or cashier
-            // thinks in.
-            decoration: const InputDecoration(
-              labelText: 'Cash amount (₹)',
-              border: OutlineInputBorder(),
+      // Scrollable (not just inset-padded): on a short landscape viewport
+      // with the keyboard open the Confirm Split button stays reachable.
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Split Payment', style: textTheme.titleLarge),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              // Money.formatPaise already emits the ₹ symbol.
+              'Total: ${Money.formatPaise(totalPaise)}',
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: upiController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'UPI amount (₹)',
-              border: OutlineInputBorder(),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: cashController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              // Rupees, because that is what the cashier is holding. The label
+              // used to say "(paise)", which is a unit no customer or cashier
+              // thinks in.
+              decoration: const InputDecoration(
+                labelText: 'Cash amount (₹)',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: cashController,
-            builder: (context, _, _) {
-              return ValueListenableBuilder<TextEditingValue>(
-                valueListenable: upiController,
-                builder: (context, _, _) {
-                  final draft = SplitPaymentDraft.fromRupeeInput(
-                    cash: cashController.text,
-                    upi: upiController.text,
-                    totalPaise: totalPaise,
-                  );
-                  final problem = draft.problem;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        problem ?? 'Exact — ready to complete',
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: draft.isExact
-                              ? AppColors.softGreen
-                              : AppColors.error,
-                          fontWeight: FontWeight.w600,
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: upiController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'UPI amount (₹)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: cashController,
+              builder: (context, _, _) {
+                return ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: upiController,
+                  builder: (context, _, _) {
+                    final draft = SplitPaymentDraft.fromRupeeInput(
+                      cash: cashController.text,
+                      upi: upiController.text,
+                      totalPaise: totalPaise,
+                    );
+                    final problem = draft.problem;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          problem ?? 'Exact — ready to complete',
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: draft.isExact
+                                ? AppColors.softGreen
+                                : AppColors.error,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      FilledButton(
-                        onPressed: draft.canSubmit
-                            ? () => Navigator.of(context).pop(draft)
-                            : null,
-                        child: const Text('Confirm Split'),
-                      ),
-                    ],
-                  );
-                },
-              );
-            },
-          ),
-        ],
+                        const SizedBox(height: AppSpacing.md),
+                        FilledButton(
+                          onPressed: draft.canSubmit
+                              ? () => Navigator.of(context).pop(draft)
+                              : null,
+                          child: const Text('Confirm Split'),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

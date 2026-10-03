@@ -32,7 +32,8 @@ enum MasterEntity {
   customerPayment('CUSTOMER_PAYMENT'),
   expensePayment('EXPENSE_PAYMENT'),
   offer('OFFER'),
-  staffProfile('STAFF_PROFILE');
+  staffProfile('STAFF_PROFILE'),
+  staffAttendance('STAFF_ATTENDANCE');
 
   const MasterEntity(this.wire);
   final String wire;
@@ -881,6 +882,86 @@ final class SyncOffer {
     'isActive': isActive,
     'startAt': startAt?.toIso8601String(),
     'endAt': endAt?.toIso8601String(),
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt.toIso8601String(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Staff attendance — clock-in/clock-out shifts (Cafe / Food Truck isolated)
+// ---------------------------------------------------------------------------
+
+/// One attendance shift crossing the sync boundary.
+///
+/// [staffUserId] is the device-local profile id that authored the row; it is
+/// carried for attribution but is NEVER trusted as a lookup key on the
+/// receiving device (a second device minted a different one). [authUserId] is
+/// the cross-device identity every read is filtered and every write stamped
+/// with — the applier resolves it to the receiving device's own local profile.
+/// [createdAt] is the true creation instant from the owning device (UTC);
+/// conflict ordering uses only the server's trigger-managed `updated_at`.
+final class SyncStaffAttendance {
+  const SyncStaffAttendance({
+    required this.id,
+    required this.shopId,
+    required this.staffUserId,
+    required this.authUserId,
+    required this.inAt,
+    required this.outAt,
+    required this.attendanceDate,
+    required this.workedMinutes,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SyncStaffAttendance.fromJson(Map<String, dynamic> json) =>
+      SyncStaffAttendance(
+        id: json['id'] as String,
+        shopId: json['shopId'] as String,
+        staffUserId: json['staffUserId'] as String,
+        authUserId: json['authUserId'] as String?,
+        inAt: DateTime.parse(json['inAt'] as String),
+        outAt: json['outAt'] != null
+            ? DateTime.parse(json['outAt'] as String)
+            : null,
+        attendanceDate: DateTime.parse(json['attendanceDate'] as String),
+        workedMinutes: (json['workedMinutes'] as num).toInt(),
+        createdAt: DateTime.parse(json['createdAt'] as String),
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+      );
+
+  final String id;
+  final String shopId;
+  final String staffUserId;
+
+  /// Cross-device identity; null only for pre-re-key legacy rows.
+  final String? authUserId;
+
+  /// UTC instant of clock-in.
+  final DateTime inAt;
+
+  /// UTC instant of clock-out; null while the shift is open.
+  final DateTime? outAt;
+
+  /// Local business-day cookie (UTC midnight) this shift belongs to.
+  final DateTime attendanceDate;
+
+  /// Worked minutes fixed at clock-out; 0 while open.
+  final int workedMinutes;
+
+  /// Original creation instant from the OWNING device (UTC).
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'staffUserId': staffUserId,
+    'authUserId': authUserId,
+    'inAt': inAt.toIso8601String(),
+    'outAt': outAt?.toIso8601String(),
+    'attendanceDate': attendanceDate.toIso8601String(),
+    'workedMinutes': workedMinutes,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
   };

@@ -35,35 +35,41 @@ final class ReportsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final report = ref.watch(reportsControllerProvider);
-    if (MediaQuery.sizeOf(context).width < AppBreakpoints.compact) {
-      return const _PhoneReportsLayout();
-    }
-    return Padding(
-      padding: AppInsets.screen,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const PageHeader(
-            title: 'Reports',
-            subtitle: 'Sales, expenses and profit for a date range.',
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          const _RangeSelector(),
-          const SizedBox(height: AppSpacing.md),
-          Expanded(
-            child: report.when(
-              skipLoadingOnRefresh: true,
-              loading: () =>
-                  const LoadingState(message: 'Crunching your numbers…'),
-              error: (error, stackTrace) => ErrorState(
-                message: reportsErrorMessage(error),
-                onRetry: () => ref.invalidate(reportsControllerProvider),
+    // Content width (after the shell's collapsed rail gutter), not the raw
+    // window width, so the phone/desktop split matches what is on screen.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < AppBreakpoints.compact) {
+          return const _PhoneReportsLayout();
+        }
+        return Padding(
+          padding: AppInsets.screen,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const PageHeader(
+                title: 'Reports',
+                subtitle: 'Sales, expenses and profit for a date range.',
               ),
-              data: (snapshot) => _ReportContent(snapshot: snapshot),
-            ),
+              const SizedBox(height: AppSpacing.lg),
+              const _RangeSelector(),
+              const SizedBox(height: AppSpacing.md),
+              Expanded(
+                child: report.when(
+                  skipLoadingOnRefresh: true,
+                  loading: () =>
+                      const LoadingState(message: 'Crunching your numbers…'),
+                  error: (error, stackTrace) => ErrorState(
+                    message: reportsErrorMessage(error),
+                    onRetry: () => ref.invalidate(reportsControllerProvider),
+                  ),
+                  data: (snapshot) => _ReportContent(snapshot: snapshot),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

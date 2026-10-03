@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_purchases_repository.dart';
 import '../../helpers/fake_suppliers_repository.dart';
+import '../../helpers/test_providers.dart';
 
 void main() {
   late FakePurchasesRepository fakePurchases;
@@ -58,6 +59,9 @@ void main() {
     overrides: [
       purchasesRepositoryProvider.overrideWithValue(fakePurchases),
       suppliersRepositoryProvider.overrideWithValue(fakeSuppliers),
+      // Purchase/supplier reads are shop-scoped, so the fixture has to declare
+      // the signed-in owner session.
+      ...businessScopeOverrides(),
     ],
   );
 

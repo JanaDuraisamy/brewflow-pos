@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 
+import 'test_providers.dart';
+
 /// In-memory [InventoryRepository] for tests.
 ///
 /// Mirrors the Drift repository semantics that matter to state and UI:
@@ -31,6 +33,17 @@ final class FakeInventoryRepository implements InventoryRepository {
   /// Number of [productsForBusiness] calls.
   int productsForBusinessCalls = 0;
 
+  /// Shop id treated as the owner of any seeded row that omits one.
+  ///
+  /// Fixtures build catalogue rows by hand and predate shop scoping, so most
+  /// never set `shopId`. Resolving a missing shop to this default keeps them
+  /// visible to a scoped read without weakening isolation: a row that DOES carry
+  /// a shop id is still filtered strictly, so a cross-shop test can never pass by
+  /// accident. Set it to null to assert that an unscoped (legacy) row stays
+  /// invisible under a scope — that is the fail-closed behaviour the Drift
+  /// repository gets from `products_dao.query`.
+  String? unscopedShopIdFallback = kTestCafeShopId;
+
   Future<void> _gate() async {
     final gate = loadGate;
     if (gate != null) {
@@ -50,6 +63,9 @@ final class FakeInventoryRepository implements InventoryRepository {
     categoriesCalls += 1;
     await _gate();
     _throwIfLoadError();
+    // A non-null [shopIds] is a hard scope, so an empty list must yield nothing
+    // (mirrors DriftInventoryRepository).
+    if (shopIds != null && shopIds.isEmpty) return const [];
     return List.of(storedCategories)
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
@@ -101,7 +117,10 @@ final class FakeInventoryRepository implements InventoryRepository {
     final scoped = shopIds == null
         ? List<Product>.of(storedProducts)
         : storedProducts
-              .where((product) => shopIds.contains(product.shopId))
+              .where(
+                (product) =>
+                    shopIds.contains(product.shopId ?? unscopedShopIdFallback),
+              )
               .toList();
     return _finish(scoped, search, status, categoryId);
   }
@@ -356,7 +375,11 @@ final class FakeInventoryRepository implements InventoryRepository {
       isActive: isActive,
       createdAt: now,
       updatedAt: now,
-      shopId: shopId,
+      // Fixtures seed the catalogue under [kTestCafeShopId] (the identity
+      // `businessScopeOverrides` signs in), so an omitted shopId must land
+      // there. A null shopId would make every strictly-scoped read drop the
+      // row and quietly turn scoping assertions into false passes.
+      shopId: shopId ?? kTestCafeShopId,
       visibleInShops: visibleInShops,
       variants: createdVariants,
     );
@@ -498,8 +521,6 @@ final class FakeInventoryRepository implements InventoryRepository {
   /// Product ids that have variants / sale / purchase / stock history (so a
   /// delete degrades to deactivation). Tests populate this to exercise the
   /// safe path.
-  final Set<String> productsWithHistory = {};
-
   @override
   Future<ProductDeleteResult> deleteProduct(
     String id, {
@@ -511,12 +532,8 @@ final class FakeInventoryRepository implements InventoryRepository {
       orElse: () => throw const UnexpectedInventoryFailure(),
     );
     _requireOwnedBy(existing, shopIds);
-    if (productsWithHistory.contains(id)) {
-      _replaceProduct(
-        existing.copyWith(isActive: false, updatedAt: DateTime.now().toUtc()),
-      );
-      return ProductDeleteResult.deactivated;
-    }
+    // Mirrors production: history is never a reason to refuse. The products
+    // row is always removed — never replaced with a deactivated one.
     storedProducts.removeWhere((product) => product.id == id);
     return ProductDeleteResult.deleted;
   }

@@ -155,21 +155,17 @@ final class PosProductsController extends AsyncNotifier<List<Product>> {
         // The truck sells from its own shelf; a shared product with no overlay
         // row arrives here as 0 and the card renders it sold out.
         overlayShopId = ftId;
-      } else if (business == BusinessContext.all) {
-        // Only the multi-business view needs the shop list; Cafe is the
-        // default and is already scoped by the repository, so it keeps the
-        // unscoped call it has always made.
+      } else {
+        // Cafe and the combined view share one scoped call. It must be scoped:
+        // `products()` reads a null `shopIds` as "no filter", so the old
+        // unscoped Cafe call let a Food Truck staff member — who the shell pins
+        // to the Cafe context — bill Cafe products, and an owner on the Cafe
+        // sell Food Truck stock.
         shelf = await repository.products(
           search: filter.query,
           categoryId: categoryId,
           status: ProductStatusFilter.active,
           shopIds: await switcher.shopIdsForRead(business),
-        );
-      } else {
-        shelf = await repository.products(
-          search: filter.query,
-          categoryId: categoryId,
-          status: ProductStatusFilter.active,
         );
       }
       // Read the overlay only when there IS an overlay to read. Watching it
@@ -274,7 +270,14 @@ final class PosCustomersController extends AsyncNotifier<List<Customer>> {
   Future<List<Customer>> build() async {
     final repository = ref.watch(customersRepositoryProvider);
     try {
-      return await repository.customers(status: CustomerStatusFilter.active);
+      // Scoped: the POS customer picker must not offer another business's
+      // customers, or a Food Truck sale could be booked against a Cafe debtor.
+      return await repository.customers(
+        status: CustomerStatusFilter.active,
+        shopIds: await ref
+            .read(businessSwitcherProvider.notifier)
+            .shopIdsForRead(ref.watch(businessSwitcherProvider)),
+      );
     } on CustomersFailure {
       rethrow;
     } catch (error, stackTrace) {
@@ -531,7 +534,12 @@ final class CartController extends Notifier<Cart> {
       try {
         final customer = await ref
             .read(customersRepositoryProvider)
-            .customerById(customerId);
+            .customerById(
+              customerId,
+              shopIds: await ref
+                  .read(businessSwitcherProvider.notifier)
+                  .shopIdsForRead(ref.read(businessSwitcherProvider)),
+            );
         memberPricing =
             customer != null && customer.isActive && customer.membershipActive;
       } on Exception {

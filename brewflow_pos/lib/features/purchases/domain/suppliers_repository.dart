@@ -43,18 +43,31 @@ abstract interface class SuppliersRepository {
   ///
   /// [search] matches name, phone or email (case-insensitive substring).
   /// [status] restricts to active/inactive suppliers (default: all).
+  ///
+  /// [shopIds] scopes the read to businesses (Cafe/Food Truck isolation). A
+  /// non-null value is a HARD scope: an empty list yields nothing rather than
+  /// every business's suppliers, so one business's supplier book can never
+  /// leak into another's. Null keeps the legacy unscoped read for the
+  /// single-shop install.
   Future<List<Supplier>> suppliers({
     String? search,
     SupplierStatusFilter status,
+    List<String>? shopIds,
   });
 
-  Future<Supplier?> supplierById(String id);
+  /// One supplier by id, or null when it does not exist **within [shopIds]**.
+  Future<Supplier?> supplierById(String id, {List<String>? shopIds});
 
   /// Whether another supplier already uses this phone number
   /// (case-insensitive). [exceptId] excludes one supplier so an edit can
   /// keep its own phone.
+  ///
+  /// Deliberately NOT shop-scoped: `suppliers.phone` carries a single global
+  /// UNIQUE index, so the insert this predicts is rejected by SQLite even when
+  /// the clash lives under another shop. Narrowing the check to [shopIds] would
+  /// report "free" for a number that the database then refuses. The answer
+  /// reveals only that a phone number is taken, never any supplier's data.
   Future<bool> phoneExists(String phone, {String? exceptId});
-
   Future<Supplier> createSupplier({
     required String name,
     String? phone,

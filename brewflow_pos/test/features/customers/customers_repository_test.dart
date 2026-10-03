@@ -1,5 +1,5 @@
 import 'package:brewflow_pos/core/database/app_database.dart'
-    show AppDatabase, CustomerPaymentsCompanion, SalesCompanion;
+    show AppDatabase, CustomerPaymentsCompanion, SalesCompanion, ShopsCompanion;
 import 'package:brewflow_pos/features/customers/data/drift_customers_repository.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/domain/customers_repository.dart';
@@ -436,5 +436,162 @@ void main() {
       );
       expect(inactive.map((c) => c.name).toList(), ['Karthik']);
     });
+  });
+
+  // Regression: customer rows are shop-owned (name, phone, outstanding
+  // balance). Reads used to route through `resolveWritableShopId`, which both
+  // minted a shop row as a side effect of listing and silently widened to the
+  // writable business. Reads now take the session's scope explicitly.
+  group('read scope', () {
+    const cafe = 'shop-cafe';
+    const truck = 'shop-truck';
+
+    setUp(() async {
+      // `customers.shop_id` is a real FK, so the businesses have to exist
+      // before rows can be attributed to them.
+      for (final entry in {cafe: 'Cafe', truck: 'Food Truck'}.entries) {
+        await database
+            .into(database.shops)
+            .insert(
+              ShopsCompanion.insert(id: Value(entry.key), name: entry.value),
+            );
+      }
+    });
+
+    Future<Customer> seed(String shopId, String name, {String? phone}) =>
+        repository.createCustomer(name: name, phone: phone, shopId: shopId);
+
+    test('an empty scope returns nothing instead of every shop', () async {
+      await seed(cafe, 'Priya');
+      await seed(truck, 'Karthik');
+
+      // Fail closed. Reading `[]` as "unscoped" would hand a Food Truck session
+      // the Cafe's entire debtor book.
+      final results = await repository.customers(shopIds: const []);
+      expect(results, isEmpty);
+    });
+
+    test('scoped read returns only the requested business', () async {
+      await seed(cafe, 'Priya');
+      await seed(truck, 'Karthik');
+
+      final cafeOnly = await repository.customers(shopIds: const [cafe]);
+      expect(cafeOnly.map((c) => c.name).toList(), ['Priya']);
+
+      final truckOnly = await repository.customers(shopIds: const [truck]);
+      expect(truckOnly.map((c) => c.name).toList(), ['Karthik']);
+    });
+
+    test('a multi-shop scope (Combined) merges both businesses', () async {
+      await seed(cafe, 'Priya');
+      await seed(truck, 'Karthik');
+
+      final combined = await repository.customers(shopIds: const [cafe, truck]);
+      expect(combined.map((c) => c.name).toSet(), {'Priya', 'Karthik'});
+    });
+
+    test('scoped read still honours search and status filters', () async {
+      await seed(cafe, 'Priya', phone: '9845012345');
+      await seed(cafe, 'Karthik');
+      await seed(truck, 'Meena');
+
+      final searched = await repository.customers(
+        search: 'meena',
+        shopIds: const [cafe, truck],
+      );
+      expect(searched.map((c) => c.name).toList(), ['Meena']);
+
+      await repository.setCustomerActive(
+        (await repository.customers(
+          shopIds: const [cafe],
+        )).firstWhere((c) => c.name == 'Karthik').id,
+        false,
+      );
+      final active = await repository.customers(
+        status: CustomerStatusFilter.active,
+        shopIds: const [cafe],
+      );
+      expect(active.map((c) => c.name).toList(), ['Priya']);
+    });
+
+    test('a null scope keeps the legacy unscoped read', () async {
+      await seed(cafe, 'Priya');
+      await seed(truck, 'Karthik');
+
+      final all = await repository.customers();
+      expect(all.map((c) => c.name).toSet(), {'Priya', 'Karthik'});
+    });
+
+    test(
+      'customerById does not resolve a customer outside the scope',
+      () async {
+        final truckCustomer = await seed(truck, 'Karthik');
+
+        // A Food Truck session must not be able to read a Cafe profile by id.
+        expect(
+          await repository.customerById(
+            truckCustomer.id,
+            shopIds: const [cafe],
+          ),
+          isNull,
+        );
+        expect(
+          await repository.customerById(truckCustomer.id, shopIds: const []),
+          isNull,
+        );
+        expect(
+          (await repository.customerById(
+            truckCustomer.id,
+            shopIds: const [truck],
+          ))?.name,
+          'Karthik',
+        );
+        // Unscoped still resolves it (single-shop legacy installs).
+        expect(
+          (await repository.customerById(truckCustomer.id))?.name,
+          'Karthik',
+        );
+      },
+    );
+
+    test('reading a scoped customer list does not mint a shop row', () async {
+      await seed(cafe, 'Priya');
+
+      // Drive a scope that names a business which does not exist yet. A
+      // writable-shop fallback would insert it here.
+      await repository.customers(shopIds: const ['never-created-shop']);
+
+      final shopIds = await database
+          .select(database.shops)
+          .get()
+          .then((rows) => rows.map((r) => r.id).toList());
+      expect(shopIds, isNot(contains('never-created-shop')));
+    });
+
+    test(
+      'phoneExists stays global so a cross-business clash is reported',
+      () async {
+        await seed(cafe, 'Priya', phone: '9845012345');
+
+        // `customers.phone` carries one global UNIQUE index, so a shop-narrowed
+        // check would report this free and the insert would then be rejected.
+        expect(
+          await repository.phoneExists('9845012345'),
+          isTrue,
+          reason:
+              'the number is taken under another business and SQLite would '
+              'still reject the insert',
+        );
+        // exceptId still excludes the holder so an edit can keep its own number.
+        final priya = (await repository.customers(
+          shopIds: const [cafe],
+        )).single;
+        expect(
+          await repository.phoneExists('9845012345', exceptId: priya.id),
+          isFalse,
+        );
+        expect(await repository.phoneExists('9999999999'), isFalse);
+      },
+    );
   });
 }

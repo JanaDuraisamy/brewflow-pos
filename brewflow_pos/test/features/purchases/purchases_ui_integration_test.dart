@@ -11,7 +11,6 @@ import 'package:brewflow_pos/features/purchases/domain/purchases_repository.dart
 import 'package:brewflow_pos/features/purchases/presentation/purchase_controller.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_detail_page.dart';
 import 'package:brewflow_pos/features/purchases/presentation/purchase_form_page.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,7 +20,7 @@ import 'package:drift/native.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_connectivity_service.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -62,8 +61,8 @@ void main() {
             sellingPricePaise: 12000,
             costPricePaise: const Value(9000),
             stockQuantity: const Value(20),
-            // The Cafe shop id FakeStaffRepository.ensureShop() hands out, so
-            // the seeded row survives the business scope filter.
+            // The Cafe shop id businessScopeOverrides() resolves to, so the seeded row
+            // survives the business scope filter.
             shopId: const Value('shop-1'),
           ),
         );
@@ -74,6 +73,10 @@ void main() {
             id: Value('s1'),
             name: 'Acme Supplies',
             phone: const Value('9845012345'),
+            // Suppliers are shop-owned and every read is scoped, so the row
+            // must carry the same shop the session resolves to. A NULL shopId
+            // would be excluded by the hard scope filter.
+            shopId: const Value('shop-1'),
           ),
         );
   }
@@ -82,7 +85,9 @@ void main() {
     overrides: [
       appDatabaseProvider.overrideWithValue(database),
       authRepositoryProvider.overrideWithValue(fakeAuth),
-      staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      // Inventory/catalogue reads are shop-scoped, so the fixture has to declare
+      // the signed-in owner session (this also supplies the staff repository).
+      ...businessScopeOverrides(),
       connectivityServiceProvider.overrideWithValue(
         fakeConnectivityServiceOnline(),
       ),

@@ -31,6 +31,7 @@ import '../../helpers/fake_customers_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 const _cashier = AuthUser(id: 'u2', email: 'cashier@brewflow.example');
@@ -143,6 +144,9 @@ void main() {
       inventoryRepositoryProvider.overrideWithValue(FakeInventoryRepository()),
       ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
       shareServiceProvider.overrideWithValue(fakeShare),
+      // The customer list is shop-scoped, so declare the signed-in owner
+      // session. Without it the switcher fails closed to zero customers.
+      ...businessScopeOverrides(),
     ],
     child: const BrewFlowApp(),
   );

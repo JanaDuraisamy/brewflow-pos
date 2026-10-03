@@ -45,6 +45,7 @@ final class FakeRemoteStore {
   /// [customerPayments] — a balance is derived by each device, never sent.
   final Map<String, StoredRow<SyncExpensePayment>> expensePayments = {};
   final Map<String, StoredRow<SyncOffer>> offers = {};
+  final Map<String, StoredRow<SyncStaffAttendance>> staffAttendance = {};
   final Map<String, StoredRow<SyncDeletion>> deletions = {};
 
   DateTime _tick() {
@@ -471,6 +472,61 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
     return _page(_store.offers, since, limit, (r) => r.row);
   }
 
+  // ---- Staff attendance ----------------------------------------------------------
+
+  @override
+  Future<void> upsertStaffAttendance(List<SyncStaffAttendance> rows) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.staffAttendance[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.staffAttendance[row.id] = StoredRow(
+          row,
+          row.shopId,
+          _store._tick(),
+        );
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncStaffAttendance>> pullStaffAttendance({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) {
+      _ensureOnline();
+    }
+    return _page(_store.staffAttendance, since, limit, (r) => r.row);
+  }
+
+  @override
+  Future<void> deleteStaffAttendance({
+    required String shopId,
+    required String authUserId,
+    required String shiftId,
+  }) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    _rejectForeign(shopId);
+    final stored = _store.staffAttendance[shiftId];
+    if (stored != null &&
+        stored.shopId == shopId &&
+        stored.row.authUserId == authUserId) {
+      _store.staffAttendance.remove(shiftId);
+    }
+  }
+
   // ---- Deletions ----------------------------------------------------------------------------
 
   @override
@@ -484,6 +540,20 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
     // production bug: a device that had not yet pulled the customer would pull
     // it again from the still-present row and resurrect it.
     _store.customers.remove(id);
+  }
+
+  @override
+  Future<void> deleteProduct(String id) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    // The row really leaves the cloud, exactly like the Supabase gateway's
+    // `delete from products` (with `product_variants.product_id` cascading).
+    _store.products.remove(id);
+    _store.productVariants.removeWhere(
+      (_, stored) => stored.row.productId == id,
+    );
   }
 
   @override

@@ -418,18 +418,57 @@ void main() {
       expect(await purchaseItems.byPurchase('pu-2'), hasLength(1));
     });
 
+    test('item must reference an existing purchase (RESTRICT)', () async {
+      await seedProduct(id: 'p1', name: 'Filter Coffee');
+      await expectLater(
+        seedItem(purchaseId: 'ghost', productId: 'p1'),
+        throwsA(isA<SqliteException>()),
+      );
+    });
+
     test(
-      'item must reference an existing purchase and product (RESTRICT)',
+      'item keeps a plain product reference so receiving history outlives the '
+      'product (schema v31)',
       () async {
+        // `purchase_items.product_id` lost its RESTRICT foreign key in v31: a
+        // product with receiving history must still be deletable, and the id is
+        // kept as a plain column so the ledger keeps its attribution. The
+        // name/sku/cost snapshots on the line are what a purchase history
+        // renders, so nothing about the record depends on the products row.
         await seedProduct(id: 'p1', name: 'Filter Coffee');
-        await expectLater(
-          seedItem(purchaseId: 'ghost', productId: 'p1'),
-          throwsA(isA<SqliteException>()),
-        );
         await seedPurchase(id: 'pu-1');
-        await expectLater(
-          seedItem(purchaseId: 'pu-1', productId: 'ghost'),
-          throwsA(isA<SqliteException>()),
+
+        // No products row with this id exists at all, and the insert still
+        // succeeds — proof the foreign key is really gone, not just unused.
+        final orphan = await seedItem(
+          purchaseId: 'pu-1',
+          productId: 'ghost',
+          productName: 'Deleted Product',
+        );
+        expect(orphan.productId, 'ghost');
+
+        await seedItem(
+          purchaseId: 'pu-1',
+          productId: 'p1',
+          productName: 'Filter Coffee',
+        );
+
+        // Deleting a product that *was* received removes only the products row.
+        await (database.delete(
+          database.products,
+        )..where((p) => p.id.equals('p1'))).go();
+
+        final readBack = await purchaseItems.byPurchase('pu-1');
+        expect(readBack, hasLength(2));
+        expect(
+          readBack.map((r) => r.productName),
+          containsAll(<String>['Deleted Product', 'Filter Coffee']),
+        );
+        expect(
+          await (database.select(
+            database.products,
+          )..where((p) => p.id.equals('p1'))).get(),
+          isEmpty,
         );
       },
     );

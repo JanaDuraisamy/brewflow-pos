@@ -239,9 +239,18 @@ final class _FilterBar extends ConsumerStatefulWidget {
 }
 
 final class _FilterBarState extends ConsumerState<_FilterBar> {
-  late final TextEditingController _search = TextEditingController(
-    text: ref.read(suppliersFilterProvider).query,
-  );
+  // Initialized in initState (never lazily): a `late final` initializer runs
+  // on first access, so disposing a state that never built would run
+  // `ref.read` on an unmounted widget and crash fast navigations.
+  late final TextEditingController _search;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(
+      text: ref.read(suppliersFilterProvider).query,
+    );
+  }
 
   @override
   void dispose() {
@@ -327,24 +336,30 @@ final class _SupplierList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final wide = MediaQuery.sizeOf(context).width >= 800;
-    if (wide) {
-      return Scrollbar(
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: _SupplierTable(suppliers: suppliers),
+    // Content width, not window width (matches purchases_page.dart): the
+    // table-vs-cards decision must use the width the list actually gets.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 800;
+        if (wide) {
+          return Scrollbar(
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: _SupplierTable(suppliers: suppliers),
+              ),
+            ),
+          );
+        }
+        return ListView.builder(
+          itemCount: suppliers.length,
+          itemBuilder: (context, index) => Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: _SupplierCard(supplier: suppliers[index]),
           ),
-        ),
-      );
-    }
-    return ListView.builder(
-      itemCount: suppliers.length,
-      itemBuilder: (context, index) => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.md),
-        child: _SupplierCard(supplier: suppliers[index]),
-      ),
+        );
+      },
     );
   }
 }

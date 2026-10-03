@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_auth_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Standalone Staff Attendance Page
@@ -74,8 +75,13 @@ void main() {
       ProviderScope(
         overrides: [
           appDatabaseProvider.overrideWithValue(database),
-          staffRepositoryProvider.overrideWithValue(staffRepo),
           staffPayrollRepositoryProvider.overrideWithValue(payroll),
+          // Session-gated payroll read; `staff` supplies the roster override
+          // (Riverpod forbids overriding the same provider twice).
+          ...businessScopeOverrides(
+            staff: staffRepo,
+            profile: testOwnerProfile(),
+          ),
         ],
         child: const MaterialApp(home: StaffPayrollPage()),
       ),
@@ -217,8 +223,9 @@ void main() {
     Future<void> pumpSession(
       WidgetTester tester,
       FakeStaffRepository staffRepo,
-      AuthUser user,
-    ) async {
+      AuthUser user, {
+      UserProfile? profile,
+    }) async {
       tester.view.devicePixelRatio = 1.0;
       tester.view.physicalSize = const Size(1200, 1600);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -232,6 +239,12 @@ void main() {
             authRepositoryProvider.overrideWithValue(
               FakeAuthRepository(user: user),
             ),
+            // Payroll reads are session-gated and fail closed on an unresolved
+            // profile. Owner sessions therefore state the profile outright;
+            // a staff session omits it so the real derivation (own id + own
+            // shop) is exercised instead.
+            if (profile != null)
+              userProfileProvider.overrideWithBuild((ref, notifier) => profile),
           ],
           child: const MaterialApp(home: StaffPayrollPage()),
         ),
@@ -256,7 +269,12 @@ void main() {
     ) async {
       final staffRepo = await staffRepoWith(['a@x.co']);
       await recordShift(staffRepo);
-      await pumpSession(tester, staffRepo, ownerAuth);
+      await pumpSession(
+        tester,
+        staffRepo,
+        ownerAuth,
+        profile: testOwnerProfile(),
+      );
 
       // The owner session resolved for real, so the action is shown because
       // the owner check passed.
@@ -300,7 +318,12 @@ void main() {
     testWidgets('deleting asks for confirmation first', (tester) async {
       final staffRepo = await staffRepoWith(['a@x.co']);
       final memberId = await recordShift(staffRepo);
-      await pumpSession(tester, staffRepo, ownerAuth);
+      await pumpSession(
+        tester,
+        staffRepo,
+        ownerAuth,
+        profile: testOwnerProfile(),
+      );
 
       await tester.tap(find.byTooltip('Delete attendance'));
       await tester.pumpAndSettle();
@@ -337,7 +360,12 @@ void main() {
         ),
         30000,
       );
-      await pumpSession(tester, staffRepo, ownerAuth);
+      await pumpSession(
+        tester,
+        staffRepo,
+        ownerAuth,
+        profile: testOwnerProfile(),
+      );
 
       // The recorded month: one working day, 8h, ₹300 payable.
       expect(find.byTooltip('Delete attendance'), findsOneWidget);

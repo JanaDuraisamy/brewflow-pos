@@ -4,6 +4,8 @@ import 'package:brewflow_pos/core/network/online_guard.dart';
 import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/staff/data/staff_payroll_cloud_gateway.dart';
+import 'package:brewflow_pos/features/sync/data/sync_outbox_coordinator.dart';
+import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,12 +15,20 @@ import '../domain/staff_payroll_repository.dart';
 /// ---------------------------------------------------------------------------
 /// BrewFlow POS — Drift Staff Payroll Repository
 ///
-/// Local Drift mirror + cloud-authoritative Supabase store. Reads pull the
-/// cloud rows for the requested scope first (when a gateway is present) and
-/// then serve from the mirror, so a second owner device sees the same
-/// attendance, salary and advances after login. Any cloud failure falls back
-/// to the local mirror (offline-safe); the mirror alone is never treated as
-/// the source of truth while online.
+/// Local-first Drift mirror + cloud-synced Supabase store. Attendance writes
+/// (clock-in, clock-out, delete) commit to local Drift FIRST inside the same
+/// atomic transaction as their durable outbox entry, so the UI updates
+/// immediately and the cloud round trip never blocks the owner/staff action.
+/// The existing generic sync engine then pushes the queued change (idempotent
+/// upsert by stable shift UUID, retry with FAILED parking, tombstone for
+/// deletes) on its periodic / connectivity-restored / manual cycles, and pulls
+/// it onto every other device through the same incremental cursor as every
+/// other entity — one sync system, not two.
+///
+/// Reads serve the local mirror immediately; scoped cloud pulls reconcile
+/// afterwards (best-effort, offline-safe). A pulled cloud row never overwrites
+/// a shift carrying a PENDING or FAILED local change, and the cloud-window
+/// prune never drops one either — the local edit wins until its push lands.
 ///
 /// Writes resolve the staff profile's own shop ([Users.shopId]) so Cafe and
 /// Food Truck data stay strictly isolated even from the "All businesses"
@@ -27,12 +37,9 @@ import '../domain/staff_payroll_repository.dart';
 ///
 /// Monthly salary is CALCULATED as the SUM of the daily salary amounts the
 /// owner enters per day, overridden by a manual monthly salary when set —
-/// never derived from an hourly rate. Daily salary amounts AND attendance
-/// are cloud-authoritative when a gateway is present: the cloud write
-/// happens first and commits the row everywhere, then the local mirror is
-/// updated with the same id — a cloud failure surfaces a typed
-/// [StaffPayrollFailure] instead of silently diverging. The manual monthly
-/// salary and advances keep their cloud-persistent best-effort push.
+/// never derived from an hourly rate. Salary/advance cloud pushes stay
+/// best-effort local-first (unchanged scope: only attendance rides the
+/// durable outbox).
 /// ---------------------------------------------------------------------------
 
 final class DriftStaffPayrollRepository implements StaffPayrollRepository {
@@ -40,10 +47,12 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
     AppDatabase db, {
     StaffPayrollCloudGateway? cloudGateway,
     ConnectivityService? connectivityService,
+    SyncOutboxCoordinator? outboxCoordinator,
   }) : _db = db,
        _dao = StaffPayrollDao(db),
        _cloud = cloudGateway,
-       _connectivity = connectivityService;
+       _connectivity = connectivityService,
+       _outbox = outboxCoordinator;
 
   static const String tag = 'StaffPayroll';
 
@@ -51,6 +60,11 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
   final StaffPayrollDao _dao;
   final StaffPayrollCloudGateway? _cloud;
   final ConnectivityService? _connectivity;
+
+  /// Durable attendance queue. Null in unit tests and legacy call sites, which
+  /// keep the previous direct-cloud behavior; the app provider always wires
+  /// the shared coordinator so attendance is local-first with background sync.
+  final SyncOutboxCoordinator? _outbox;
 
   /// The owning shop of [staffUserId]'s profile; null for unknown profiles.
   Future<String?> _profileShopId(String staffUserId) async {
@@ -245,8 +259,9 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
     }
     final local = inAt.toLocal();
     final businessDay = DateTime.utc(local.year, local.month, local.day);
-    // Pre-mint the shift id so the cloud row and the local mirror are the
-    // SAME row (upsert by id across devices).
+    // Pre-mint the shift id so the local row, the queued outbox payload and
+    // the cloud row are the SAME row (upsert by id across devices, retries
+    // converge instead of duplicating).
     final record = StaffAttendanceRecord(
       id: const Uuid().v4(),
       staffUserId: staffUserId,
@@ -256,6 +271,39 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
       workedMinutes: 0,
     );
     final authUserId = await _authUserIdFor(staffUserId);
+    final coordinator = _outbox;
+    if (coordinator != null && shopId != null && authUserId != null) {
+      // Local-first: the insert and its durable queue entry commit atomically,
+      // so the UI shows Checked In immediately and the cloud round trip
+      // happens in the background. Offline the row simply stays pending.
+      await coordinator.run<StaffAttendanceData>(
+        write: () => _db.transaction(
+          () => _dao.insertShift(
+            StaffAttendanceCompanion(
+              id: Value(record.id),
+              shopId: Value(shopId),
+              staffUserId: Value(staffUserId),
+              inAt: Value(record.inAt),
+              attendanceDate: Value(businessDay),
+              workedMinutes: const Value(0),
+            ),
+          ),
+        ),
+        snapshots: (inserted, context) async => [
+          OutboxAppend(
+            entity: MasterEntity.staffAttendance,
+            entityId: inserted.id,
+            operation: 'UPSERT',
+            payload: _syncModel(
+              shopId: shopId,
+              authUserId: authUserId,
+              row: inserted,
+            ).toJson(),
+          ),
+        ],
+      );
+      return;
+    }
     await _writeCloud(
       shopId: shopId,
       authUserId: authUserId,
@@ -292,6 +340,35 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
     final minutes = outAt.difference(open.inAt).inMinutes;
     final shopId = open.shopId ?? await _profileShopId(staffUserId);
     final authUserId = await _authUserIdFor(staffUserId);
+    final coordinator = _outbox;
+    if (coordinator != null && shopId != null && authUserId != null) {
+      // Same local-first contract as clock-in: close locally, queue the full
+      // closed row. A clock-out queued while the clock-in is still pending
+      // collapses onto the same deterministic outbox id, so the cloud sees
+      // one converged row, never two.
+      await coordinator.run<StaffAttendanceData>(
+        write: () => _db.transaction(() async {
+          await _dao.closeShift(open.id, outAt.toUtc(), minutes);
+          final updated = await (_db.select(
+            _db.staffAttendance,
+          )..where((t) => t.id.equals(open.id))).getSingle();
+          return updated;
+        }),
+        snapshots: (updated, context) async => [
+          OutboxAppend(
+            entity: MasterEntity.staffAttendance,
+            entityId: updated.id,
+            operation: 'UPSERT',
+            payload: _syncModel(
+              shopId: shopId,
+              authUserId: authUserId,
+              row: updated,
+            ).toJson(),
+          ),
+        ],
+      );
+      return;
+    }
     await _writeCloud(
       shopId: shopId,
       authUserId: authUserId,
@@ -378,6 +455,34 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
     if (shopId != null) {
       await _backfillNullShop(staffUserId, shopId);
     }
+    final coordinator = _outbox;
+    if (coordinator != null && shopId != null && authUserId != null) {
+      // Local-first like every other attendance write: drop the row now and
+      // queue a DELETE whose payload carries the shop + cross-device identity
+      // the cloud delete is scoped to. The engine pushes the cloud delete
+      // FIRST and then the tombstone, so peers converge and a fresh device can
+      // never re-pull the shift. Queuing (not direct-deleting) also keeps a
+      // still-pending UPSERT for the same shift ordered ahead of this DELETE
+      // in the FIFO queue, so the cloud sees create-then-delete, never a
+      // resurrected row.
+      final doomed = _syncModel(
+        shopId: shopId,
+        authUserId: authUserId,
+        row: local,
+      );
+      await coordinator.run<void>(
+        write: () => _db.transaction(() => _dao.deleteShift(shiftId)),
+        snapshots: (_, context) async => [
+          OutboxAppend(
+            entity: MasterEntity.staffAttendance,
+            entityId: shiftId,
+            operation: 'DELETE',
+            payload: doomed.toJson(),
+          ),
+        ],
+      );
+      return;
+    }
     final cloud = _cloud;
     if (cloud != null && shopId != null && authUserId != null) {
       // Cloud first, and a refusal aborts before the local delete so the two
@@ -393,6 +498,42 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
       );
     }
     await _dao.deleteShift(shiftId);
+  }
+
+  /// Builds the sync wire model for a local attendance row. The shift UUID is
+  /// stable from clock-in, so local row, outbox payload and cloud row are one
+  /// logical row and retries converge.
+  SyncStaffAttendance _syncModel({
+    required String shopId,
+    required String authUserId,
+    required StaffAttendanceData row,
+  }) => SyncStaffAttendance(
+    id: row.id,
+    shopId: shopId,
+    staffUserId: row.staffUserId,
+    authUserId: authUserId,
+    inAt: row.inAt,
+    outAt: row.outAt,
+    attendanceDate: row.attendanceDate,
+    workedMinutes: row.workedMinutes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  );
+
+  /// Local shift ids carrying a PENDING or FAILED attendance change — pulls
+  /// must neither overwrite nor prune these until their push lands.
+  Future<Set<String>> _unresolvedShiftIds() async {
+    final query = _db.selectOnly(_db.syncOutbox)
+      ..addColumns([_db.syncOutbox.entityId])
+      ..where(
+        _db.syncOutbox.entity.equals(MasterEntity.staffAttendance.wire) &
+            (_db.syncOutbox.status.equals('PENDING') |
+                _db.syncOutbox.status.equals('FAILED')),
+      );
+    final found = await query
+        .map((row) => row.read(_db.syncOutbox.entityId))
+        .get();
+    return found.whereType<String>().toSet();
   }
 
   @override
@@ -649,24 +790,30 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
           startDate: startDate,
           endExclusiveDate: endExclusiveDate,
         );
+        // Local-first guard: a shift this device wrote but has not pushed yet
+        // is absent from the fetched list by construction. Neither its columns
+        // nor its existence may be touched by this pull — it wins until its
+        // push lands (or parks FAILED for inspection, still preserved).
+        final unresolved = await _unresolvedShiftIds();
         for (final shift in shifts) {
+          if (unresolved.contains(shift.id)) continue;
           await _upsertLocalShift(shopId, shift);
         }
         // Cloud-authoritative window: a shift the cloud no longer lists for
         // this (shop, member, month) window was deleted on another device, so
-        // it is hard-deleted here too. Attendance rows commit to the cloud
-        // before the local insert, so a row missing from the fetched list is a
-        // genuine delete rather than an unsynced write.
+        // it is hard-deleted here too.
         //
         // Safety: an empty `shifts` list is passed through as a no-op by the
         // DAO, so a key mismatch or a gateway that answers empty can never
-        // erase a window of attendance this device recorded itself.
+        // erase a window of attendance this device recorded itself. Unresolved
+        // (pending/failed) ids are additionally kept, so a queued local write
+        // is never pruned by a pull that ran before its push.
         await _dao.pruneShiftsAbsentFromCloud(
           staffUserId: staffUserId,
           shopId: shopId,
           fromDate: startDate,
           toDate: endExclusiveDate,
-          keepIds: {for (final shift in shifts) shift.id},
+          keepIds: {for (final shift in shifts) shift.id, ...unresolved},
         );
         final advances = await cloud.fetchAdvances(
           shopId: shopId,

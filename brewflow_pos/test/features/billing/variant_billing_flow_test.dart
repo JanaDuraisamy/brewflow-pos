@@ -7,7 +7,6 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/offers/presentation/offers_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +17,7 @@ import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_offers_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
-import '../../helpers/fake_staff_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// P0 FIX 4 / 6 / 7 — variant selection, inline customer creation and
@@ -101,7 +100,9 @@ Future<void> _pump(WidgetTester tester) async {
         ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
         offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
-        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+        // The POS shelf read is shop-scoped, so the fixture has to declare the
+        // signed-in owner session (this also supplies the staff repository).
+        ...businessScopeOverrides(),
       ],
       child: const MaterialApp(home: Scaffold(body: PosPage())),
     ),

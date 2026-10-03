@@ -2,6 +2,7 @@ import 'package:brewflow_pos/app/widgets/page_header.dart';
 import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/core/router/app_routes.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
+import 'package:brewflow_pos/core/theme/app_breakpoints.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
@@ -47,100 +48,121 @@ final class CustomersPage extends ConsumerWidget {
       },
       child: Padding(
         padding: AppInsets.screen,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final narrow = constraints.maxWidth < 600;
-                final header = const PageHeader(
-                  title: 'Customers',
-                  subtitle: 'Maintain customer profiles for your shop.',
-                );
-                final actions = const _HeaderActions();
-                if (narrow) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      header,
-                      const SizedBox(height: AppSpacing.md),
-                      actions,
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    Expanded(child: header),
-                    const SizedBox(width: AppSpacing.md),
-                    actions,
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: AppSpacing.md),
-            const _FilterBar(),
-            const SizedBox(height: AppSpacing.md),
-            Expanded(
-              child: customers.when(
-                skipLoadingOnRefresh: true,
-                loading: () =>
-                    const LoadingState(message: 'Loading customers…'),
-                error: (error, stackTrace) => ErrorState(
-                  message: customersErrorMessage(error),
-                  onRetry: () => ref.invalidate(customersProvider),
+        // Measured here so the header and the filter row can react to a short
+        // phone. They are non-flex children of the Column below, so they would
+        // otherwise see an unbounded height and could never discover it.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final shortHeight =
+                constraints.maxHeight < AppBreakpoints.shortContent;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final narrow = constraints.maxWidth < 600;
+                    final stacked = narrow && !shortHeight;
+                    final header = PageHeader(
+                      title: 'Customers',
+                      // The subtitle is the first thing to go on a short phone:
+                      // beside the header actions it is squeezed to a sliver and
+                      // wraps onto three lines, which is taller than the list it
+                      // is meant to describe.
+                      subtitle: shortHeight
+                          ? null
+                          : 'Maintain customer profiles for your shop.',
+                    );
+                    final actions = _HeaderActions(expanded: stacked);
+                    if (stacked) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          header,
+                          const SizedBox(height: AppSpacing.md),
+                          actions,
+                        ],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: header),
+                        const SizedBox(width: AppSpacing.md),
+                        actions,
+                      ],
+                    );
+                  },
                 ),
-                data: (items) {
-                  final countText = hasFilters
-                      ? '${items.length} ${items.length == 1 ? 'result' : 'results'}'
-                      : '${items.length} ${items.length == 1 ? 'customer' : 'customers'}';
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        countText,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Expanded(
-                        child: items.isEmpty
-                            ? EmptyState(
-                                icon: Icons.people_outline,
-                                title: hasFilters
-                                    ? 'No customers match your filters'
-                                    : 'No customers yet',
-                                message: hasFilters
-                                    ? 'Try a different search or clear the filters.'
-                                    : 'Add your first customer to start building profiles.',
-                                action: hasFilters
-                                    ? SecondaryButton(
-                                        label: 'Clear Filters',
-                                        icon: Icons.filter_alt_off_outlined,
-                                        onPressed: () => ref
-                                            .read(
-                                              customersFilterProvider.notifier,
-                                            )
-                                            .clear(),
-                                      )
-                                    : PrimaryButton(
-                                        label: 'Add Customer',
-                                        icon: Icons.add,
-                                        onPressed: () =>
-                                            context.push(AppRoutes.customerNew),
-                                      ),
-                              )
-                            : _CustomerList(
-                                customers: items,
-                                filtered: hasFilters,
-                              ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
+                const SizedBox(height: AppSpacing.md),
+                _FilterBar(compactHeight: shortHeight),
+                const SizedBox(height: AppSpacing.md),
+                Expanded(
+                  child: customers.when(
+                    skipLoadingOnRefresh: true,
+                    loading: () =>
+                        const LoadingState(message: 'Loading customers…'),
+                    error: (error, stackTrace) => ErrorState(
+                      message: customersErrorMessage(error),
+                      onRetry: () => ref.invalidate(customersProvider),
+                    ),
+                    data: (items) {
+                      final countText = hasFilters
+                          ? '${items.length} ${items.length == 1 ? 'result' : 'results'}'
+                          : '${items.length} ${items.length == 1 ? 'customer' : 'customers'}';
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            countText,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Expanded(
+                            child: items.isEmpty
+                                ? EmptyState(
+                                    icon: Icons.people_outline,
+                                    title: hasFilters
+                                        ? 'No customers match your filters'
+                                        : 'No customers yet',
+                                    message: hasFilters
+                                        ? 'Try a different search or clear the filters.'
+                                        : 'Add your first customer to start building profiles.',
+                                    action: hasFilters
+                                        ? SecondaryButton(
+                                            label: 'Clear Filters',
+                                            icon: Icons.filter_alt_off_outlined,
+                                            onPressed: () => ref
+                                                .read(
+                                                  customersFilterProvider
+                                                      .notifier,
+                                                )
+                                                .clear(),
+                                          )
+                                        : PrimaryButton(
+                                            label: 'Add Customer',
+                                            icon: Icons.add,
+                                            onPressed: () => context.push(
+                                              AppRoutes.customerNew,
+                                            ),
+                                          ),
+                                  )
+                                : _CustomerList(
+                                    customers: items,
+                                    filtered: hasFilters,
+                                  ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -148,44 +170,51 @@ final class CustomersPage extends ConsumerWidget {
 }
 
 final class _HeaderActions extends StatelessWidget {
-  const _HeaderActions();
+  const _HeaderActions({required this.expanded});
+
+  /// True when the button sits on its own full-width row under the page title,
+  /// which is the normal narrow-phone layout. When the page header and these
+  /// actions share one row the button must take its natural width instead.
+  final bool expanded;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final narrow = constraints.maxWidth < 600;
-        final button = PrimaryButton(
-          label: 'Add Customer',
-          icon: Icons.add,
-          expanded: narrow,
-          onPressed: () => context.push(AppRoutes.customerNew),
-        );
-        if (narrow) {
-          return SizedBox(width: double.infinity, child: button);
-        }
-        return Wrap(
-          spacing: AppSpacing.md,
-          runSpacing: AppSpacing.sm,
-          alignment: WrapAlignment.end,
-          children: [button],
-        );
-      },
+    final button = PrimaryButton(
+      label: 'Add Customer',
+      icon: Icons.add,
+      expanded: expanded,
+      onPressed: () => context.push(AppRoutes.customerNew),
     );
+    if (expanded) return SizedBox(width: double.infinity, child: button);
+    return button;
   }
 }
 
 final class _FilterBar extends ConsumerStatefulWidget {
-  const _FilterBar();
+  const _FilterBar({required this.compactHeight});
+
+  /// Set when the page reports a short content height. Search and the filter
+  /// button then share one row instead of stacking, because on a short phone
+  /// the list below them — not the chrome — is what needs the room.
+  final bool compactHeight;
 
   @override
   ConsumerState<_FilterBar> createState() => _FilterBarState();
 }
 
 final class _FilterBarState extends ConsumerState<_FilterBar> {
-  late final TextEditingController _search = TextEditingController(
-    text: ref.read(customersFilterProvider).query,
-  );
+  // Initialized in initState (never lazily): a `late final` initializer runs
+  // on first access, so disposing a state that never built would run
+  // `ref.read` on an unmounted widget and crash fast navigations.
+  late final TextEditingController _search;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(
+      text: ref.read(customersFilterProvider).query,
+    );
+  }
 
   @override
   void dispose() {
@@ -196,6 +225,7 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
   @override
   Widget build(BuildContext context) {
     final filter = ref.watch(customersFilterProvider);
+    final compactHeight = widget.compactHeight;
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 600;
@@ -212,36 +242,47 @@ final class _FilterBarState extends ConsumerState<_FilterBar> {
           mainAxisSize: MainAxisSize.min,
           children: _statusFilterChips(ref, filter),
         );
+        final notifier = ref.read(customersFilterProvider.notifier);
+        final activeCount =
+            (filter.status != CustomerStatusFilter.all ? 1 : 0) +
+            (filter.dueOnly ? 1 : 0);
+        final filterButton = FilterSheetButton(
+          activeCount: activeCount,
+          onPressed: () => showFilterSheet(
+            context,
+            title: 'Filter Customers',
+            onReset: notifier.clear,
+            children: [
+              Consumer(
+                builder: (context, ref, child) {
+                  final live = ref.watch(customersFilterProvider);
+                  return Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: _statusFilterChips(ref, live),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
         if (compact) {
-          final notifier = ref.read(customersFilterProvider.notifier);
-          final activeCount =
-              (filter.status != CustomerStatusFilter.all ? 1 : 0) +
-              (filter.dueOnly ? 1 : 0);
+          if (compactHeight) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: search),
+                const SizedBox(width: AppSpacing.md),
+                filterButton,
+              ],
+            );
+          }
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               search,
               const SizedBox(height: AppSpacing.md),
-              FilterSheetButton(
-                activeCount: activeCount,
-                onPressed: () => showFilterSheet(
-                  context,
-                  title: 'Filter Customers',
-                  onReset: notifier.clear,
-                  children: [
-                    Consumer(
-                      builder: (context, ref, child) {
-                        final live = ref.watch(customersFilterProvider);
-                        return Wrap(
-                          spacing: AppSpacing.sm,
-                          runSpacing: AppSpacing.sm,
-                          children: _statusFilterChips(ref, live),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
+              filterButton,
             ],
           );
         }
@@ -273,33 +314,39 @@ final class _CustomerList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final width = MediaQuery.sizeOf(context).width;
-    if (width < 600) {
-      return ListView.builder(
-        itemCount: customers.length,
-        itemBuilder: (context, index) => Padding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.md),
-          child: _MobileCustomerCard(customer: customers[index]),
-        ),
-      );
-    }
-    if (width >= 800) {
-      return Scrollbar(
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: _CustomerTable(customers: customers),
+    // Content width, not window width, so the cards/table split matches the
+    // width the list actually gets beside the collapsed rail gutter.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        if (width < 600) {
+          return ListView.builder(
+            itemCount: customers.length,
+            itemBuilder: (context, index) => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.md),
+              child: _MobileCustomerCard(customer: customers[index]),
+            ),
+          );
+        }
+        if (width >= 800) {
+          return Scrollbar(
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: _CustomerTable(customers: customers),
+              ),
+            ),
+          );
+        }
+        return ListView.builder(
+          itemCount: customers.length,
+          itemBuilder: (context, index) => Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: _CustomerCard(customer: customers[index]),
           ),
-        ),
-      );
-    }
-    return ListView.builder(
-      itemCount: customers.length,
-      itemBuilder: (context, index) => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.md),
-        child: _CustomerCard(customer: customers[index]),
-      ),
+        );
+      },
     );
   }
 }
@@ -493,14 +540,35 @@ final class _CustomerCard extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                Text(
-                  [
-                    customer.phone ?? 'No phone',
-                    customer.email ?? 'No email',
-                  ].join(' · '),
-                  style: textTheme.bodySmall?.copyWith(
-                    color: context.appColors.textSecondary,
-                  ),
+                // Contact details stay individually rendered rather than folded into one
+                // joined string, so phone and email keep the same meaning on
+                // this card as the separate table columns give them. A Wrap
+                // keeps the compact single-line look when it fits and wraps on
+                // a narrow phone.
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  runSpacing: AppSpacing.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      customer.phone ?? 'No phone',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: context.appColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      '·',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: context.appColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      customer.email ?? 'No email',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: context.appColors.textSecondary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

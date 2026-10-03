@@ -34,23 +34,46 @@ void main() {
   late FakeSettingsRepository settings;
   late FakeCustomerLedgerRepository ledger;
 
-  ManagementReportLoader makeLoader() => ManagementReportLoader(
-    orders: orders,
-    expenses: expenses,
-    staff: staff,
-    payroll: payroll,
-    closings: closings,
-    settings: settings,
-    ledger: ledger,
-    readShopIds: () async => ['shop-1'],
-    businessLabel: 'Cafe',
-  );
+  ManagementReportLoader makeLoader({List<String>? scope}) =>
+      ManagementReportLoader(
+        orders: orders,
+        expenses: expenses,
+        staff: staff,
+        payroll: payroll,
+        closings: closings,
+        settings: settings,
+        ledger: ledger,
+        readShopIds: () async => scope ?? const ['shop-1'],
+        businessLabel: 'Cafe',
+      );
 
   Future<ManagementReportData> load({DateTime? from, DateTime? to}) =>
       makeLoader().load(
         fromLocal: from ?? DateTime(2026, 2, 1),
         toLocal: to ?? DateTime(2026, 2, 28),
       );
+
+  /// A paid sale of [totalPaise] belonging to [shopId].
+  void seedSale({
+    required String receiptNumber,
+    required int totalPaise,
+    required String shopId,
+  }) => orders.add(
+    receiptNumber: receiptNumber,
+    createdAt: DateTime.utc(2026, 2, 5, 9),
+    paymentStatus: PaymentStatus.paid,
+    paymentMethod: PaymentMethod.cash,
+    totalPaise: totalPaise,
+    items: [
+      OrderItem(
+        productName: 'Tea',
+        unitPricePaise: totalPaise,
+        quantity: 1,
+        lineTotalPaise: totalPaise,
+      ),
+    ],
+    shopId: shopId,
+  );
 
   setUp(() {
     orders = FakeOrdersRepository();
@@ -61,6 +84,49 @@ void main() {
     settings = FakeSettingsRepository();
     ledger = FakeCustomerLedgerRepository();
     settings.stored = const ShopSettings(shopName: 'My Cafe');
+  });
+
+  group('resolved scope is a hard scope', () {
+    // `readShopIds` is the switcher's answer. An EMPTY list means the session
+    // resolved no business of its own and must fail closed. Collapsing it to
+    // null — the repositories' "every business" value — published the whole
+    // company's takings to a session that was entitled to none of it.
+
+    test('an empty scope reports zeros instead of every business', () async {
+      seedSale(receiptNumber: 'BF-CAFE', totalPaise: 10000, shopId: 'shop-1');
+      seedSale(receiptNumber: 'BF-FT', totalPaise: 7000, shopId: 'shop-2');
+
+      final data = await makeLoader(
+        scope: const [],
+      ).load(fromLocal: DateTime(2026, 2, 1), toLocal: DateTime(2026, 2, 28));
+
+      expect(data.salesTotalPaise, 0);
+      expect(data.salesCashPaise, 0);
+      expect(data.staffRows, isEmpty);
+    });
+
+    test('a partial scope totals only the resolved businesses', () async {
+      seedSale(receiptNumber: 'BF-CAFE', totalPaise: 10000, shopId: 'shop-1');
+      seedSale(receiptNumber: 'BF-FT', totalPaise: 7000, shopId: 'shop-2');
+
+      final data = await makeLoader(
+        scope: const ['shop-2'],
+      ).load(fromLocal: DateTime(2026, 2, 1), toLocal: DateTime(2026, 2, 28));
+
+      expect(data.salesTotalPaise, 7000);
+      expect(data.salesCashPaise, 7000);
+    });
+
+    test('a multi-shop scope totals every resolved business', () async {
+      seedSale(receiptNumber: 'BF-CAFE', totalPaise: 10000, shopId: 'shop-1');
+      seedSale(receiptNumber: 'BF-FT', totalPaise: 7000, shopId: 'shop-2');
+
+      final data = await makeLoader(
+        scope: const ['shop-1', 'shop-2'],
+      ).load(fromLocal: DateTime(2026, 2, 1), toLocal: DateTime(2026, 2, 28));
+
+      expect(data.salesTotalPaise, 17000);
+    });
   });
 
   test('aggregates a full range across every section', () async {

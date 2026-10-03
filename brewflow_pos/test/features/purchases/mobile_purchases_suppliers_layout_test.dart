@@ -24,6 +24,7 @@ import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_purchases_repository.dart';
 import '../../helpers/fake_suppliers_repository.dart';
+import '../../helpers/test_providers.dart';
 
 const _owner = AuthUser(id: 'u1', email: 'owner@brewflow.example');
 
@@ -110,6 +111,9 @@ void main() {
               ),
               suppliersRepositoryProvider.overrideWithValue(fakeSuppliers),
               purchasesRepositoryProvider.overrideWithValue(fakePurchases),
+              // Purchase/supplier reads are shop-scoped, so the fixture has to
+              // declare the signed-in owner session.
+              ...businessScopeOverrides(),
             ],
             child: const BrewFlowApp(),
           ),
@@ -193,6 +197,9 @@ void main() {
             FakeSuppliersRepository(),
           ),
           purchasesRepositoryProvider.overrideWithValue(fakePurchases),
+          // Purchase/supplier reads are shop-scoped, so the fixture has to
+          // declare the signed-in owner session.
+          ...businessScopeOverrides(),
         ],
         child: const BrewFlowApp(),
       ),
@@ -270,6 +277,9 @@ void main() {
           purchasesRepositoryProvider.overrideWithValue(
             FakePurchasesRepository(),
           ),
+          // Purchase/supplier reads are shop-scoped, so the fixture has to
+          // declare the signed-in owner session.
+          ...businessScopeOverrides(),
         ],
         child: const BrewFlowApp(),
       ),
@@ -350,6 +360,9 @@ void main() {
           purchasesRepositoryProvider.overrideWithValue(
             FakePurchasesRepository(),
           ),
+          // Purchase/supplier reads are shop-scoped, so the fixture has to
+          // declare the signed-in owner session.
+          ...businessScopeOverrides(),
         ],
         child: const BrewFlowApp(),
       ),

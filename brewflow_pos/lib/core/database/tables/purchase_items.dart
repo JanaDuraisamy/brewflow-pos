@@ -1,7 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
-import 'product_variants.dart';
 import 'products.dart';
 import 'purchases.dart';
 import 'shops.dart';
@@ -11,11 +10,11 @@ import 'shops.dart';
 ///
 /// The product name, SKU, unit cost and line total are snapshotted at
 /// receiving time so historical purchase records never change when products
-/// are later edited or deactivated — a purchase's cost history is immutable
-/// even if [Products.costPricePaise] is later updated. Deleting a product (or
-/// its purchase) is rejected by the RESTRICT foreign keys to protect history.
-/// Variant lines snapshot the variant name the same way; variants are
-/// soft-deactivated, never deleted, so their RESTRICT FK is safe.
+/// are later edited, deactivated or deleted — a purchase's cost history is
+/// immutable even if [Products.costPricePaise] is later updated. Those
+/// self-contained snapshots are why the product/variant ids are plain FK-free
+/// columns (schema v31): deleting a product never touches, and is never
+/// blocked by, a receiving record that already happened.
 /// ---------------------------------------------------------------------------
 
 @TableIndex(name: 'idx_purchase_items_shop', columns: {#shopId})
@@ -38,16 +37,14 @@ class PurchaseItems extends Table {
   TextColumn get purchaseId =>
       text().references(Purchases, #id, onDelete: KeyAction.restrict)();
 
-  /// Product received. Deleting a product with purchase history is rejected.
-  TextColumn get productId =>
-      text().references(Products, #id, onDelete: KeyAction.restrict)();
+  /// Product received. NOT a foreign key (schema v31), for the same reason as
+  /// [SaleItems.productId]: the id is preserved so the purchase ledger keeps its
+  /// attribution, and [productName]/[variantName] are the snapshots a purchase
+  /// history renders. A deleted product must never block or rewrite a receipt.
+  TextColumn get productId => text()();
 
-  /// Variant received; NULL for non-variant lines. RESTRICT protects history.
-  TextColumn get variantId => text().nullable().references(
-    ProductVariants,
-    #id,
-    onDelete: KeyAction.restrict,
-  )();
+  /// Variant received; NULL for non-variant lines. Plain column, as above.
+  TextColumn get variantId => text().nullable()();
 
   /// Product name at the time of the purchase (snapshot).
   TextColumn get productName => text()();

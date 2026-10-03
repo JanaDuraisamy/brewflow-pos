@@ -253,6 +253,9 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
         title: const Text('Staff Management'),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        // Unique hero tag: shell branches stay mounted together, so the
+        // default shared tag collides across branches on navigation.
+        heroTag: 'staff-add-fab',
         onPressed: _addStaff,
         icon: const Icon(Icons.person_add_alt_1),
         label: const Text('Add Staff'),
@@ -284,6 +287,10 @@ final class _StaffPageState extends ConsumerState<StaffPage> {
             else
               Expanded(
                 child: ListView.separated(
+                  // Bottom clearance for the extended "Add Staff" FAB: the
+                  // last roster row must scroll fully above it instead of
+                  // hiding underneath.
+                  padding: const EdgeInsets.only(bottom: AppSpacing.mega),
                   itemCount: _staff!.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
@@ -387,8 +394,10 @@ final class _StaffFormDialogState extends ConsumerState<_StaffFormDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add Staff'),
-      content: SizedBox(
-        width: 460,
+      // Max width, not fixed width, so the dialog shrinks to the phone's
+      // available width instead of overflowing horizontally.
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -436,6 +445,8 @@ final class _StaffFormDialogState extends ConsumerState<_StaffFormDialog> {
                   initialValue: _business == BusinessContext.all
                       ? BusinessContext.cafe
                       : _business,
+                  // Fill the dialog width like every other form dropdown.
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Business *',
                     border: OutlineInputBorder(),
@@ -514,8 +525,8 @@ final class _PermissionEditorDialogState
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Edit Permissions'),
-      content: SizedBox(
-        width: 420,
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
         child: SingleChildScrollView(
           child: _PermissionGroups(
             selected: _selected,

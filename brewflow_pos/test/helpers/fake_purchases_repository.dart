@@ -30,6 +30,12 @@ final class FakePurchasesRepository implements PurchaseRepository {
   /// Number of [purchases] calls.
   int purchasesCalls = 0;
 
+  /// [shopIds] the most recent read was called with.
+  ///
+  /// Lets a test assert the controller resolved and forwarded real scope
+  /// instead of silently falling back to the legacy unscoped read.
+  List<String>? lastPurchasesShopIds;
+
   /// When set, [receivePurchase] throws it (no purchase is written).
   Object? receiveError;
 
@@ -62,27 +68,35 @@ final class FakePurchasesRepository implements PurchaseRepository {
   }
 
   @override
-  Future<List<Purchase>> purchases() async {
+  Future<List<Purchase>> purchases({List<String>? shopIds}) async {
     purchasesCalls += 1;
     await _gate();
     _throwIfLoadError();
+    lastPurchasesShopIds = shopIds;
+    // A non-null [shopIds] is a hard scope: an empty list means the business
+    // has no shop of its own, so nothing may be returned.
+    if (shopIds != null && shopIds.isEmpty) return const [];
     return List<Purchase>.of(storedPurchases);
   }
 
   @override
-  Future<Purchase?> purchaseById(String id) async {
+  Future<Purchase?> purchaseById(String id, {List<String>? shopIds}) async {
     _throwIfLoadError();
+    lastPurchasesShopIds = shopIds;
     for (final purchase in storedPurchases) {
-      if (purchase.id == id) {
-        return purchase;
-      }
+      if (purchase.id == id) return purchase;
     }
     return null;
   }
 
   @override
-  Future<List<PurchaseItem>> purchaseItems(String purchaseId) async {
+  Future<List<PurchaseItem>> purchaseItems(
+    String purchaseId, {
+    List<String>? shopIds,
+  }) async {
     _throwIfLoadError();
+    lastPurchasesShopIds = shopIds;
+    if (shopIds != null && shopIds.isEmpty) return const [];
     return List<PurchaseItem>.of(storedItems[purchaseId] ?? const []);
   }
 
@@ -144,8 +158,9 @@ final class FakePurchasesRepository implements PurchaseRepository {
   }
 
   @override
-  Future<void> voidPurchase(String id) async {
+  Future<void> voidPurchase(String id, {List<String>? shopIds}) async {
     _throwIfLoadError();
+    lastPurchasesShopIds = shopIds;
     if (!storedPurchases.any((p) => p.id == id)) {
       throw const UnexpectedPurchasesFailure('Purchase not found.');
     }

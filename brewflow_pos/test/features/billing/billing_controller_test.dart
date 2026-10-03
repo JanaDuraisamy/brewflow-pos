@@ -34,6 +34,7 @@ import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
+import '../../helpers/test_providers.dart';
 
 /// Counts stock-movement repository calls so tests can assert that cart
 /// mutations never touch the movement store directly (only checkout paths
@@ -139,8 +140,8 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
       inner.outstandingForCustomer(customerId);
 
   @override
-  Future<DueCustomersSummary> dueCustomersSummary() =>
-      inner.dueCustomersSummary();
+  Future<DueCustomersSummary> dueCustomersSummary({List<String>? shopIds}) =>
+      inner.dueCustomersSummary(shopIds: shopIds);
 
   @override
   Future<List<String>> customerIdsWithDue() => inner.customerIdsWithDue();
@@ -230,8 +231,10 @@ void main() {
         ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
         customerLedgerRepositoryProvider.overrideWithValue(ledger),
         settingsRepositoryProvider.overrideWithValue(FakeSettingsRepository()),
-        staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
         offersRepositoryProvider.overrideWithValue(FakeOffersRepository()),
+        // The POS shelf read is shop-scoped, so the fixture has to declare the
+        // signed-in owner session (this also supplies the staff repository).
+        ...businessScopeOverrides(),
       ],
     );
     addTearDown(container.dispose);

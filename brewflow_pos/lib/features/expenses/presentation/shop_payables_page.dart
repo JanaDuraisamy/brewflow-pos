@@ -266,107 +266,113 @@ final class _PayPayableSheetState extends ConsumerState<_PayPayableSheet> {
       ),
       child: Form(
         key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Pay ${widget.payable.payeeName}',
-              style: textTheme.titleMedium?.copyWith(
-                color: context.appColors.textPrimary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              '${Money.formatPaise(remaining)} outstanding',
-              style: textTheme.bodySmall?.copyWith(
-                color: context.appColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            TextFormField(
-              controller: _amount,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-              ],
-              decoration: const InputDecoration(
-                labelText: 'Amount (₹) *',
-                hintText: 'e.g. 1000.00',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                final paise = Money.parseRupeesToPaise(value ?? '');
-                if (paise == null) {
-                  return 'Enter a valid amount (e.g. 1000.00)';
-                }
-                if (paise <= 0) {
-                  return 'Amount must be greater than zero.';
-                }
-                if (paise > remaining) {
-                  return 'Cannot exceed ${Money.formatPaise(remaining)}.';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            DropdownButtonFormField<PaymentMethod>(
-              initialValue: _method,
-              decoration: const InputDecoration(
-                labelText: 'Payment method *',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                for (final method in PaymentMethod.values)
-                  DropdownMenuItem(
-                    value: method,
-                    child: Text(paymentMethodLabel(method)),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _method = value);
-              },
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            TextFormField(
-              controller: _note,
-              textCapitalization: TextCapitalization.sentences,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Note',
-                hintText: 'Optional',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _saving ? null : () => context.pop(),
-                    child: const Text('Cancel'),
-                  ),
+        // Scrollable (not just inset-padded): on a short landscape viewport
+        // with the keyboard open the Record Payment button stays reachable.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Pay ${widget.payable.payeeName}',
+                style: textTheme.titleMedium?.copyWith(
+                  color: context.appColors.textPrimary,
+                  fontWeight: FontWeight.w600,
                 ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _saving ? null : _submit,
-                    child: _saving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Record Payment'),
-                  ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '${Money.formatPaise(remaining)} outstanding',
+                style: textTheme.bodySmall?.copyWith(
+                  color: context.appColors.textSecondary,
                 ),
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              TextFormField(
+                controller: _amount,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Amount (₹) *',
+                  hintText: 'e.g. 1000.00',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  final paise = Money.parseRupeesToPaise(value ?? '');
+                  if (paise == null) {
+                    return 'Enter a valid amount (e.g. 1000.00)';
+                  }
+                  if (paise <= 0) {
+                    return 'Amount must be greater than zero.';
+                  }
+                  if (paise > remaining) {
+                    return 'Cannot exceed ${Money.formatPaise(remaining)}.';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              DropdownButtonFormField<PaymentMethod>(
+                initialValue: _method,
+                // Fill the sheet width like every other form dropdown.
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Payment method *',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final method in PaymentMethod.values)
+                    DropdownMenuItem(
+                      value: method,
+                      child: Text(paymentMethodLabel(method)),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _method = value);
+                },
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              TextFormField(
+                controller: _note,
+                textCapitalization: TextCapitalization.sentences,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Note',
+                  hintText: 'Optional',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving ? null : () => context.pop(),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _saving ? null : _submit,
+                      child: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Record Payment'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

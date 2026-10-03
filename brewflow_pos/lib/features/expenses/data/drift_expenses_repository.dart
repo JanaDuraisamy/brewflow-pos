@@ -66,7 +66,10 @@ final class DriftExpensesRepository implements ExpensesRepository {
     List<String>? shopIds,
   }) async {
     try {
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        // Hard scope: an empty list means "this business has no shop of its
+        // own" and must yield NOTHING rather than every shop's expenses.
+        if (shopIds.isEmpty) return const [];
         final allRows = <db.Expense>[];
         for (final id in shopIds) {
           final rows = await _expenses.query(
@@ -107,6 +110,21 @@ final class DriftExpensesRepository implements ExpensesRepository {
   @override
   Future<int> expensesCount({List<String>? shopIds}) async {
     try {
+      // Honour the scope: an unscoped COUNT(*) leaks every other business's
+      // expense count into the scoped list header.
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return 0;
+        var total = 0;
+        for (final id in shopIds) {
+          final scoped =
+              await (_database.selectOnly(_database.expenses)
+                    ..addColumns([_database.expenses.id.count()])
+                    ..where(_database.expenses.shopId.equals(id)))
+                  .getSingle();
+          total += scoped.read(_database.expenses.id.count()) ?? 0;
+        }
+        return total;
+      }
       final row = await _database
           .customSelect('SELECT COUNT(*) AS c FROM expenses')
           .getSingle();
@@ -119,7 +137,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
   @override
   Future<Expense?> expenseById(String id, {List<String>? shopIds}) async {
     try {
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return null;
         for (final sid in shopIds) {
           final row = await _expenses.byId(id, shopId: sid);
           if (row != null) return _expenseFromRow(row);
@@ -439,7 +458,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
   @override
   Future<int> payablePaise({List<String>? shopIds}) async {
     try {
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return 0;
         int total = 0;
         for (final id in shopIds) {
           total += await _expenses.payablePaiseWithPayments(shopId: id);
@@ -455,7 +475,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
   @override
   Future<List<Expense>> payables({List<String>? shopIds}) async {
     try {
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return const [];
         final allRows = <db.Expense>[];
         for (final id in shopIds) {
           allRows.addAll(await _expenses.payables(shopId: id));
@@ -476,7 +497,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
   Future<List<ShopPayable>> shopPayables({List<String>? shopIds}) async {
     try {
       final payables = <ShopPayable>[];
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return const [];
         // Scoped per shop on purpose: summing across shops before grouping
         // would let a same-named payee in two businesses merge into one row.
         for (final id in shopIds) {
@@ -527,7 +549,8 @@ final class DriftExpensesRepository implements ExpensesRepository {
       final key = payeeName == null ? null : PayeeKey.of(payeeName);
       Future<List<db.ExpensePayment>> read(String? shopId) =>
           _expenses.expensePayments(payeeKey: key, shopId: shopId);
-      if (shopIds != null && shopIds.isNotEmpty) {
+      if (shopIds != null) {
+        if (shopIds.isEmpty) return const [];
         final allRows = <db.ExpensePayment>[];
         for (final id in shopIds) {
           allRows.addAll(await read(id));

@@ -1,10 +1,12 @@
 import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
+import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/utils/dates.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
@@ -86,38 +88,52 @@ final class _PayableCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  payable.payeeName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.titleSmall?.copyWith(
-                    color: context.appColors.textPrimary,
-                    fontWeight: FontWeight.w600,
+          // The card is a summary: tapping its header opens the underlying
+          // unpaid expenses of exactly this (shop, payee) row.
+          InkWell(
+            borderRadius: AppBorderRadius.md,
+            onTap: () => _showExpenses(context, ref),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          payable.payeeName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.titleSmall?.copyWith(
+                            color: context.appColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        isSettled
+                            ? 'Settled'
+                            : Money.formatPaise(payable.remainingPaise),
+                        style: textTheme.titleMedium?.copyWith(
+                          color: isSettled
+                              ? context.appColors.textSecondary
+                              : AppColors.warning,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    _subtitle(),
+                    style: textTheme.bodySmall?.copyWith(
+                      color: context.appColors.textSecondary,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: AppSpacing.sm),
-              Text(
-                isSettled
-                    ? 'Settled'
-                    : Money.formatPaise(payable.remainingPaise),
-                style: textTheme.titleMedium?.copyWith(
-                  color: isSettled
-                      ? context.appColors.textSecondary
-                      : AppColors.warning,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            _subtitle(),
-            style: textTheme.bodySmall?.copyWith(
-              color: context.appColors.textSecondary,
             ),
           ),
           const SizedBox(height: AppSpacing.md),
@@ -180,6 +196,19 @@ final class _PayableCard extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => _PaymentHistorySheet(payable: payable),
+    );
+  }
+
+  /// Opens the expense-detail drill-down: the underlying unpaid expenses of
+  /// exactly this (shop, payee) row, so the summary card never has to carry
+  /// them and same-name payees in two businesses never mix.
+  Future<void> _showExpenses(BuildContext context, WidgetRef ref) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => _PayableExpensesSheet(payable: payable),
     );
   }
 }
@@ -483,6 +512,205 @@ final class _PaymentRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Expense-detail drill-down for one shop-payable card: every underlying
+/// unpaid expense of exactly one (shop, payee) row, oldest due first, with
+/// its date, amount, status and note, plus the aggregate the card summarizes.
+///
+/// Phone-first: single-column, scrollable, no fixed widths — safe at
+/// 360–480dp. Tablet behavior intentionally unchanged.
+final class _PayableExpensesSheet extends ConsumerWidget {
+  const _PayableExpensesSheet({required this.payable});
+
+  final ShopPayable payable;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final textTheme = Theme.of(context).textTheme;
+    final detail = ref.watch(
+      payableDetailProvider((
+        payeeKey: payable.payeeKey,
+        shopId: payable.shopId,
+      )),
+    );
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (context, scrollController) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: AppInsets.screen,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${payable.payeeName} · Expenses',
+                      style: textTheme.titleMedium?.copyWith(
+                        color: context.appColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      payable.isSettled
+                          ? 'Fully paid'
+                          : '${Money.formatPaise(payable.remainingPaise)} outstanding',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: context.appColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: detail.when(
+                  loading: () =>
+                      const LoadingState(message: 'Loading expenses…'),
+                  error: (error, _) => ErrorState(
+                    message: expensesErrorMessage(error),
+                    onRetry: () => ref.invalidate(
+                      payableDetailProvider((
+                        payeeKey: payable.payeeKey,
+                        shopId: payable.shopId,
+                      )),
+                    ),
+                  ),
+                  data: (rows) {
+                    if (rows.isEmpty) {
+                      return Padding(
+                        padding: AppInsets.screen,
+                        child: Text(
+                          'No unpaid expenses for this payee.',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: context.appColors.textSecondary,
+                          ),
+                        ),
+                      );
+                    }
+                    final total = rows.fold<int>(
+                      0,
+                      (sum, expense) => sum + expense.amountPaise,
+                    );
+                    return ListView.separated(
+                      controller: scrollController,
+                      padding: AppInsets.screen,
+                      itemCount: rows.length + 1,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(height: AppSpacing.sm),
+                      itemBuilder: (context, index) {
+                        if (index == 0) {
+                          return Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: AppSpacing.xs,
+                            ),
+                            child: Text(
+                              '${payable.payeeName} · Expenses (${rows.length}) · Total ${Money.formatPaise(total)}',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: context.appColors.textSecondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        }
+                        return _PayableExpenseRow(expense: rows[index - 1]);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One underlying unpaid expense: name and amount on the first line, the due
+/// date with its unpaid status on the second, and the recorded note when the
+/// expense carries one.
+final class _PayableExpenseRow extends StatelessWidget {
+  const _PayableExpenseRow({required this.expense});
+
+  final Expense expense;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return AppCard(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    expense.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: context.appColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  Money.formatPaise(expense.amountPaise),
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    formatDate(expense.expenseDate),
+                    style: textTheme.bodySmall?.copyWith(
+                      color: context.appColors.textSecondary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  'Unpaid',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: AppColors.warning,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            if (expense.note != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                expense.note!,
+                style: textTheme.bodySmall?.copyWith(
+                  color: context.appColors.textSecondary,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

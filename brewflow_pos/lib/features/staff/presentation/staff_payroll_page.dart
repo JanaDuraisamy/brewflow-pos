@@ -433,6 +433,7 @@ final class _DailySummaryCard extends ConsumerWidget {
       }
     }
     final record = open ?? closedToday;
+    final isLeaveDay = record?.isLeave ?? false;
     final salaryDayUtc = record?.attendanceDate ?? todayUtc;
     StaffDailySalary? salaryForDay;
     for (final entry in data.dailySalaries) {
@@ -448,6 +449,18 @@ final class _DailySummaryCard extends ConsumerWidget {
     final String hoursLabel;
     if (record == null) {
       dateLabel = _formatDate(today);
+      inLabel = '—';
+      outLabel = '—';
+      hoursLabel = '—';
+    } else if (isLeaveDay) {
+      // Day-level state, not a shift: the midnight cookie timestamps are
+      // never rendered as clock times.
+      final businessDay = DateTime(
+        record.attendanceDate.year,
+        record.attendanceDate.month,
+        record.attendanceDate.day,
+      );
+      dateLabel = _formatDate(businessDay);
       inLabel = '—';
       outLabel = '—';
       hoursLabel = '—';
@@ -478,6 +491,9 @@ final class _DailySummaryCard extends ConsumerWidget {
     if (open != null) {
       statusLabel = 'In progress';
       statusColor = AppColors.warning;
+    } else if (isLeaveDay) {
+      statusLabel = 'On Leave';
+      statusColor = AppColors.primary;
     } else if (closedToday != null) {
       statusLabel = 'Present';
       statusColor = AppColors.success;
@@ -487,6 +503,9 @@ final class _DailySummaryCard extends ConsumerWidget {
     }
 
     final busy = ref.watch(payrollSummaryProvider(memberId)).isLoading;
+    // Leave actions are owner-only in the controller too; staff see the
+    // status read-only.
+    final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
 
     return AppCard(
       child: Column(
@@ -545,8 +564,14 @@ final class _DailySummaryCard extends ConsumerWidget {
             label: 'Status',
             value: _StatusChip(label: statusLabel, color: statusColor),
           ),
+          if (isLeaveDay && record?.leaveReason != null)
+            _dailyRow(
+              context,
+              label: 'Reason',
+              value: Text(record!.leaveReason!),
+            ),
           const SizedBox(height: AppSpacing.sm),
-          if (open == null)
+          if (open == null && !isLeaveDay)
             PrimaryButton(
               label: 'Clock In',
               icon: Icons.play_arrow,
@@ -559,7 +584,7 @@ final class _DailySummaryCard extends ConsumerWidget {
                 defaultIn: DateTime(today.year, today.month, today.day, 9),
               ),
             )
-          else
+          else if (open != null)
             SecondaryButton(
               label: 'Clock Out',
               icon: Icons.stop,
@@ -578,9 +603,127 @@ final class _DailySummaryCard extends ConsumerWidget {
                       ),
                     ),
             ),
+          // Leave owns its date: while today is marked there is nothing to
+          // clock, only the Leave to clear. Otherwise the owner may mark any
+          // day (past or upcoming) from the same card.
+          if (isLeaveDay && isOwner) ...[
+            const SizedBox(height: AppSpacing.sm),
+            SecondaryButton(
+              label: 'Clear Leave',
+              icon: Icons.event_busy_outlined,
+              expanded: true,
+              onPressed: busy
+                  ? null
+                  : () => ref
+                        .read(payrollSummaryProvider(memberId).notifier)
+                        .clearLeave(attendanceDate: todayUtc),
+            ),
+          ] else if (open == null && isOwner) ...[
+            const SizedBox(height: AppSpacing.sm),
+            SecondaryButton(
+              label: 'Mark Leave',
+              icon: Icons.event_busy_outlined,
+              expanded: true,
+              onPressed: busy
+                  ? null
+                  : () => _markLeave(
+                      context,
+                      ref,
+                      memberId: memberId,
+                      initialDate: todayUtc,
+                    ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// Owner-only Leave dialog: attendance date (past days and near upcoming
+  /// days) plus an optional reason. Failures (worked-shift conflict, open
+  /// shift) surface through the summary listener's snackbar, like every
+  /// other payroll failure.
+  Future<void> _markLeave(
+    BuildContext context,
+    WidgetRef ref, {
+    required String memberId,
+    required DateTime initialDate,
+  }) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final date = ValueNotifier<DateTime>(initialDate);
+    final reason = TextEditingController();
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ValueListenableBuilder<DateTime>(
+        valueListenable: date,
+        builder: (dialogContext, selected, _) => AlertDialog(
+          title: const Text('Mark Leave'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_today_outlined),
+                  title: const Text('Date'),
+                  subtitle: Text(
+                    '${selected.day} ${_monthNames[selected.month - 1]} ${selected.year}',
+                  ),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: dialogContext,
+                      initialDate: DateTime(
+                        selected.year,
+                        selected.month,
+                        selected.day,
+                      ),
+                      firstDate: today.subtract(const Duration(days: 400)),
+                      lastDate: today.add(const Duration(days: 60)),
+                    );
+                    if (picked != null) {
+                      date.value = DateTime.utc(
+                        picked.year,
+                        picked.month,
+                        picked.day,
+                      );
+                    }
+                  },
+                ),
+                TextField(
+                  controller: reason,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason (optional)',
+                    hintText: 'e.g. Sick leave',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !context.mounted) return;
+    final text = reason.text.trim();
+    await ref
+        .read(payrollSummaryProvider(memberId).notifier)
+        .markLeave(
+          attendanceDate: date.value,
+          reason: text.isEmpty ? null : text,
+        );
   }
 
   static String _formatDate(DateTime date) =>
@@ -817,6 +960,11 @@ final class _PayrollSummaryCard extends ConsumerWidget {
             context,
             label: 'Total Working Hours',
             value: formatHoursMinutes(data.totalMinutes),
+          ),
+          _summaryRow(
+            context,
+            label: 'Leave Days',
+            value: '${data.totalLeaveDays}',
           ),
           _summaryRow(
             context,
@@ -1241,15 +1389,26 @@ final class _AttendanceCard extends ConsumerWidget {
                               color: appColors.textPrimary,
                             ),
                           ),
-                          Text(
-                            '${TimeOfDay.fromDateTime(shift.inAt.toLocal()).format(context)}'
-                            '${shift.isOpen ? ' – open' : ' – ${TimeOfDay.fromDateTime(shift.outAt!.toLocal()).format(context)}'}',
-                            style: textTheme.labelSmall?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
+                          if (shift.isLeave)
+                            Text(
+                              shift.leaveReason == null
+                                  ? 'On Leave'
+                                  : 'On Leave · ${shift.leaveReason}',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          else
+                            Text(
+                              '${TimeOfDay.fromDateTime(shift.inAt.toLocal()).format(context)}'
+                              '${shift.isOpen ? ' – open' : ' – ${TimeOfDay.fromDateTime(shift.outAt!.toLocal()).format(context)}'}',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                             ),
-                          ),
                           Row(
                             children: [
                               Text(
@@ -1282,12 +1441,36 @@ final class _AttendanceCard extends ConsumerWidget {
                     Text(
                       shift.isOpen
                           ? 'In progress'
+                          : shift.isLeave
+                          ? 'On Leave'
                           : formatHoursMinutes(shift.workedMinutes),
                       style: textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    if (isOwner)
+                    // Leave clears by date (not by row id): the dedicated
+                    // action matches the day-level semantics, while the
+                    // controller still enforces the owner boundary.
+                    if (isOwner && shift.isLeave)
+                      IconButton(
+                        tooltip: 'Clear leave',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(
+                          Icons.event_busy_outlined,
+                          size: 18,
+                          color: AppColors.primary,
+                        ),
+                        onPressed: busy
+                            ? null
+                            : () => ref
+                                  .read(
+                                    payrollSummaryProvider(memberId).notifier,
+                                  )
+                                  .clearLeave(
+                                    attendanceDate: shift.attendanceDate,
+                                  ),
+                      )
+                    else if (isOwner)
                       IconButton(
                         tooltip: 'Delete attendance',
                         visualDensity: VisualDensity.compact,

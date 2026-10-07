@@ -29,13 +29,36 @@ abstract interface class StaffPayrollRepository {
 
   /// Opens a new shift at [inAt] (UTC instant) for [staffUserId]. The shift's
   /// business day is derived from [inAt]'s local calendar day. Throws
-  /// [StaffPayrollShiftAlreadyOpenFailure] when a shift is already open.
+  /// [StaffPayrollShiftAlreadyOpenFailure] when a shift is already open, and
+  /// [StaffPayrollAlreadyOnLeaveFailure] when the business day is marked Leave.
   Future<void> clockIn({required String staffUserId, required DateTime inAt});
 
   /// Closes the open shift at [outAt] (UTC instant) and fixes its worked
   /// minutes. Throws [StaffPayrollNoOpenShiftFailure] /
   /// [StaffPayrollClockOutBeforeClockInFailure].
   Future<void> clockOut({required String staffUserId, required DateTime outAt});
+
+  /// Marks [attendanceDate] (UTC-midnight business-day cookie) as a Leave day
+  /// for [staffUserId]: a day-level state on the same attendance row shape,
+  /// never a worked shift. [reason] is an optional owner note (blank is stored
+  /// as null).
+  ///
+  /// Idempotent per staff + date: re-marking the same day updates the reason
+  /// on the SAME row (no duplicate). Throws [StaffPayrollShiftAlreadyOpenFailure]
+  /// when any shift is still open, and [StaffPayrollLeaveConflictFailure] when
+  /// the date already has worked attendance.
+  Future<void> markLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+    String? reason,
+  });
+
+  /// Clears the Leave day for [staffUserId] + [attendanceDate]. Safe and
+  /// idempotent: a day without Leave is a no-op that queues nothing.
+  Future<void> clearLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+  });
 
   /// Attendance rows dated in [startDate]..[endExclusiveDate), oldest first.
   /// [shopIds] restricts the read to those businesses; null reads the

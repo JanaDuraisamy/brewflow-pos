@@ -234,6 +234,40 @@ final class LocalMasterDataApplier {
                 memberPricePaise: Value(row.memberPricePaise),
                 isActive: Value(row.isActive),
                 visibleInShops: Value(row.visibleInShops),
+                isIngredient: Value(row.isIngredient),
+                createdAt: Value(row.createdAt),
+                updatedAt: Value(appliedAt),
+              ),
+            );
+      }
+    });
+  }
+
+  /// Applies one pull page of recipe rows atomically. Idempotent UUID
+  /// upserts: replaying the same page changes nothing, and rows the local
+  /// device has pending in its outbox are never overwritten by a pull.
+  Future<void> applyProductRecipePage(
+    List<SyncProductRecipe> rows,
+    DateTime appliedAt,
+  ) async {
+    await _database.transaction(() async {
+      final skipped = await _pendingIds(
+        MasterEntity.productRecipe,
+        rows.map((r) => r.id),
+      );
+      for (final row in rows) {
+        if (skipped.contains(row.id)) continue;
+        await _database
+            .into(_database.productRecipes)
+            .insertOnConflictUpdate(
+              db.ProductRecipesCompanion.insert(
+                id: Value(row.id),
+                shopId: Value(row.shopId),
+                productId: row.productId,
+                variantId: Value(row.variantId),
+                ingredientProductId: row.ingredientProductId,
+                ingredientVariantId: Value(row.ingredientVariantId),
+                quantity: row.quantity,
                 createdAt: Value(row.createdAt),
                 updatedAt: Value(appliedAt),
               ),
@@ -833,6 +867,8 @@ final class LocalMasterDataApplier {
                   outAt: Value(row.outAt),
                   attendanceDate: row.attendanceDate,
                   workedMinutes: Value(row.workedMinutes),
+                  isLeave: Value(row.isLeave),
+                  leaveReason: Value(row.leaveReason),
                   createdAt: Value(row.createdAt),
                   updatedAt: Value(appliedAt),
                 ),
@@ -842,13 +878,16 @@ final class LocalMasterDataApplier {
         // Pulled truth wins once nothing local is outstanding (same rule as
         // every other entity): refresh only the mutable clock-out columns, so
         // an open shift checked out on another device closes here too. The
-        // authoring staff/shop identity is never rewritten.
+        // authoring staff/shop identity is never rewritten. Leave reason
+        // refreshes the same way, so a re-marked day converges.
         await (_database.update(
           _database.staffAttendance,
         )..where((t) => t.id.equals(row.id))).write(
           db.StaffAttendanceCompanion(
             outAt: Value(row.outAt),
             workedMinutes: Value(row.workedMinutes),
+            isLeave: Value(row.isLeave),
+            leaveReason: Value(row.leaveReason),
             updatedAt: Value(appliedAt),
           ),
         );
@@ -961,7 +1000,10 @@ final class LocalMasterDataApplier {
       case MasterEntity.saleItem:
       case MasterEntity.customerPayment:
       case MasterEntity.expensePayment:
-        // Immutable append-only: sync never deletes these.
+      case MasterEntity.productRecipe:
+        // Immutable append-only: sync never deletes these. Recipe mappings
+        // converge through UPSERTs (and product deletes through the PRODUCT
+        // tombstone's local CASCADE), so a recipe tombstone is never sent.
         break;
       case MasterEntity.shop:
         // Single identity row, never deleted by sync (only renamed).

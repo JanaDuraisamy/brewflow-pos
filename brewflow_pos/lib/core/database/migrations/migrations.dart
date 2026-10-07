@@ -75,6 +75,12 @@ final class AppMigrations {
   ///   bill, purchase and stock movement survives with its own name/price
   ///   snapshot), product_variants.product_id becomes `ON DELETE CASCADE` and
   ///   shop_product_stock.variant_id becomes `ON DELETE SET NULL`.
+  /// - v31 → v32 adds day-level Leave to staff_attendance: `is_leave`
+  ///   (default false, so every existing shift stays worked) and a nullable
+  ///   `leave_reason`. Purely additive; existing rows untouched.
+  /// - v32 → v33 adds shared-stock recipes: `products.is_ingredient`
+  ///   (default false, so every existing product stays sellable) and the new
+  ///   `product_recipes` mapping table with its indexes. Purely additive.
   ///
   /// Everything lives in the drift-generated [versions.stepByStep]; unknown
   /// versions fail loudly.
@@ -1053,7 +1059,66 @@ final class AppMigrations {
           },
         );
       },
+      from31To32: (m, schema) async {
+        // Day-level Leave on staff_attendance — two purely additive columns.
+        // Existing rows stay worked shifts (`is_leave` defaults false, no
+        // reason). Guarded two ways: a device whose physical schema already
+        // carries the columns must not fail on a duplicate `ADD COLUMN`
+        // (see from27To28), and an old-version fixture without the table at
+        // all (it arrived in v22) must not fail on a missing table — its own
+        // tables are what its test asserts, and a real v31 device always has
+        // this table.
+        if (await _hasTable(m.database, 'staff_attendance') &&
+            !await _hasColumn(m.database, 'staff_attendance', 'is_leave')) {
+          await m.addColumn(
+            schema.staffAttendance,
+            schema.staffAttendance.isLeave,
+          );
+        }
+        if (await _hasTable(m.database, 'staff_attendance') &&
+            !await _hasColumn(m.database, 'staff_attendance', 'leave_reason')) {
+          await m.addColumn(
+            schema.staffAttendance,
+            schema.staffAttendance.leaveReason,
+          );
+        }
+      },
+      from32To33: (m, schema) async {
+        // Shared-stock recipes — one additive flag plus one new table.
+        //
+        // `products.is_ingredient` marks a stock-source ingredient (hidden
+        // from the sale shelf, consumed through the recipe mapping). The
+        // default is false, so an existing install keeps every product
+        // sellable. Same two-way guard as from31To32 above.
+        if (await _hasTable(m.database, 'products') &&
+            !await _hasColumn(m.database, 'products', 'is_ingredient')) {
+          await m.addColumn(schema.products, schema.products.isIngredient);
+        }
+        // `product_recipes` maps a sellable product (or one of its variants)
+        // to its stock-source ingredients with per-unit quantities. A sale
+        // of a product WITH rows deducts only its ingredients; products
+        // WITHOUT rows deduct their own stock exactly as before.
+        if (!await _hasTable(m.database, 'product_recipes')) {
+          await m.createTable(schema.productRecipes);
+          await m.createIndex(schema.idxProductRecipesProduct);
+          await m.createIndex(schema.idxProductRecipesUpdatedAt);
+        }
+      },
     )(migrator, from, to);
+  }
+
+  /// True when the database already has [table].
+  ///
+  /// Keeps a new-table migration idempotent for a device whose physical
+  /// schema ran ahead of its `user_version` (see [_hasColumn]).
+  static Future<bool> _hasTable(GeneratedDatabase db, String table) async {
+    final rows = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          variables: [Variable.withString(table)],
+        )
+        .get();
+    return rows.isNotEmpty;
   }
 
   /// True when [table] already has a [column].

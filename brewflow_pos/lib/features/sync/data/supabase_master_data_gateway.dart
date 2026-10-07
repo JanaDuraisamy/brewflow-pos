@@ -151,6 +151,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'is_active': row.isActive,
     'client_created_at': row.createdAt.toIso8601String(),
     'visible_in_shops': row.visibleInShops,
+    'is_ingredient': row.isIngredient,
     // image_path intentionally never pushed: device-local asset paths are
     // meaningless on other devices (see master_data_models.dart).
     // cloud_image_path IS pushed: it is metadata (a storage object key), and
@@ -176,6 +177,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     createdAt: _utc(json['client_created_at']),
     cloudImagePath: json['cloud_image_path'] as String?,
     visibleInShops: json['visible_in_shops'] as bool,
+    // Rows written before migration 0039 carry no flag; they stay sellable.
+    isIngredient: (json['is_ingredient'] as bool?) ?? false,
   );
 
   // ---- Product variants -----------------------------------------------------
@@ -196,6 +199,48 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     limit: limit,
     fromRow: _variantFromServer,
   );
+
+  // ---- Product recipes ------------------------------------------------------
+
+  @override
+  Future<void> upsertProductRecipes(List<SyncProductRecipe> rows) => _upsert(
+    'product_recipes',
+    [for (final row in rows) _recipeToServer(row)],
+  );
+
+  @override
+  Future<PullPage<SyncProductRecipe>> pullProductRecipes({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'product_recipes',
+    since: since,
+    limit: limit,
+    fromRow: _recipeFromServer,
+  );
+
+  Map<String, dynamic> _recipeToServer(SyncProductRecipe row) => {
+    'id': row.id,
+    'shop_id': row.shopId,
+    'product_id': row.productId,
+    'variant_id': row.variantId,
+    'ingredient_product_id': row.ingredientProductId,
+    'ingredient_variant_id': row.ingredientVariantId,
+    'quantity': row.quantity,
+    'client_created_at': row.createdAt.toIso8601String(),
+  };
+
+  SyncProductRecipe _recipeFromServer(Map<String, dynamic> json) =>
+      SyncProductRecipe(
+        id: json['id'] as String,
+        shopId: json['shop_id'] as String,
+        productId: json['product_id'] as String,
+        variantId: json['variant_id'] as String?,
+        ingredientProductId: json['ingredient_product_id'] as String,
+        ingredientVariantId: json['ingredient_variant_id'] as String?,
+        quantity: json['quantity'] as int,
+        createdAt: _utc(json['client_created_at']),
+      );
 
   Map<String, dynamic> _variantToServer(SyncProductVariant row) => {
     'id': row.id,
@@ -646,6 +691,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
       10,
     ),
     'worked_minutes': row.workedMinutes,
+    'is_leave': row.isLeave,
+    'leave_reason': row.leaveReason,
     'client_created_at': row.createdAt.toUtc().toIso8601String(),
   };
 
@@ -661,6 +708,9 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
         workedMinutes: (json['worked_minutes'] as num).toInt(),
         createdAt: _utc(json['client_created_at']),
         updatedAt: _utc(json['updated_at']),
+        // Rows written before migration 0038 carry no flag; they stay shifts.
+        isLeave: (json['is_leave'] as bool?) ?? false,
+        leaveReason: json['leave_reason'] as String?,
       );
 
   @override

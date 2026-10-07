@@ -110,6 +110,14 @@ class Products extends Table {
   /// Soft switch to hide a product from the POS without deleting it.
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 
+  /// Marks a stock-source ingredient (e.g. the shared Maggi Packet several
+  /// menu products consume). Ingredients are ordinary products — purchased
+  /// and restocked through the existing purchase flow, alerted through the
+  /// existing low-stock rules — except the sale shelf hides them; they are
+  /// sold only indirectly through the recipe mapping. Defaults to false so
+  /// upgrading never hides an existing product from the shelf.
+  BoolColumn get isIngredient => boolean().withDefault(const Constant(false))();
+
   /// Controls whether this product is visible in the Food Truck shop.
   /// Defaults to false; the owner can toggle it to make the product available
   /// in Food Truck Billing. Cafe behavior is completely unchanged.

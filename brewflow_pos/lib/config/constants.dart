@@ -16,7 +16,7 @@ final class AppConstants {
   // -------------------------------------------------------------------------
 
   static const String appName = 'JiggarTea Bill';
-  static const String appVersion = '2.4.0-beta.7';
+  static const String appVersion = '2.5.0';
 
   /// The app display / brand name shown as the header wordmark. This is the
   /// display identity and (unlike the shop/business name) is editable from
@@ -37,7 +37,7 @@ final class AppConstants {
   static const String databaseFileName = 'brewflow_pos.db';
 
   /// Current schema version. Bump on every database migration.
-  static const int databaseSchemaVersion = 31;
+  static const int databaseSchemaVersion = 33;
 
   /// Receipt prefix stamped onto a newly created business (e.g. 'BF-000042').
   ///

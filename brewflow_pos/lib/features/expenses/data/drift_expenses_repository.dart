@@ -534,6 +534,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
           expenseCount: group.expenseCount,
           oldestExpenseDate: group.oldestExpenseDate,
           lastPaidAt: group.lastPaidAt,
+          shopId: shopId,
         ),
       );
     }
@@ -828,5 +829,6 @@ final class DriftExpensesRepository implements ExpensesRepository {
     isActive: row.isActive,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    shopId: row.shopId,
   );
 }

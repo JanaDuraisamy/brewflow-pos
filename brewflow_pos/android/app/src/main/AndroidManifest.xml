@@ -3,6 +3,10 @@
          able to reach the network in ALL build modes (debug/profile
          manifests already declare this; release needs it here). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Stock low/out alerts are local notifications; Android 13+ requires
+         this at runtime (requested lazily on first sync, denial only skips
+         alerts for the session). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="JiggarTea Bill Beta"
         android:name="${applicationName}"

@@ -163,6 +163,11 @@ abstract interface class InventoryRepository {
   /// movement (product-level stock is derived from the variants and not
   /// passed alongside them). Every variant must have a name and a valid
   /// member price when membership pricing is enabled.
+  ///
+  /// [isIngredient] marks a stock-source ingredient: an ordinary product that
+  /// the sale shelf hides and that is consumed only through the recipe
+  /// mapping ([setRecipe]). Defaults to false so every product stays
+  /// sellable unless the caller says otherwise.
   Future<Product> createProduct({
     required String categoryId,
     required String name,
@@ -180,6 +185,7 @@ abstract interface class InventoryRepository {
     List<ProductVariantInput> variants = const [],
     String? shopId,
     bool visibleInShops = false,
+    bool isIngredient = false,
   });
 
   /// Updates a product's editable fields. [stockQuantity] (and variant stock)
@@ -215,6 +221,7 @@ abstract interface class InventoryRepository {
     String? shopId,
     List<String>? shopIds,
     bool visibleInShops = false,
+    bool? isIngredient,
   });
 
   /// Activates or deactivates a product.
@@ -244,6 +251,34 @@ abstract interface class InventoryRepository {
   /// [shopIds] scopes the mutation as in [setProductActive], so a shared Cafe
   /// product can never be deleted from the Food Truck.
   Future<ProductDeleteResult> deleteProduct(String id, {List<String>? shopIds});
+
+  /// Replaces the recipe mapping of one menu product (or one of its
+  /// variants): after the call, exactly [ingredients] are consumed per unit
+  /// sold. An empty list clears the mapping, and the product sells from its
+  /// own stock again.
+  ///
+  /// Rules (rejected with [InventoryFailure] before anything is written):
+  /// - every ingredient quantity is >= 1,
+  /// - a product never consumes itself,
+  /// - every ingredient is a tracked stock source (untracked `NONE` products
+  ///   hold no stock to consume).
+  ///
+  /// [variantId] null maps every variant of [productId]; non-null maps one
+  /// variant. [shopId] is the owning shop the rows are attributed to.
+  Future<void> setRecipe({
+    required String productId,
+    String? variantId,
+    required List<RecipeIngredientInput> ingredients,
+    String? shopId,
+  });
+
+  /// Recipe rows of one menu product visible to [shopIds] (null is unscoped).
+  /// A row with a null [ProductRecipe.variantId] applies to every variant of
+  /// the product. Rows of another business are never returned.
+  Future<List<ProductRecipe>> recipesForProduct(
+    String productId, {
+    List<String>? shopIds,
+  });
 }
 
 /// Outcome of a [InventoryRepository.deleteProduct] call.

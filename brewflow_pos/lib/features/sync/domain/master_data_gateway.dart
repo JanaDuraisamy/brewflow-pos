@@ -69,6 +69,21 @@ abstract interface class RemoteMasterDataGateway
     required int limit,
   });
 
+  // ---- Product recipes ------------------------------------------------------
+
+  /// Pushes shared-stock recipe rows. Idempotent UPSERTS keyed by the row
+  /// UUID: re-saving the same mapping converges, never duplicates. Clearing
+  /// a mapping removes local rows without a tombstone (peers keep their copy
+  /// until the mapping is re-saved); deleting a product converges through
+  /// the PRODUCT tombstone, whose local CASCADE drops the mapping rows on
+  /// every device.
+  Future<void> upsertProductRecipes(List<SyncProductRecipe> rows);
+
+  Future<PullPage<SyncProductRecipe>> pullProductRecipes({
+    required DateTime since,
+    required int limit,
+  });
+
   // ---- Suppliers ----------------------------------------------------------
 
   Future<void> upsertSuppliers(List<SyncSupplier> rows);

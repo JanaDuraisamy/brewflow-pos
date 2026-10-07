@@ -178,16 +178,23 @@ final class PosProductsController extends AsyncNotifier<List<Product>> {
               repository: ref.read(shopProductStockRepositoryProvider),
               shopId: overlayShopId,
             );
+      // Ingredients are stock sources, not sellables: the counter never
+      // offers them. They are restocked through purchases and consumed
+      // through the recipe mapping — filtering here (not in the
+      // repository) keeps inventory management and purchase flows able to
+      // see them.
+      final sellable = [
+        for (final product in withEffectiveStock)
+          if (!product.isIngredient) product,
+      ];
       // Plain categories and explicit searches keep the repository order.
-      if (!frequentFirst || filter.query.isNotEmpty) return withEffectiveStock;
+      if (!frequentFirst || filter.query.isNotEmpty) return sellable;
       // "Frequently Sold": rank real counter history first, then the rest of
       // the shelf (products never sold stay reachable below the ranking). A
       // ranking failure is best-effort — never block the counter on it.
       final frequentIds = await _frequentlySoldIds() ?? const <String>[];
-      if (frequentIds.isEmpty) return withEffectiveStock;
-      final byId = {
-        for (final product in withEffectiveStock) product.id: product,
-      };
+      if (frequentIds.isEmpty) return sellable;
+      final byId = {for (final product in sellable) product.id: product};
       final ranked = <Product>[];
       for (final id in frequentIds) {
         final product = byId.remove(id);

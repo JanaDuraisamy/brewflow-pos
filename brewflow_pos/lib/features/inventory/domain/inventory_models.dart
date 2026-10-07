@@ -157,6 +157,7 @@ final class Product {
     required this.isActive,
     this.shopId,
     this.visibleInShops = false,
+    this.isIngredient = false,
     required this.createdAt,
     required this.updatedAt,
     this.variants = const [],
@@ -214,6 +215,15 @@ final class Product {
   /// in Food Truck Billing. Cafe behavior is completely unchanged.
   final bool visibleInShops;
 
+  /// Marks a stock-source ingredient (e.g. the shared Maggi Packet several
+  /// menu products consume). Ingredients are ordinary products — purchased
+  /// and restocked through the existing purchase flow, alerted through the
+  /// existing low-stock rules, synced like any other product — except the
+  /// sale shelf hides them; they are sold only indirectly when a menu
+  /// product mapped to them is billed. Defaults to false so every existing
+  /// product stays sellable.
+  final bool isIngredient;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -246,6 +256,7 @@ final class Product {
     bool? isActive,
     String? shopId,
     bool? visibleInShops,
+    bool? isIngredient,
     DateTime? updatedAt,
     List<ProductVariant>? variants,
   }) => Product(
@@ -270,6 +281,7 @@ final class Product {
     isActive: isActive ?? this.isActive,
     shopId: shopId ?? this.shopId,
     visibleInShops: visibleInShops ?? this.visibleInShops,
+    isIngredient: isIngredient ?? this.isIngredient,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     variants: variants ?? this.variants,
@@ -396,4 +408,64 @@ final class ProductVariantInput {
   final bool membershipEnabled;
   final int? memberPricePaise;
   final bool isActive;
+}
+
+/// One recipe row: a sellable product (or one of its variants) consumes
+/// [quantity] units of a stock-source ingredient per unit sold.
+///
+/// A menu line WITH recipe rows deducts ONLY its ingredients (aggregated per
+/// ingredient across all lines); its own `stock_quantity` is never touched.
+/// Products WITHOUT rows deduct their own stock exactly as before.
+final class ProductRecipe {
+  const ProductRecipe({
+    required this.id,
+    this.shopId,
+    required this.productId,
+    this.variantId,
+    required this.ingredientProductId,
+    this.ingredientVariantId,
+    required this.quantity,
+    required this.createdAt,
+  });
+
+  final String id;
+
+  /// Owning shop; null only for legacy/unsynced rows.
+  final String? shopId;
+
+  /// The sellable product this mapping belongs to.
+  final String productId;
+
+  /// One variant of [productId], or null for every variant of the product.
+  final String? variantId;
+
+  /// The stock-source ingredient product consumed per sale.
+  final String ingredientProductId;
+
+  /// One variant of the ingredient, or null for the product-level stock.
+  final String? ingredientVariantId;
+
+  /// Units of the ingredient consumed per ONE unit sold. Always >= 1.
+  final int quantity;
+
+  /// UTC timestamp of record creation.
+  final DateTime createdAt;
+}
+
+/// One ingredient mapping for [InventoryRepository.setRecipe].
+final class RecipeIngredientInput {
+  const RecipeIngredientInput({
+    required this.ingredientProductId,
+    this.ingredientVariantId,
+    this.quantity = 1,
+  });
+
+  /// The stock-source ingredient product consumed per sale.
+  final String ingredientProductId;
+
+  /// One variant of the ingredient, or null for the product-level stock.
+  final String? ingredientVariantId;
+
+  /// Units of the ingredient consumed per ONE unit sold. Must be >= 1.
+  final int quantity;
 }

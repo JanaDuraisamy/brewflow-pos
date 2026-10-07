@@ -52,6 +52,14 @@ class StaffAttendance extends Table {
   /// Worked minutes once the shift is closed; 0 while open.
   IntColumn get workedMinutes => integer().withDefault(const Constant(0))();
 
+  /// Day-level Leave marker: an explicit attendance state, never a fake
+  /// shift. Leave rows carry worked_minutes 0 (enforced server-side);
+  /// every pre-existing row stays a worked shift (false).
+  BoolColumn get isLeave => boolean().withDefault(const Constant(false))();
+
+  /// Optional owner note recorded with a Leave day; null when absent.
+  TextColumn get leaveReason => text().nullable()();
+
   /// UTC timestamp of record creation.
   DateTimeColumn get createdAt =>
       dateTime().clientDefault(() => DateTime.now().toUtc())();

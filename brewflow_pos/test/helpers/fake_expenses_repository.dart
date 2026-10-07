@@ -5,14 +5,18 @@ import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_repository.dart';
 import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 
+import 'test_providers.dart';
+
 /// Accumulator while grouping unpaid expenses by payee key.
 final class _GroupedPayable {
   _GroupedPayable({
+    required this.shopId,
     required this.payeeKey,
     required this.payeeName,
     required this.oldestExpenseDate,
   });
 
+  final String? shopId;
   final String payeeKey;
   final String payeeName;
   int totalPaise = 0;
@@ -43,6 +47,15 @@ final class FakeExpensesRepository implements ExpensesRepository {
   /// When set, [payables] throws this error before running.
   Object? payablesError;
 
+  /// Shop id treated as the owner of any seeded row that omits one.
+  ///
+  /// Mirrors [FakeInventoryRepository.unscopedShopIdFallback]: fixtures predate
+  /// shop scoping, so a missing shop resolves here and stays visible to a
+  /// scoped read, while a row that DOES carry a shop id is filtered strictly.
+  /// Set it to null to assert that an unscoped (legacy) row stays invisible
+  /// under a scope.
+  String? unscopedShopIdFallback = kTestCafeShopId;
+
   /// Number of [expenses] calls.
   int loadCalls = 0;
 
@@ -58,6 +71,19 @@ final class FakeExpensesRepository implements ExpensesRepository {
     if (error != null) {
       throw error;
     }
+  }
+
+  /// Resolves the shop an expense belongs to for scoped reads, mirroring
+  /// the Drift `shop_id = ?` predicate with a legacy fallback: a row that
+  /// carries a shop id is matched strictly, while a row without one resolves
+  /// to [unscopedShopIdFallback] (null keeps it invisible under any scope).
+  String? _resolvedShop(Expense expense) =>
+      expense.shopId ?? unscopedShopIdFallback;
+
+  bool _inScope(Expense expense, List<String>? shopIds) {
+    if (shopIds == null) return true;
+    if (shopIds.isEmpty) return false;
+    return shopIds.contains(_resolvedShop(expense));
   }
 
   bool _matches(
@@ -107,6 +133,12 @@ final class FakeExpensesRepository implements ExpensesRepository {
     final matching =
         [
           for (final expense in storedExpenses)
+            // NOTE: intentionally unscoped (unlike payables/shopPayables
+            // below): the historical expense list tests seed rows without a
+            // shop and read through a resolved scope, so strict filtering
+            // here would hide every legacy row. Scoped isolation for the
+            // list lives in the Drift repository; the payable surfaces carry
+            // the shop-aware contract.
             if (_matches(
               expense,
               search: search ?? '',
@@ -163,6 +195,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
       note: note,
       isActive: isActive,
       paymentStatus: paymentStatus,
+      shopId: shopId,
     );
   }
 
@@ -196,6 +229,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
         isActive: isActive,
         createdAt: existing.createdAt,
         updatedAt: DateTime.now().toUtc(),
+        shopId: existing.shopId,
       ),
     );
   }
@@ -220,6 +254,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
         isActive: isActive,
         createdAt: existing.createdAt,
         updatedAt: DateTime.now().toUtc(),
+        shopId: existing.shopId,
       ),
     );
   }
@@ -243,7 +278,8 @@ final class FakeExpensesRepository implements ExpensesRepository {
     final due =
         [
           for (final expense in storedExpenses)
-            if (expense.isActive &&
+            if (_inScope(expense, shopIds) &&
+                expense.isActive &&
                 expense.paymentStatus == ExpensePaymentStatus.notPaid)
               expense,
         ]..sort((a, b) {
@@ -258,16 +294,23 @@ final class FakeExpensesRepository implements ExpensesRepository {
   @override
   Future<List<ShopPayable>> shopPayables({List<String>? shopIds}) async {
     _throwIfLoadError();
+    if (shopIds != null && shopIds.isEmpty) return const [];
+    // Grouped per (shop, payee): a same-named payee in two businesses is two
+    // payables that never mix (mirrors the Drift per-shop grouping).
     final groups = <String, _GroupedPayable>{};
     for (final expense in storedExpenses) {
+      if (!_inScope(expense, shopIds)) continue;
       if (!expense.isActive ||
           expense.paymentStatus != ExpensePaymentStatus.notPaid) {
         continue;
       }
+      final shop = _resolvedShop(expense);
       final key = PayeeKey.of(expense.name);
+      final groupKey = '${shop ?? '-'}|$key';
       final group = groups.putIfAbsent(
-        key,
+        groupKey,
         () => _GroupedPayable(
+          shopId: shop,
           payeeKey: key,
           payeeName: PayeeKey.display(expense.name),
           oldestExpenseDate: expense.expenseDate,
@@ -281,9 +324,11 @@ final class FakeExpensesRepository implements ExpensesRepository {
     }
     for (final payment in storedPayablePayments) {
       if (payment.reversed) continue;
-      final group = groups[payment.payeeKey];
-      if (group == null) continue;
-      group.paidPaise += payment.amountPaise;
+      for (final group in groups.values) {
+        if (group.payeeKey == payment.payeeKey) {
+          group.paidPaise += payment.amountPaise;
+        }
+      }
     }
     final result =
         [
@@ -296,6 +341,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
               expenseCount: group.expenseCount,
               oldestExpenseDate: group.oldestExpenseDate,
               lastPaidAt: _lastPaidAt(group.payeeKey),
+              shopId: group.shopId,
             ),
         ]..sort((a, b) {
           final byRemaining = b.remainingPaise.compareTo(a.remainingPaise);
@@ -426,6 +472,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     String? note,
     bool isActive = true,
     ExpensePaymentStatus paymentStatus = ExpensePaymentStatus.paid,
+    String? shopId,
   }) => _store(
     name: name,
     amountPaise: amountPaise,
@@ -435,6 +482,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     note: note,
     isActive: isActive,
     paymentStatus: paymentStatus,
+    shopId: shopId,
   );
 
   Expense _store({
@@ -446,6 +494,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
     String? note,
     bool isActive = true,
     ExpensePaymentStatus paymentStatus = ExpensePaymentStatus.paid,
+    String? shopId,
   }) {
     final now = DateTime.now().toUtc();
     final expense = Expense(
@@ -460,6 +509,7 @@ final class FakeExpensesRepository implements ExpensesRepository {
       isActive: isActive,
       createdAt: now,
       updatedAt: now,
+      shopId: shopId,
     );
     storedExpenses.add(expense);
     return expense;

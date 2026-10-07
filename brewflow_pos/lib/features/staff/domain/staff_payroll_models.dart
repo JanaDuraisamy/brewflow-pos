@@ -32,6 +32,12 @@ int workedMinutesBetween(DateTime inAt, DateTime outAt) {
 
 /// A single attendance shift. Open while [outAt] is null; [workedMinutes] is
 /// fixed the moment the shift closes so summaries never shift retroactively.
+///
+/// A Leave day is the same row shape with [isLeave] true: an explicit
+/// day-level state, never a worked shift. It carries the business-day cookie
+/// in [inAt]/[outAt] with 0 minutes (so the open-shift notion, `outAt == null`,
+/// never mistakes it for an open shift) and an optional [leaveReason].
+/// [isLeave] is the source of truth — never the timestamps.
 final class StaffAttendanceRecord {
   const StaffAttendanceRecord({
     required this.id,
@@ -40,6 +46,8 @@ final class StaffAttendanceRecord {
     required this.outAt,
     required this.attendanceDate,
     required this.workedMinutes,
+    this.isLeave = false,
+    this.leaveReason,
   });
 
   final String id;
@@ -56,6 +64,12 @@ final class StaffAttendanceRecord {
 
   /// Worked minutes fixed at clock-out; 0 while open.
   final int workedMinutes;
+
+  /// Day-level Leave marker. Leave never counts as working time.
+  final bool isLeave;
+
+  /// Optional owner note recorded with a Leave day; null when absent.
+  final String? leaveReason;
 
   bool get isOpen => outAt == null;
 }
@@ -129,13 +143,28 @@ final class MonthlyPayrollSummary {
   /// Daily salary amounts recorded for the month (one per business day).
   final List<StaffDailySalary> dailySalaries;
 
-  int get totalMinutes =>
-      shifts.fold(0, (sum, shift) => sum + shift.workedMinutes);
+  /// Worked minutes across WORKED shifts only. Leave rows carry 0 by
+  /// construction and are excluded explicitly, so Leave can never accrue
+  /// working time even if a row is ever written inconsistently.
+  int get totalMinutes => shifts
+      .where((shift) => !shift.isLeave)
+      .fold(0, (sum, shift) => sum + shift.workedMinutes);
 
-  /// Number of distinct business days with a recorded shift this month.
-  /// Multiple shifts on the same day still count as one working day.
-  int get totalWorkingDays =>
-      shifts.map((shift) => shift.attendanceDate).toSet().length;
+  /// Number of distinct business days with a recorded WORKED shift this
+  /// month. Leave days never count as working days; multiple shifts on the
+  /// same day still count as one working day.
+  int get totalWorkingDays => shifts
+      .where((shift) => !shift.isLeave)
+      .map((shift) => shift.attendanceDate)
+      .toSet()
+      .length;
+
+  /// Number of distinct business days marked Leave this month.
+  int get totalLeaveDays => shifts
+      .where((shift) => shift.isLeave)
+      .map((shift) => shift.attendanceDate)
+      .toSet()
+      .length;
 
   int get advancePaise =>
       advances.fold(0, (sum, advance) => sum + advance.amountPaise);
@@ -185,6 +214,25 @@ final class StaffPayrollNoOpenShiftFailure extends StaffPayrollFailure {
 
   @override
   String get message => 'There is no open shift to close.';
+}
+
+/// Marking Leave on a day that already has a worked (checked-in) shift.
+/// Leave is a day-level state for days with no worked attendance; the worked
+/// shift stays untouched.
+final class StaffPayrollLeaveConflictFailure extends StaffPayrollFailure {
+  const StaffPayrollLeaveConflictFailure();
+
+  @override
+  String get message =>
+      'This day already has worked attendance and cannot be marked Leave.';
+}
+
+/// Clocking in on a day already marked Leave. Clear the Leave day first.
+final class StaffPayrollAlreadyOnLeaveFailure extends StaffPayrollFailure {
+  const StaffPayrollAlreadyOnLeaveFailure();
+
+  @override
+  String get message => 'This day is marked Leave. Clear Leave to clock in.';
 }
 
 /// Clock-out time earlier than the shift's clock-in time.

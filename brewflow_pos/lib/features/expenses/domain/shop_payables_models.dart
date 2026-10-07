@@ -42,6 +42,10 @@ abstract final class PayeeKey {
 /// of the underlying unpaid expenses and [paidPaise] the sum of payments made
 /// against that payee, so paying part of it leaves [remainingPaise] lower
 /// without altering a single expense.
+///
+/// Grouping identity is (shop, payee): the same name in Cafe and Food Truck
+/// is two payables that never mix. [shopId] is null only for an unscoped
+/// read with no shop to attribute the group to.
 final class ShopPayable {
   const ShopPayable({
     required this.payeeKey,
@@ -51,6 +55,7 @@ final class ShopPayable {
     required this.expenseCount,
     required this.oldestExpenseDate,
     this.lastPaidAt,
+    this.shopId,
   });
 
   /// Normalized name; the grouping identity.
@@ -74,6 +79,10 @@ final class ShopPayable {
   /// When the most recent payment against this payee landed; null if never
   /// paid.
   final DateTime? lastPaidAt;
+
+  /// The shop this payable belongs to; null only for an unscoped read.
+  /// The detail drill-down lists the unpaid expenses of exactly this shop.
+  final String? shopId;
 
   /// What is still owed. Never negative: a payment above the outstanding
   /// balance is rejected up front, and this clamps defensively so a reversed

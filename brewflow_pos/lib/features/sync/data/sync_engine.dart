@@ -205,6 +205,15 @@ final class SyncEngine {
             SyncProductVariant.fromJson(decodePayload(entry.payload)),
           ]);
         }
+      case MasterEntity.productRecipe:
+        // Recipes only ever UPSERT (a cleared mapping removes local rows
+        // without a tombstone; product deletes converge via PRODUCT).
+        if (entry.operation == 'DELETE') {
+          throw StateError('PRODUCT_RECIPE supports UPSERT sync only');
+        }
+        await _gateway.upsertProductRecipes([
+          SyncProductRecipe.fromJson(decodePayload(entry.payload)),
+        ]);
       case MasterEntity.supplier:
         if (entry.operation == 'DELETE') {
           await _gateway.recordDeletion(_deletionOf(entry));
@@ -374,6 +383,9 @@ final class SyncEngine {
       await _drainCategories(since),
       await _drainProducts(since),
       await _drainVariants(since),
+      // Recipes ride the same cursor after the products and variants they
+      // reference, so a pulled mapping never points at a missing row.
+      await _drainProductRecipes(since),
       await _drainSuppliers(since),
       await _drainCustomers(since),
       // Transaction entities: sales before sale_items (parent→child FK).
@@ -433,6 +445,13 @@ final class SyncEngine {
     pull: (since, limit) =>
         _gateway.pullProductVariants(since: since, limit: limit),
     apply: (rows, at) => _applier.applyVariantPage(rows, at),
+  );
+
+  Future<DateTime> _drainProductRecipes(DateTime since) => _drainPage(
+    since,
+    pull: (since, limit) =>
+        _gateway.pullProductRecipes(since: since, limit: limit),
+    apply: (rows, at) => _applier.applyProductRecipePage(rows, at),
   );
 
   Future<DateTime> _drainSuppliers(DateTime since) => _drainPage(

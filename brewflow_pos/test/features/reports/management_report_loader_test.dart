@@ -704,6 +704,19 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
   }) async {}
 
   @override
+  Future<void> markLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+    String? reason,
+  }) async {}
+
+  @override
+  Future<void> clearLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+  }) async {}
+
+  @override
   Future<int?> salaryForMonth(String staffUserId, DateTime month) async => null;
 
   @override

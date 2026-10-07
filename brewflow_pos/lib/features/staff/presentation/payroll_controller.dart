@@ -266,6 +266,40 @@ final class PayrollSummaryController
     );
   }
 
+  /// Owner-only marking of one business day as Leave (day-level state, never
+  /// a worked shift). [requireOwner] is the boundary guard, so hiding the
+  /// action in the UI is never the only protection. [_mutate] reloads the
+  /// month afterwards, so working days, leave days, hours and final payable
+  /// recompute immediately.
+  ///
+  /// `async` so a non-owner session surfaces as a rejected future (like every
+  /// other payroll failure) rather than a synchronous throw.
+  Future<void> markLeave({
+    required DateTime attendanceDate,
+    String? reason,
+  }) async {
+    requireOwner(ref);
+    return _mutate(
+      (repository) => repository.markLeave(
+        staffUserId: staffUserId,
+        attendanceDate: attendanceDate,
+        reason: reason,
+      ),
+    );
+  }
+
+  /// Owner-only clearing of a Leave day. Same boundary and reload contract
+  /// as [markLeave]; a day without Leave is a safe no-op in the repository.
+  Future<void> clearLeave({required DateTime attendanceDate}) async {
+    requireOwner(ref);
+    return _mutate(
+      (repository) => repository.clearLeave(
+        staffUserId: staffUserId,
+        attendanceDate: attendanceDate,
+      ),
+    );
+  }
+
   Future<void> _mutate(
     Future<void> Function(StaffPayrollRepository repository) action,
   ) async {

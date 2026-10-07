@@ -270,18 +270,42 @@ final class DriftBillingRepository implements BillingRepository {
           // ProductVariant row is enqueued with the reduced levels, so append
           // them here — inside the same transaction — to propagate to the
           // cloud and, from there, to the other device. Untracked (NONE) lines
-          // were never deducted and contribute nothing.
-          final productIds = result.items.map((i) => i.productId).toSet();
+          // were never deducted and contribute nothing. Recipe lines deducted
+          // their INGREDIENTS, not their own rows, so the enqueued rows are
+          // the ingredients' — otherwise the deducted levels would never
+          // reach the cloud.
+          final plainProductIds = <String>{};
+          final plainVariantIds = <String>{};
+          final ingredientProductIds = <String>{};
+          final ingredientVariantIds = <String>{};
+          for (final item in result.items) {
+            final recipes = await _recipesForSaleLine(
+              productId: item.productId,
+              variantId: item.variantId,
+              shopId: ctx.shopId,
+            );
+            if (recipes.isEmpty) {
+              plainProductIds.add(item.productId);
+              if (item.variantId != null) {
+                plainVariantIds.add(item.variantId!);
+              }
+            } else {
+              for (final recipe in recipes) {
+                ingredientProductIds.add(recipe.ingredientProductId);
+                if (recipe.ingredientVariantId != null) {
+                  ingredientVariantIds.add(recipe.ingredientVariantId!);
+                }
+              }
+            }
+          }
+          final productIds = {...plainProductIds, ...ingredientProductIds};
           final affectedProducts = <String, db.Product>{
             for (final row in await (_database.select(
               _database.products,
             )..where((t) => t.id.isIn(productIds))).get())
               row.id: row,
           };
-          final variantIds = result.items
-              .where((i) => i.variantId != null)
-              .map((i) => i.variantId!)
-              .toSet();
+          final variantIds = {...plainVariantIds, ...ingredientVariantIds};
           final variants = variantIds.isEmpty
               ? const <db.ProductVariant>[]
               : await (_database.select(
@@ -745,6 +769,25 @@ final class DriftBillingRepository implements BillingRepository {
     return row?.quantity ?? 0;
   }
 
+  /// Recipe rows applying to one sale line in the selling shop. A row with a
+  /// null `variant_id` maps every variant of the product; a row naming a
+  /// variant applies only to that variant's lines.
+  Future<List<db.ProductRecipe>> _recipesForSaleLine({
+    required String productId,
+    required String? variantId,
+    required String shopId,
+  }) async {
+    final rows =
+        await (_database.select(_database.productRecipes)..where(
+              (t) => t.productId.equals(productId) & t.shopId.equals(shopId),
+            ))
+            .get();
+    return [
+      for (final row in rows)
+        if (row.variantId == null || row.variantId == variantId) row,
+    ];
+  }
+
   Future<CompletedSale> _checkoutCore(
     List<CartLine> lines,
     PaymentStatus paymentStatus,
@@ -764,6 +807,12 @@ final class DriftBillingRepository implements BillingRepository {
     final entitiesByKey = await _entitiesById(lines);
     final ordered = <({CartLine line, int lineTotal})>[];
     final movements = <db.StockMovementsCompanion>[];
+    // Aggregated ingredient needs across ALL lines: one menu product can
+    // appear on several lines (Plain + Cheese + Egg + Veg Maggi sharing one
+    // Maggi Packet), so ingredients are deducted once per ingredient AFTER
+    // every line validates — never once per line.
+    final recipeNeeds = <(String, String?), int>{};
+    final recipeNames = <(String, String?), String>{};
     for (final line in lines) {
       final entity = entitiesByKey[line.keyId];
       final product = entity?.product;
@@ -776,10 +825,27 @@ final class DriftBillingRepository implements BillingRepository {
       if (line.variantId != null && (variant == null || !variant.isActive)) {
         throw UnavailableProductFailure(line.productName);
       }
+      // Shared-stock recipes: a line for a product WITH recipe rows consumes
+      // ONLY its ingredients — its own `stock_quantity` is never touched,
+      // however tracked it is. Rows are scoped to the selling shop; a
+      // product with no rows here sells from its own stock exactly as before.
+      final recipeRows = await _recipesForSaleLine(
+        productId: line.productId,
+        variantId: line.variantId,
+        shopId: shopId,
+      );
+      for (final row in recipeRows) {
+        final key = (row.ingredientProductId, row.ingredientVariantId);
+        recipeNeeds[key] =
+            (recipeNeeds[key] ?? 0) + row.quantity * line.quantity;
+        recipeNames.putIfAbsent(key, () => line.productName);
+      }
       // stockUnit NONE = made-to-order / untracked: never stock-guarded,
       // never deducted, never moved. The schema documents this semantic;
       // checkout simply skips the inventory leg for such products.
-      final tracked = product.stockUnit != StockUnit.none.dbValue;
+      // Recipe lines bypass it entirely through the ingredient leg below.
+      final tracked =
+          recipeRows.isEmpty && product.stockUnit != StockUnit.none.dbValue;
       // Which shelf this sale draws from. A product the selling business OWNS
       // deducts its own `stock_quantity` exactly as before. A product owned by
       // another business (a Cafe master the Cafe shared into the Food Truck)
@@ -898,6 +964,87 @@ final class DriftBillingRepository implements BillingRepository {
           ),
         );
       }
+    }
+
+    // Shared-stock ingredient leg: one conditional, race-safe deduction per
+    // ingredient over the AGGREGATED need. The guard is re-evaluated by
+    // SQLite at write time (same convention as the own-stock leg above),
+    // so concurrent sales cannot drive a shared source negative: the loser
+    // matches zero rows and the whole sale rolls back with
+    // InsufficientStockFailure, leaving no partial deduction behind.
+    for (final entry in recipeNeeds.entries) {
+      final (ingredientProductId, ingredientVariantId) = entry.key;
+      final need = entry.value;
+      final name = recipeNames[entry.key] ?? 'Item';
+      final int level;
+      if (ingredientVariantId != null) {
+        final row = await (_database.select(
+          _database.productVariants,
+        )..where((t) => t.id.equals(ingredientVariantId))).getSingleOrNull();
+        if (row == null || !row.isActive) {
+          throw UnavailableProductFailure(name);
+        }
+        level = row.stockQuantity;
+      } else {
+        final row = await (_database.select(
+          _database.products,
+        )..where((t) => t.id.equals(ingredientProductId))).getSingleOrNull();
+        if (row == null || !row.isActive) {
+          throw UnavailableProductFailure(name);
+        }
+        level = row.stockQuantity;
+      }
+      if (level < need) {
+        throw InsufficientStockFailure(name);
+      }
+      final int updated;
+      if (ingredientVariantId != null) {
+        updated =
+            await (_database.update(_database.productVariants)..where(
+                  (t) =>
+                      t.id.equals(ingredientVariantId) &
+                      t.stockQuantity.isBiggerOrEqualValue(need),
+                ))
+                .write(
+                  db.ProductVariantsCompanion(
+                    stockQuantity: Value(level - need),
+                    updatedAt: Value(now),
+                  ),
+                );
+      } else {
+        updated =
+            await (_database.update(_database.products)..where(
+                  (t) =>
+                      t.id.equals(ingredientProductId) &
+                      t.stockQuantity.isBiggerOrEqualValue(need),
+                ))
+                .write(
+                  db.ProductsCompanion(
+                    stockQuantity: Value(level - need),
+                    updatedAt: Value(now),
+                  ),
+                );
+      }
+      if (updated != 1) {
+        throw InsufficientStockFailure(name);
+      }
+      movements.add(
+        db.StockMovementsCompanion.insert(
+          shopId: Value(shopId),
+          productId: ingredientProductId,
+          variantId: Value(ingredientVariantId),
+          movementType: StockMovementType.sale.dbValue,
+          quantity: -need,
+          stockBefore: level,
+          stockAfter: level - need,
+          reason: const Value(null),
+          note: const Value(null),
+          referenceType: Value(StockMovementType.sale.dbValue),
+          referenceId: Value(saleId),
+          createdAt: Value(now),
+          updatedAt: Value(now),
+        ),
+      );
     }
 
     final subtotal = Money.sumPaise(ordered.map((e) => e.lineTotal));
@@ -1187,6 +1334,7 @@ final class DriftBillingRepository implements BillingRepository {
       isActive: product.isActive,
       createdAt: product.createdAt,
       cloudImagePath: product.cloudImagePath,
+      isIngredient: product.isIngredient,
     ).toJson(),
   );
 
@@ -1404,6 +1552,36 @@ final class DriftBillingRepository implements BillingRepository {
           // the units back onto, and inventing a row with a made-up number
           // would be worse than the loss, so the void leaves it alone.
           if (restored == null) continue;
+          continue;
+        }
+        // Mirror the sale: a line that consumed recipe ingredients puts each
+        // ingredient back (quantity per unit × line quantity). The menu
+        // product's own stock was never touched by the sale, so it is never
+        // restored here either.
+        final recipeRows = soldShopId == null
+            ? const <db.ProductRecipe>[]
+            : await _recipesForSaleLine(
+                productId: item.productId,
+                variantId: item.variantId,
+                shopId: soldShopId,
+              );
+        if (recipeRows.isNotEmpty) {
+          for (final row in recipeRows) {
+            final restore = row.quantity * item.quantity;
+            if (row.ingredientVariantId != null) {
+              await _database.customStatement(
+                'UPDATE product_variants SET stock_quantity = '
+                'stock_quantity + ?, updated_at = ? WHERE id = ?',
+                [restore, nowStr, row.ingredientVariantId],
+              );
+            } else {
+              await _database.customStatement(
+                'UPDATE products SET stock_quantity = stock_quantity + ?, '
+                'updated_at = ? WHERE id = ?',
+                [restore, nowStr, row.ingredientProductId],
+              );
+            }
+          }
           continue;
         }
         if (item.variantId != null) {

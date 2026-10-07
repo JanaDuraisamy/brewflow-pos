@@ -259,6 +259,11 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
     }
     final local = inAt.toLocal();
     final businessDay = DateTime.utc(local.year, local.month, local.day);
+    // A Leave day owns its date: clocking in would silently work a day the
+    // owner marked off, so it stays blocked until the Leave is cleared.
+    if (await _leaveForDay(staffUserId, businessDay) != null) {
+      throw const StaffPayrollAlreadyOnLeaveFailure();
+    }
     // Pre-mint the shift id so the local row, the queued outbox payload and
     // the cloud row are the SAME row (upsert by id across devices, retries
     // converge instead of duplicating).
@@ -381,6 +386,227 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
       ),
     );
     await _dao.closeShift(open.id, outAt.toUtc(), minutes);
+  }
+
+  @override
+  Future<void> markLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+    String? reason,
+  }) async {
+    final dayCookie = DateTime.utc(
+      attendanceDate.year,
+      attendanceDate.month,
+      attendanceDate.day,
+    );
+    final normalizedReason = _optionalText(reason);
+    // An open shift means the member is at work: Leave waits until it closes.
+    if (await _dao.openShiftFor(staffUserId) != null) {
+      throw const StaffPayrollShiftAlreadyOpenFailure();
+    }
+    // Idempotent re-mark: the same day keeps its row id and only the reason
+    // is refreshed, so retries and duplicate taps converge instead of
+    // duplicating — locally, in the outbox and on every device.
+    final existing = await _leaveForDay(staffUserId, dayCookie);
+    final shopId = await _profileShopId(staffUserId);
+    if (shopId != null) {
+      await _backfillNullShop(staffUserId, shopId);
+    }
+    final authUserId = await _authUserIdFor(staffUserId);
+    if (existing != null) {
+      await _saveLeave(
+        id: existing.id,
+        staffUserId: staffUserId,
+        dayCookie: dayCookie,
+        reason: normalizedReason,
+        shopId: shopId,
+        authUserId: authUserId,
+        isUpdate: true,
+      );
+      return;
+    }
+    // A worked shift owns its date: Leave must never overwrite worked
+    // attendance, and the worked shift stays untouched.
+    final dayRows = await _dao.shiftsFor(
+      staffUserId,
+      fromDate: dayCookie,
+      toDate: dayCookie.add(const Duration(days: 1)),
+    );
+    if (dayRows.any((row) => !row.isLeave)) {
+      throw const StaffPayrollLeaveConflictFailure();
+    }
+    await _saveLeave(
+      id: const Uuid().v4(),
+      staffUserId: staffUserId,
+      dayCookie: dayCookie,
+      reason: normalizedReason,
+      shopId: shopId,
+      authUserId: authUserId,
+      isUpdate: false,
+    );
+  }
+
+  /// Writes one Leave row (insert or reason refresh) locally first with its
+  /// durable outbox entry in the same atomic transaction — the same
+  /// local-first contract as clock-in. Without a coordinator the write still
+  /// commits locally (offline-first); the direct-cloud path mirrors clock-in.
+  Future<void> _saveLeave({
+    required String id,
+    required String staffUserId,
+    required DateTime dayCookie,
+    required String? reason,
+    required String? shopId,
+    required String? authUserId,
+    required bool isUpdate,
+  }) async {
+    final coordinator = _outbox;
+    Future<StaffAttendanceData> write() => _db.transaction(() async {
+      if (isUpdate) {
+        await (_db.update(
+          _db.staffAttendance,
+        )..where((t) => t.id.equals(id))).write(
+          StaffAttendanceCompanion(
+            leaveReason: Value(reason),
+            updatedAt: Value(DateTime.now().toUtc()),
+          ),
+        );
+      } else {
+        await _dao.insertShift(
+          StaffAttendanceCompanion(
+            id: Value(id),
+            shopId: Value(shopId),
+            staffUserId: Value(staffUserId),
+            // Day-level state, not a shift: the business-day cookie stands in
+            // for both timestamps with 0 minutes, so the open-shift notion
+            // (`out_at IS NULL`) never mistakes Leave for work in progress.
+            inAt: Value(dayCookie),
+            outAt: Value(dayCookie),
+            attendanceDate: Value(dayCookie),
+            workedMinutes: const Value(0),
+            isLeave: const Value(true),
+            leaveReason: Value(reason),
+          ),
+        );
+      }
+      return (_db.select(
+        _db.staffAttendance,
+      )..where((t) => t.id.equals(id))).getSingle();
+    });
+    if (coordinator != null && shopId != null && authUserId != null) {
+      await coordinator.run<StaffAttendanceData>(
+        write: write,
+        snapshots: (saved, context) async => [
+          OutboxAppend(
+            entity: MasterEntity.staffAttendance,
+            entityId: saved.id,
+            operation: 'UPSERT',
+            payload: _syncModel(
+              shopId: shopId,
+              authUserId: authUserId,
+              row: saved,
+            ).toJson(),
+          ),
+        ],
+      );
+      return;
+    }
+    await _writeCloud(
+      shopId: shopId,
+      authUserId: authUserId,
+      push: (shop, auth) => _cloud!.upsertAttendance(
+        shopId: shop,
+        authUserId: auth,
+        record: _toRecord(
+          StaffAttendanceData(
+            id: id,
+            shopId: shopId,
+            staffUserId: staffUserId,
+            inAt: dayCookie,
+            outAt: dayCookie,
+            attendanceDate: dayCookie,
+            workedMinutes: 0,
+            isLeave: true,
+            leaveReason: reason,
+            createdAt: DateTime.now().toUtc(),
+            updatedAt: DateTime.now().toUtc(),
+          ),
+        ),
+      ),
+    );
+    await write();
+  }
+
+  @override
+  Future<void> clearLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+  }) async {
+    final dayCookie = DateTime.utc(
+      attendanceDate.year,
+      attendanceDate.month,
+      attendanceDate.day,
+    );
+    final existing = await _leaveForDay(staffUserId, dayCookie);
+    if (existing == null) return;
+    final shopId = existing.shopId ?? await _profileShopId(staffUserId);
+    final authUserId = await _authUserIdFor(staffUserId);
+    if (shopId != null) {
+      await _backfillNullShop(staffUserId, shopId);
+    }
+    final coordinator = _outbox;
+    if (coordinator != null && shopId != null && authUserId != null) {
+      // Same local-first delete contract as deleteAttendance: drop the row
+      // now, queue the DELETE so the engine removes it in the cloud first
+      // and then broadcasts the tombstone — peers converge and a fresh
+      // device can never re-pull the cleared day.
+      final doomed = _syncModel(
+        shopId: shopId,
+        authUserId: authUserId,
+        row: existing,
+      );
+      await coordinator.run<void>(
+        write: () => _db.transaction(() => _dao.deleteShift(existing.id)),
+        snapshots: (_, context) async => [
+          OutboxAppend(
+            entity: MasterEntity.staffAttendance,
+            entityId: existing.id,
+            operation: 'DELETE',
+            payload: doomed.toJson(),
+          ),
+        ],
+      );
+      return;
+    }
+    final cloud = _cloud;
+    if (cloud != null && shopId != null && authUserId != null) {
+      await _writeCloud(
+        shopId: shopId,
+        authUserId: authUserId,
+        push: (shop, auth) => _cloud!.deleteAttendance(
+          shopId: shop,
+          authUserId: auth,
+          shiftId: existing.id,
+        ),
+      );
+    }
+    await _dao.deleteShift(existing.id);
+  }
+
+  /// The Leave row for one staff member + business day, or null. Leave owns
+  /// at most one row per day by construction (re-marks update in place).
+  Future<StaffAttendanceData?> _leaveForDay(
+    String staffUserId,
+    DateTime dayCookie,
+  ) async {
+    final rows = await _dao.shiftsFor(
+      staffUserId,
+      fromDate: dayCookie,
+      toDate: dayCookie.add(const Duration(days: 1)),
+    );
+    for (final row in rows) {
+      if (row.isLeave) return row;
+    }
+    return null;
   }
 
   @override
@@ -516,6 +742,8 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
     outAt: row.outAt,
     attendanceDate: row.attendanceDate,
     workedMinutes: row.workedMinutes,
+    isLeave: row.isLeave,
+    leaveReason: row.leaveReason,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   );
@@ -1002,5 +1230,13 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
         outAt: row.outAt,
         attendanceDate: row.attendanceDate,
         workedMinutes: row.workedMinutes,
+        isLeave: row.isLeave,
+        leaveReason: row.leaveReason,
       );
+
+  /// Blank reasons are stored as null (never an empty string).
+  static String? _optionalText(String? value) {
+    final trimmed = value?.trim();
+    return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+  }
 }

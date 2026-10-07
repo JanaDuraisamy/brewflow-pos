@@ -112,6 +112,7 @@ final class Expense {
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
+    this.shopId,
   });
 
   final String id;
@@ -135,4 +136,9 @@ final class Expense {
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
+
+  /// The business that owns this expense, or null on a row created before
+  /// multi-shop existed. Scoped reads resolve null through the caller's
+  /// fallback; grouping never merges two shops.
+  final String? shopId;
 }

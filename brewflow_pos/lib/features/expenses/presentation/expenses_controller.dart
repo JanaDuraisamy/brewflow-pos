@@ -287,6 +287,50 @@ final payablePaymentsProvider =
       }
     });
 
+/// Underlying unpaid expenses of exactly one (shop, payee) payable row,
+/// oldest due first. Backs the expense-detail drill-down opened by tapping a
+/// shop-payable card: the summary card stays a summary and this is where each
+/// expense's date, amount, status and note is shown.
+///
+/// [shopId] scopes the read to the payable's own shop when known; null falls
+/// back to the current read scope. Same-name payees in two businesses never
+/// mix because the shop scope and the normalized [PayeeKey] both apply.
+final payableDetailProvider =
+    FutureProvider.family<List<Expense>, ({String payeeKey, String? shopId})>((
+      ref,
+      key,
+    ) async {
+      try {
+        final scope = key.shopId != null
+            ? [key.shopId!]
+            : await ref
+                  .read(businessSwitcherProvider.notifier)
+                  .shopIdsForRead(ref.watch(businessSwitcherProvider));
+        final rows = await ref
+            .watch(expensesRepositoryProvider)
+            .payables(shopIds: scope);
+        final detail =
+            [
+              for (final expense in rows)
+                if (PayeeKey.of(expense.name) == key.payeeKey) expense,
+            ]..sort((a, b) {
+              final byDate = a.expenseDate.compareTo(b.expenseDate);
+              return byDate != 0 ? byDate : a.createdAt.compareTo(b.createdAt);
+            });
+        return detail;
+      } on ExpensesFailure {
+        rethrow;
+      } catch (error, stackTrace) {
+        AppLog.error(
+          'Failed to load payable detail',
+          tag: ExpensesController.tag,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        throw const UnexpectedExpensesFailure();
+      }
+    });
+
 /// Unfiltered expense record count, so the landing page can tell a brand-new
 /// shop ("No expenses yet") apart from a filter that matched nothing
 /// ("No expenses match your filters") even though the default date view is

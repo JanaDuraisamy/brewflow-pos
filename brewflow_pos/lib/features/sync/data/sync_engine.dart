@@ -205,6 +205,31 @@ final class SyncEngine {
             SyncProductVariant.fromJson(decodePayload(entry.payload)),
           ]);
         }
+      case MasterEntity.productRecipe:
+        // Recipes only ever UPSERT (a cleared mapping removes local rows
+        // without a tombstone; product deletes converge via PRODUCT).
+        if (entry.operation == 'DELETE') {
+          throw StateError('PRODUCT_RECIPE supports UPSERT sync only');
+        }
+        await _gateway.upsertProductRecipes([
+          SyncProductRecipe.fromJson(decodePayload(entry.payload)),
+        ]);
+      case MasterEntity.monthlyReportConfirmation:
+        // Confirmations only ever UPSERT (re-confirming refreshes the row;
+        // nothing ever deletes a confirmation).
+        if (entry.operation == 'DELETE') {
+          throw StateError(
+            'MONTHLY_REPORT_CONFIRMATION supports UPSERT sync only',
+          );
+        }
+        await _gateway.upsertMonthlyReportConfirmations([
+          SyncMonthlyReportConfirmation.fromJson(decodePayload(entry.payload)),
+        ]);
+      case MasterEntity.monthCleanup:
+        // Markers are written server-side by the atomic cleanup itself; the
+        // outbox never carries them. Reaching here means a future caller
+        // tried to queue one, which would double-record a converged ledger.
+        throw StateError('MONTH_CLEANUP is server-written, never pushed');
       case MasterEntity.supplier:
         if (entry.operation == 'DELETE') {
           await _gateway.recordDeletion(_deletionOf(entry));
@@ -374,6 +399,15 @@ final class SyncEngine {
       await _drainCategories(since),
       await _drainProducts(since),
       await _drainVariants(since),
+      // Recipes ride the same cursor after the products and variants they
+      // reference, so a pulled mapping never points at a missing row.
+      await _drainProductRecipes(since),
+      // Report confirmations gate destructive cleanup on every device, so
+      // they drain with master data; cleanup markers drain after them (and
+      // before deletions) so a marker never applies before its month's
+      // confirmation is known.
+      await _drainMonthlyReportConfirmations(since),
+      await _drainMonthCleanupMarkers(since),
       await _drainSuppliers(since),
       await _drainCustomers(since),
       // Transaction entities: sales before sale_items (parent→child FK).
@@ -434,6 +468,35 @@ final class SyncEngine {
         _gateway.pullProductVariants(since: since, limit: limit),
     apply: (rows, at) => _applier.applyVariantPage(rows, at),
   );
+
+  Future<DateTime> _drainProductRecipes(DateTime since) => _drainPage(
+    since,
+    pull: (since, limit) =>
+        _gateway.pullProductRecipes(since: since, limit: limit),
+    apply: (rows, at) => _applier.applyProductRecipePage(rows, at),
+  );
+
+  Future<DateTime> _drainMonthlyReportConfirmations(DateTime since) =>
+      _drainPage(
+        since,
+        pull: (since, limit) =>
+            _gateway.pullMonthlyReportConfirmations(since: since, limit: limit),
+        apply: (rows, at) =>
+            _applier.applyMonthlyReportConfirmationPage(rows, at),
+      );
+
+  Future<DateTime> _drainMonthCleanupMarkers(DateTime since) async {
+    // Retry markers deferred by a busy queue BEFORE pulling: the generic
+    // drain below only applies non-empty pages, so without this a deferred
+    // marker would strand behind its advanced cursor forever.
+    await _applier.retryUnappliedMonthCleanups();
+    return _drainPage(
+      since,
+      pull: (since, limit) =>
+          _gateway.pullMonthCleanupMarkers(since: since, limit: limit),
+      apply: (rows, at) => _applier.applyMonthCleanupMarkerPage(rows, at),
+    );
+  }
 
   Future<DateTime> _drainSuppliers(DateTime since) => _drainPage(
     since,

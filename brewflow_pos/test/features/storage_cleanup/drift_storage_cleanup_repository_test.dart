@@ -1,5 +1,6 @@
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:brewflow_pos/features/storage_cleanup/data/drift_storage_cleanup_repository.dart';
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -180,5 +181,72 @@ void main() {
       expect(atA, isNotNull);
       expect(atB, isNull);
     });
+  });
+
+  group('activeMonths', () {
+    Future<void> seedShop(String id) => database
+        .into(database.shops)
+        .insertOnConflictUpdate(ShopsCompanion.insert(id: Value(id), name: id));
+
+    test('discovers distinct months across the month-scoped tables', () async {
+      await seedShop(shopA);
+      final aug = DateTime.utc(2026, 8, 10);
+      final sep = DateTime.utc(2026, 9, 10);
+      await database
+          .into(database.sales)
+          .insert(
+            SalesCompanion.insert(
+              id: const Value('s-aug'),
+              shopId: const Value(shopA),
+              receiptNumber: 'BF-A',
+              subtotalPaise: 100,
+              totalPaise: 100,
+              createdAt: Value(aug),
+              updatedAt: Value(aug),
+            ),
+          );
+      await database
+          .into(database.expenses)
+          .insert(
+            ExpensesCompanion.insert(
+              shopId: const Value(shopA),
+              name: 'Supply',
+              amountPaise: 50,
+              category: 'SUPPLIES',
+              paymentMethod: 'CASH',
+              expenseDate: sep,
+            ),
+          );
+
+      final months = await repository.activeMonths(shopA);
+      expect(months, [DateTime.utc(2026, 9), DateTime.utc(2026, 8)]);
+    });
+
+    test(
+      'scopes discovery to the shop and returns empty without rows',
+      () async {
+        await seedShop(shopA);
+        await seedShop(shopB);
+        final now = DateTime.now().toUtc();
+        await database
+            .into(database.sales)
+            .insert(
+              SalesCompanion.insert(
+                id: const Value('s-b'),
+                shopId: const Value(shopB),
+                receiptNumber: 'BF-B',
+                subtotalPaise: 100,
+                totalPaise: 100,
+                createdAt: Value(now),
+                updatedAt: Value(now),
+              ),
+            );
+
+        expect(await repository.activeMonths(shopA), isEmpty);
+        expect(await repository.activeMonths(shopB), [
+          DateTime.utc(now.year, now.month),
+        ]);
+      },
+    );
   });
 }

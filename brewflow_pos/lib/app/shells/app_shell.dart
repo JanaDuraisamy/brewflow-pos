@@ -7,11 +7,16 @@ import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
+import 'package:brewflow_pos/features/inventory/presentation/stock_alerts_controller.dart';
+import 'package:brewflow_pos/features/inventory/presentation/stock_alerts_sheet.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/business_switcher_widget.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
+import 'package:brewflow_pos/core/notifications/stock_notification_payload.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
+import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/inventory/presentation/stock_notification_gate.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -150,12 +155,46 @@ final class _AppShellState extends ConsumerState<AppShell> {
       if (next.value!.role != UserRole.staff) return;
       _redirectAwayFromHiddenBranch();
     });
+    // Stock system notifications (Android): every alert-list emission is
+    // diffed by the gate so only genuine transitions notify — never one per
+    // rebuild. The gateway is initialized once; taps (foreground and
+    // terminated-launch) focus Inventory on the exact product.
+    ref.listenManual(stockAlertsProvider, (previous, next) {
+      final alerts = next.value;
+      if (alerts == null) return;
+      ref.read(stockNotificationGateProvider).syncAlerts(alerts);
+    });
+    _initStockNotifications();
   }
 
   @override
   void dispose() {
     _routeInfo.removeListener(_handleRouteChange);
     super.dispose();
+  }
+
+  /// Boots the stock notification gateway once per shell lifetime and routes
+  /// a terminated-launch tap, if any. Foreground/background taps arrive via
+  /// the same [_handleStockNotificationTap] through `init`.
+  Future<void> _initStockNotifications() async {
+    final gateway = ref.read(stockNotificationGatewayProvider);
+    await gateway.init(_handleStockNotificationTap);
+    if (!mounted) return;
+    await _handleStockNotificationTap(await gateway.consumeLaunchPayload());
+  }
+
+  /// Routes a stock notification tap to the exact Inventory product. A
+  /// malformed payload decodes to null and is ignored, so a bad payload can
+  /// never break navigation.
+  Future<void> _handleStockNotificationTap(String? payload) async {
+    final target = decodeStockAlertTap(payload);
+    if (target == null || !mounted) return;
+    ref
+        .read(inventoryFilterProvider.notifier)
+        .focusOn(productId: target.productId, variantId: target.variantId);
+    try {
+      if (mounted) context.go(AppRoutes.inventory);
+    } catch (_) {}
   }
 
   /// Collapse trigger for the auto-hide rail — the single mechanism for every
@@ -633,9 +672,27 @@ final class _MobileAppBar extends ConsumerWidget
       actions: [
         const Center(child: SyncStatusDot()),
         const SizedBox(width: AppSpacing.xs),
+        _StockAlertsBell(),
         _LogoutIconButton(),
         const SizedBox(width: AppSpacing.sm),
       ],
+    );
+  }
+}
+
+/// Header stock-alert bell: badge shows the live [stockAlertsProvider] count
+/// (hidden at zero) and a tap opens the notification-center sheet — never a
+/// direct inventory jump. A fixed [IconButton], so the deterministic header
+/// geometry is unchanged.
+final class _StockAlertsBell extends ConsumerWidget {
+  const _StockAlertsBell();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(stockAlertsProvider).value?.length ?? 0;
+    return NotificationBell(
+      count: count,
+      onPressed: () => showStockAlertsSheet(context, ref),
     );
   }
 }

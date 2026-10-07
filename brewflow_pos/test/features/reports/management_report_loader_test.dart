@@ -572,6 +572,7 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
     required DateTime startDate,
     required DateTime endExclusiveDate,
     List<String>? shopIds,
+    bool localOnly = false,
   }) async {
     _throwIfLoadError();
     return [
@@ -596,6 +597,7 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
     required DateTime startDate,
     required DateTime endExclusiveDate,
     List<String>? shopIds,
+    bool localOnly = false,
   }) async {
     _throwIfLoadError();
     return [
@@ -611,6 +613,7 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
     required DateTime startDate,
     required DateTime endExclusiveDate,
     List<String>? shopIds,
+    bool localOnly = false,
   }) async {
     _throwIfLoadError();
     return [
@@ -689,7 +692,10 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
   }
 
   @override
-  Future<StaffAttendanceRecord?> openShiftFor(String staffUserId) async => null;
+  Future<StaffAttendanceRecord?> openShiftFor(
+    String staffUserId, {
+    bool localOnly = false,
+  }) async => null;
 
   @override
   Future<void> clockIn({
@@ -704,7 +710,25 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
   }) async {}
 
   @override
-  Future<int?> salaryForMonth(String staffUserId, DateTime month) async => null;
+  Future<void> markLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+    String? reason,
+  }) async {}
+
+  @override
+  Future<void> clearLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+  }) async {}
+
+  @override
+  Future<int?> salaryForMonth(
+    String staffUserId,
+    DateTime month, {
+    bool localOnly = false,
+  }) async =>
+      null;
 
   @override
   Future<void> setMonthlySalary(

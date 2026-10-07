@@ -97,6 +97,7 @@ final class _RecordingInventoryRepository implements InventoryRepository {
     List<ProductVariantInput> variants = const [],
     String? shopId,
     bool visibleInShops = false,
+    bool isIngredient = false,
   }) => throw UnimplementedError();
 
   @override
@@ -119,6 +120,7 @@ final class _RecordingInventoryRepository implements InventoryRepository {
     String? shopId,
     List<String>? shopIds,
     bool visibleInShops = false,
+    bool? isIngredient,
   }) => throw UnimplementedError();
 
   @override
@@ -131,6 +133,20 @@ final class _RecordingInventoryRepository implements InventoryRepository {
   @override
   Future<ProductDeleteResult> deleteProduct(
     String id, {
+    List<String>? shopIds,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> setRecipe({
+    required String productId,
+    String? variantId,
+    required List<RecipeIngredientInput> ingredients,
+    String? shopId,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<ProductRecipe>> recipesForProduct(
+    String productId, {
     List<String>? shopIds,
   }) => throw UnimplementedError();
 }

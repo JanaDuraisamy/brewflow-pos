@@ -151,6 +151,7 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'is_active': row.isActive,
     'client_created_at': row.createdAt.toIso8601String(),
     'visible_in_shops': row.visibleInShops,
+    'is_ingredient': row.isIngredient,
     // image_path intentionally never pushed: device-local asset paths are
     // meaningless on other devices (see master_data_models.dart).
     // cloud_image_path IS pushed: it is metadata (a storage object key), and
@@ -176,6 +177,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     createdAt: _utc(json['client_created_at']),
     cloudImagePath: json['cloud_image_path'] as String?,
     visibleInShops: json['visible_in_shops'] as bool,
+    // Rows written before migration 0039 carry no flag; they stay sellable.
+    isIngredient: (json['is_ingredient'] as bool?) ?? false,
   );
 
   // ---- Product variants -----------------------------------------------------
@@ -195,6 +198,125 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     since: since,
     limit: limit,
     fromRow: _variantFromServer,
+  );
+
+  // ---- Product recipes ------------------------------------------------------
+
+  @override
+  Future<void> upsertProductRecipes(List<SyncProductRecipe> rows) => _upsert(
+    'product_recipes',
+    [for (final row in rows) _recipeToServer(row)],
+  );
+
+  @override
+  Future<PullPage<SyncProductRecipe>> pullProductRecipes({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'product_recipes',
+    since: since,
+    limit: limit,
+    fromRow: _recipeFromServer,
+  );
+
+  Map<String, dynamic> _recipeToServer(SyncProductRecipe row) => {
+    'id': row.id,
+    'shop_id': row.shopId,
+    'product_id': row.productId,
+    'variant_id': row.variantId,
+    'ingredient_product_id': row.ingredientProductId,
+    'ingredient_variant_id': row.ingredientVariantId,
+    'quantity': row.quantity,
+    'client_created_at': row.createdAt.toIso8601String(),
+  };
+
+  SyncProductRecipe _recipeFromServer(Map<String, dynamic> json) =>
+      SyncProductRecipe(
+        id: json['id'] as String,
+        shopId: json['shop_id'] as String,
+        productId: json['product_id'] as String,
+        variantId: json['variant_id'] as String?,
+        ingredientProductId: json['ingredient_product_id'] as String,
+        ingredientVariantId: json['ingredient_variant_id'] as String?,
+        quantity: json['quantity'] as int,
+        createdAt: _utc(json['client_created_at']),
+      );
+
+  // ---- Monthly report confirmations -----------------------------------------
+
+  @override
+  Future<void> upsertMonthlyReportConfirmations(
+    List<SyncMonthlyReportConfirmation> rows,
+  ) => _upsert('monthly_report_confirmations', [
+    for (final row in rows)
+      {
+        'id': row.id,
+        'shop_id': row.shopId,
+        'month': row.month.toUtc().toIso8601String().substring(0, 10),
+        'confirmed_at': row.confirmedAt.toUtc().toIso8601String(),
+        'confirmed_by': row.confirmedBy,
+        'source': row.source,
+        'client_created_at': row.createdAt.toUtc().toIso8601String(),
+      },
+  ]);
+
+  @override
+  Future<PullPage<SyncMonthlyReportConfirmation>>
+  pullMonthlyReportConfirmations({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'monthly_report_confirmations',
+    since: since,
+    limit: limit,
+    fromRow: (json) => SyncMonthlyReportConfirmation(
+      id: json['id'] as String,
+      shopId: json['shop_id'] as String,
+      month: DateTime.parse('${json['month']}T00:00:00Z'),
+      confirmedAt: _utc(json['confirmed_at']),
+      confirmedBy: json['confirmed_by'] as String?,
+      source: (json['source'] as String?) ?? 'management-report',
+      createdAt: _utc(json['client_created_at']),
+    ),
+  );
+
+  // ---- Month cleanup markers --------------------------------------------------
+
+  @override
+  Future<void> upsertMonthCleanupMarkers(List<SyncMonthCleanupMarker> rows) =>
+      _upsert('month_cleanup_markers', [
+        for (final row in rows)
+          {
+            'id': row.id,
+            'shop_id': row.shopId,
+            'month': row.month.toUtc().toIso8601String().substring(0, 10),
+            'tables': row.tables,
+            'deleted_counts': row.deletedCounts,
+            'completed_at': row.completedAt.toUtc().toIso8601String(),
+            'client_created_at': row.createdAt.toUtc().toIso8601String(),
+          },
+      ]);
+
+  @override
+  Future<PullPage<SyncMonthCleanupMarker>> pullMonthCleanupMarkers({
+    required DateTime since,
+    required int limit,
+  }) => _pull(
+    table: 'month_cleanup_markers',
+    since: since,
+    limit: limit,
+    fromRow: (json) => SyncMonthCleanupMarker(
+      id: json['id'] as String,
+      shopId: json['shop_id'] as String,
+      month: DateTime.parse('${json['month']}T00:00:00Z'),
+      tables: (json['tables'] as List).map((e) => e.toString()).toList(),
+      deletedCounts: {
+        for (final e in (json['deleted_counts'] as Map).entries)
+          e.key.toString(): (e.value as num).toInt(),
+      },
+      completedAt: _utc(json['completed_at']),
+      createdAt: _utc(json['client_created_at']),
+    ),
   );
 
   Map<String, dynamic> _variantToServer(SyncProductVariant row) => {
@@ -646,6 +768,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
       10,
     ),
     'worked_minutes': row.workedMinutes,
+    'is_leave': row.isLeave,
+    'leave_reason': row.leaveReason,
     'client_created_at': row.createdAt.toUtc().toIso8601String(),
   };
 
@@ -661,6 +785,9 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
         workedMinutes: (json['worked_minutes'] as num).toInt(),
         createdAt: _utc(json['client_created_at']),
         updatedAt: _utc(json['updated_at']),
+        // Rows written before migration 0038 carry no flag; they stay shifts.
+        isLeave: (json['is_leave'] as bool?) ?? false,
+        leaveReason: json['leave_reason'] as String?,
       );
 
   @override

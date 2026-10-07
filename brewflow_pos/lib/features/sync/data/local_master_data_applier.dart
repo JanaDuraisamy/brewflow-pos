@@ -5,6 +5,7 @@ import 'package:brewflow_pos/core/storage/app_storage.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/features/settings/data/preferences_settings_repository.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
+import 'package:brewflow_pos/features/storage_cleanup/data/drift_storage_cleanup_repository.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:drift/drift.dart';
 
@@ -234,12 +235,207 @@ final class LocalMasterDataApplier {
                 memberPricePaise: Value(row.memberPricePaise),
                 isActive: Value(row.isActive),
                 visibleInShops: Value(row.visibleInShops),
+                isIngredient: Value(row.isIngredient),
                 createdAt: Value(row.createdAt),
                 updatedAt: Value(appliedAt),
               ),
             );
       }
     });
+  }
+
+  /// Applies one pull page of recipe rows atomically. Idempotent UUID
+  /// upserts: replaying the same page changes nothing, and rows the local
+  /// device has pending in its outbox are never overwritten by a pull.
+  Future<void> applyProductRecipePage(
+    List<SyncProductRecipe> rows,
+    DateTime appliedAt,
+  ) async {
+    await _database.transaction(() async {
+      final skipped = await _pendingIds(
+        MasterEntity.productRecipe,
+        rows.map((r) => r.id),
+      );
+      for (final row in rows) {
+        if (skipped.contains(row.id)) continue;
+        await _database
+            .into(_database.productRecipes)
+            .insertOnConflictUpdate(
+              db.ProductRecipesCompanion.insert(
+                id: Value(row.id),
+                shopId: Value(row.shopId),
+                productId: row.productId,
+                variantId: Value(row.variantId),
+                ingredientProductId: row.ingredientProductId,
+                ingredientVariantId: Value(row.ingredientVariantId),
+                quantity: row.quantity,
+                createdAt: Value(row.createdAt),
+                updatedAt: Value(appliedAt),
+              ),
+            );
+      }
+    });
+  }
+
+  /// Applies one pull page of report-confirmation markers atomically.
+  /// Idempotent UUID upserts; rows with a pending local change are skipped
+  /// so a pull can never revert an unpushed confirmation.
+  Future<void> applyMonthlyReportConfirmationPage(
+    List<SyncMonthlyReportConfirmation> rows,
+    DateTime appliedAt,
+  ) async {
+    await _database.transaction(() async {
+      final skipped = await _pendingIds(
+        MasterEntity.monthlyReportConfirmation,
+        rows.map((r) => r.id),
+      );
+      for (final row in rows) {
+        if (skipped.contains(row.id)) continue;
+        await _database
+            .into(_database.monthlyReportConfirmations)
+            .insertOnConflictUpdate(
+              db.MonthlyReportConfirmationsCompanion.insert(
+                id: Value(row.id),
+                shopId: Value(row.shopId),
+                month: row.month,
+                confirmedAt: row.confirmedAt,
+                confirmedBy: Value(row.confirmedBy),
+                source: Value(row.source),
+                createdAt: Value(row.createdAt),
+                updatedAt: Value(appliedAt),
+              ),
+            );
+      }
+    });
+  }
+
+  /// Applies pulled month-cleanup markers: deletes this device's local
+  /// month mirrors in dependency order and records the marker, so every
+  /// device converges on the cleaned month.
+  ///
+  /// Guarded two ways: already-applied markers are skipped (idempotent
+  /// replay), and a marker is RECORDED UNAPPLIED while ANY transactional
+  /// outbox rows are still pending/failed — pushing a queued sale after its
+  /// month was deleted would resurrect it server-side with no tombstone to
+  /// remove it again. Unapplied markers are retried at the start of every
+  /// later page (the pull cursor must never advance past work that has not
+  /// happened yet), so they apply as soon as the queue drains.
+  Future<void> applyMonthCleanupMarkerPage(
+    List<SyncMonthCleanupMarker> rows,
+    DateTime appliedAt,
+  ) async {
+    for (final row in rows) {
+      if (await _markerApplied(row.id)) continue;
+      await _tryApplyMarker(row, appliedAt);
+    }
+  }
+
+  /// Retries markers recorded while the queue was busy. Called by the engine
+  /// on EVERY marker drain — including cycles whose pull returns no rows, so
+  /// a deferred marker is never stranded behind an advanced cursor.
+  Future<void> retryUnappliedMonthCleanups() async {
+    final pending = await (_database.select(
+      _database.monthCleanupMarkers,
+    )..where((t) => t.applied.equals(false))).get();
+    if (pending.isEmpty) return;
+    final appliedAt = DateTime.now().toUtc();
+    for (final stored in pending) {
+      await _tryApplyMarker(
+        SyncMonthCleanupMarker(
+          id: stored.id,
+          shopId: stored.shopId ?? '',
+          month: stored.month,
+          tables: const [],
+          deletedCounts: const {},
+          completedAt: stored.completedAt,
+          createdAt: stored.createdAt,
+        ),
+        appliedAt,
+      );
+    }
+  }
+
+  /// Applies one marker if the queue is drained, otherwise records it
+  /// unapplied for a later cycle. Returns true when the month is now clean.
+  Future<bool> _tryApplyMarker(
+    SyncMonthCleanupMarker row,
+    DateTime appliedAt,
+  ) async {
+    if (row.shopId.isEmpty) return false;
+    if (await _hasPendingTransactionalWrites()) {
+      AppLog.info(
+        'Month cleanup ${row.id} deferred (local queue not drained)',
+        tag: 'SyncEngine',
+      );
+      await _database
+          .into(_database.monthCleanupMarkers)
+          .insertOnConflictUpdate(
+            db.MonthCleanupMarkersCompanion.insert(
+              id: Value(row.id),
+              shopId: Value(row.shopId),
+              month: row.month,
+              completedAt: row.completedAt,
+              createdAt: Value(row.createdAt),
+              updatedAt: Value(appliedAt),
+              applied: const Value(false),
+            ),
+          );
+      return false;
+    }
+    await _database.transaction(() async {
+      await deleteShopMonth(_database, row.shopId, row.month);
+      await _database
+          .into(_database.monthCleanupMarkers)
+          .insertOnConflictUpdate(
+            db.MonthCleanupMarkersCompanion.insert(
+              id: Value(row.id),
+              shopId: Value(row.shopId),
+              month: row.month,
+              tablesJson: Value(const JsonEncoder().convert(row.tables)),
+              deletedCountsJson: Value(
+                const JsonEncoder().convert(row.deletedCounts),
+              ),
+              completedAt: row.completedAt,
+              createdAt: Value(row.createdAt),
+              updatedAt: Value(appliedAt),
+              applied: const Value(true),
+            ),
+          );
+    });
+    return true;
+  }
+
+  Future<bool> _markerApplied(String id) async {
+    final row =
+        await (_database.select(_database.monthCleanupMarkers)
+              ..where((t) => t.id.equals(id) & t.applied.equals(true)))
+            .getSingleOrNull();
+    return row != null;
+  }
+
+  /// True when any transactional write is still queued (pending or parked
+  /// failed): month-cleanup markers must wait for these, or a queued row
+  /// pushed after its month was deleted would resurrect without a tombstone.
+  Future<bool> _hasPendingTransactionalWrites() async {
+    final rows =
+        await (_database.selectOnly(_database.syncOutbox)
+              ..addColumns([_database.syncOutbox.id])
+              ..where(
+                _database.syncOutbox.entity.isIn([
+                      MasterEntity.sale.wire,
+                      MasterEntity.saleItem.wire,
+                      MasterEntity.expense.wire,
+                      MasterEntity.customerPayment.wire,
+                      MasterEntity.expensePayment.wire,
+                      MasterEntity.staffAttendance.wire,
+                      MasterEntity.offer.wire,
+                      MasterEntity.customer.wire,
+                    ]) &
+                    (_database.syncOutbox.status.equals('PENDING') |
+                        _database.syncOutbox.status.equals('FAILED')),
+              ))
+            .get();
+    return rows.isNotEmpty;
   }
 
   Future<void> applyVariantPage(
@@ -833,6 +1029,8 @@ final class LocalMasterDataApplier {
                   outAt: Value(row.outAt),
                   attendanceDate: row.attendanceDate,
                   workedMinutes: Value(row.workedMinutes),
+                  isLeave: Value(row.isLeave),
+                  leaveReason: Value(row.leaveReason),
                   createdAt: Value(row.createdAt),
                   updatedAt: Value(appliedAt),
                 ),
@@ -842,13 +1040,16 @@ final class LocalMasterDataApplier {
         // Pulled truth wins once nothing local is outstanding (same rule as
         // every other entity): refresh only the mutable clock-out columns, so
         // an open shift checked out on another device closes here too. The
-        // authoring staff/shop identity is never rewritten.
+        // authoring staff/shop identity is never rewritten. Leave reason
+        // refreshes the same way, so a re-marked day converges.
         await (_database.update(
           _database.staffAttendance,
         )..where((t) => t.id.equals(row.id))).write(
           db.StaffAttendanceCompanion(
             outAt: Value(row.outAt),
             workedMinutes: Value(row.workedMinutes),
+            isLeave: Value(row.isLeave),
+            leaveReason: Value(row.leaveReason),
             updatedAt: Value(appliedAt),
           ),
         );
@@ -961,7 +1162,12 @@ final class LocalMasterDataApplier {
       case MasterEntity.saleItem:
       case MasterEntity.customerPayment:
       case MasterEntity.expensePayment:
-        // Immutable append-only: sync never deletes these.
+      case MasterEntity.productRecipe:
+      case MasterEntity.monthlyReportConfirmation:
+      case MasterEntity.monthCleanup:
+        // Immutable append-only: sync never deletes these. Confirmations
+        // converge through UPSERTs; cleanup markers through server-written
+        // rows that peers apply as local deletes (never tombstoned).
         break;
       case MasterEntity.shop:
         // Single identity row, never deleted by sync (only renamed).

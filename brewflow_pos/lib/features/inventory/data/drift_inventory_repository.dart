@@ -119,6 +119,7 @@ final class DriftInventoryRepository implements InventoryRepository {
       'is_active': product.isActive,
       'client_created_at': product.createdAt.toIso8601String(),
       'cloud_image_path': product.cloudImagePath,
+      'is_ingredient': product.isIngredient,
     }, onConflict: 'id');
     for (final v in product.variants) {
       await client.from('product_variants').upsert({
@@ -686,6 +687,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     List<ProductVariantInput> variants = const [],
     String? shopId,
     bool visibleInShops = false,
+    bool isIngredient = false,
   }) async {
     _validateProductInput(
       name: name,
@@ -747,6 +749,7 @@ final class DriftInventoryRepository implements InventoryRepository {
             isActive: Value(isActive),
             createdAt: Value(now),
             updatedAt: Value(now),
+            isIngredient: Value(isIngredient),
           ),
         );
         if (variants.isEmpty) {
@@ -848,6 +851,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     String? shopId,
     List<String>? shopIds,
     bool visibleInShops = false,
+    bool? isIngredient,
   }) async {
     if (!await _products.isOwnedBy(id, shopIds)) {
       throw const ForeignShopRowFailure();
@@ -932,6 +936,11 @@ final class DriftInventoryRepository implements InventoryRepository {
             memberPricePaise: Value(memberPricePaise),
             isActive: Value(isActive),
             visibleInShops: Value(visibleInShops),
+            // Null preserves the stored flag: an edit screen that does not
+            // know about ingredients must never clear it as a side effect.
+            isIngredient: isIngredient == null
+                ? const Value.absent()
+                : Value(isIngredient),
           ),
         );
 
@@ -1201,6 +1210,201 @@ final class DriftInventoryRepository implements InventoryRepository {
     }
   }
 
+  @override
+  Future<void> setRecipe({
+    required String productId,
+    String? variantId,
+    required List<RecipeIngredientInput> ingredients,
+    String? shopId,
+  }) async {
+    // Every rule is validated BEFORE anything is written, so a bad mapping
+    // can never leave a half-replaced recipe behind.
+    final menu = await _products.byId(productId);
+    if (menu == null) {
+      throw const UnexpectedInventoryFailure('Product not found.');
+    }
+    if (variantId != null) {
+      final menuVariants = await _variants.forProduct(productId);
+      if (!menuVariants.any((v) => v.id == variantId)) {
+        throw const UnexpectedInventoryFailure(
+          'This variant is not part of the product.',
+        );
+      }
+    }
+    for (final input in ingredients) {
+      if (input.quantity < 1) {
+        throw const UnexpectedInventoryFailure(
+          'Recipe quantity must be at least 1.',
+        );
+      }
+      if (input.ingredientProductId == productId) {
+        throw const UnexpectedInventoryFailure(
+          'A product cannot consume itself.',
+        );
+      }
+      final ingredient = await _products.byId(input.ingredientProductId);
+      if (ingredient == null) {
+        throw const UnexpectedInventoryFailure('Ingredient product not found.');
+      }
+      if (ingredient.stockUnit == StockUnit.none.dbValue) {
+        throw const UnexpectedInventoryFailure(
+          'Recipe ingredients must track stock.',
+        );
+      }
+      if (input.ingredientVariantId != null) {
+        final ingredientVariants = await _variants.forProduct(
+          input.ingredientProductId,
+        );
+        if (!ingredientVariants.any((v) => v.id == input.ingredientVariantId)) {
+          throw const UnexpectedInventoryFailure(
+            'This variant is not part of the ingredient product.',
+          );
+        }
+      }
+    }
+    final resolvedShopId = await resolveWritableShopId(_database, shopId);
+    Future<void> doWrite() {
+      // Replace semantics: the scope's rows are removed first, then the new
+      // mapping is inserted — one transaction, so readers never see a mix.
+      // An empty [ingredients] clears the mapping and the product sells from
+      // its own stock again.
+      return _database.transaction(() async {
+        await (_database.delete(_database.productRecipes)..where(
+              (t) =>
+                  t.productId.equals(productId) &
+                  (variantId == null
+                      ? t.variantId.isNull()
+                      : t.variantId.equals(variantId)) &
+                  t.shopId.equals(resolvedShopId),
+            ))
+            .go();
+        final now = DateTime.now().toUtc();
+        for (final input in ingredients) {
+          await _database
+              .into(_database.productRecipes)
+              .insert(
+                db.ProductRecipesCompanion.insert(
+                  // Deterministic identity per mapping slot: re-saving the
+                  // same mapping converges on the same rows (and the same
+                  // cloud upserts) instead of accumulating stale copies.
+                  // Quantity stays OUT of the key so a quantity edit updates
+                  // the row rather than orphaning it.
+                  id: Value(
+                    _recipeRowId(
+                      shopId: resolvedShopId,
+                      productId: productId,
+                      variantId: variantId,
+                      ingredientProductId: input.ingredientProductId,
+                      ingredientVariantId: input.ingredientVariantId,
+                    ),
+                  ),
+                  shopId: Value(resolvedShopId),
+                  productId: productId,
+                  variantId: Value(variantId),
+                  ingredientProductId: input.ingredientProductId,
+                  ingredientVariantId: Value(input.ingredientVariantId),
+                  quantity: input.quantity,
+                  createdAt: Value(now),
+                  updatedAt: Value(now),
+                ),
+                mode: InsertMode.insertOrReplace,
+              );
+        }
+      });
+    }
+
+    try {
+      if (_connectivity != null) await _requireOnline();
+      final coordinator = _outbox;
+      if (coordinator == null) {
+        await doWrite();
+        return;
+      }
+      await coordinator.run(
+        write: doWrite,
+        snapshots: (_, context) async {
+          // Snapshots describe the just-written scope from real state, so a
+          // peer applying them converges on this exact mapping.
+          final rows = await recipesForProduct(
+            productId,
+            shopIds: [resolvedShopId],
+          );
+          return [
+            for (final row in rows)
+              if (row.variantId == variantId) _recipeAppend(row, context),
+          ];
+        },
+      );
+    } on InventoryFailure {
+      rethrow;
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to save recipe', error, stackTrace);
+    }
+  }
+
+  @override
+  Future<List<ProductRecipe>> recipesForProduct(
+    String productId, {
+    List<String>? shopIds,
+  }) async {
+    try {
+      if (shopIds != null && shopIds.isEmpty) return const [];
+      final query = _database.select(_database.productRecipes)
+        ..where((t) => t.productId.equals(productId));
+      if (shopIds != null) {
+        query.where((t) => t.shopId.isIn(shopIds));
+      }
+      final rows = await query.get();
+      return [for (final row in rows) _recipeFromRow(row)];
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to load recipe', error, stackTrace);
+    }
+  }
+
+  static OutboxAppend _recipeAppend(
+    ProductRecipe row,
+    SyncSessionContext context,
+  ) => OutboxAppend(
+    entity: MasterEntity.productRecipe,
+    entityId: row.id,
+    payload: SyncProductRecipe(
+      id: row.id,
+      shopId: row.shopId ?? context.shopId,
+      productId: row.productId,
+      variantId: row.variantId,
+      ingredientProductId: row.ingredientProductId,
+      ingredientVariantId: row.ingredientVariantId,
+      quantity: row.quantity,
+      createdAt: row.createdAt,
+    ).toJson(),
+  );
+
+  static ProductRecipe _recipeFromRow(db.ProductRecipe row) => ProductRecipe(
+    id: row.id,
+    shopId: row.shopId,
+    productId: row.productId,
+    variantId: row.variantId,
+    ingredientProductId: row.ingredientProductId,
+    ingredientVariantId: row.ingredientVariantId,
+    quantity: row.quantity,
+    createdAt: row.createdAt,
+  );
+
+  /// Stable row identity for one mapping slot, as a valid UUID (the cloud
+  /// `product_recipes.id` is a uuid column). Re-saving a mapping reuses its
+  /// ids so cloud upserts converge instead of stacking stale rows.
+  static String _recipeRowId({
+    required String shopId,
+    required String productId,
+    required String? variantId,
+    required String ingredientProductId,
+    required String? ingredientVariantId,
+  }) => _uuid.v5(
+    Uuid.NAMESPACE_URL,
+    'recipe|$shopId|$productId|${variantId ?? '-'}|'
+    '$ingredientProductId|${ingredientVariantId ?? '-'}',
+  );
+
   /// Whether a SKU is taken by a product or a variant (the catalog treats
   /// SKUs as one namespace; both tables enforce uniqueness within
   /// themselves).
@@ -1289,6 +1493,7 @@ final class DriftInventoryRepository implements InventoryRepository {
       isActive: product.isActive,
       createdAt: product.createdAt,
       cloudImagePath: product.cloudImagePath,
+      isIngredient: product.isIngredient,
     ).toJson(),
   );
 
@@ -1466,6 +1671,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     isActive: row.isActive,
     shopId: row.shopId,
     visibleInShops: row.visibleInShops,
+    isIngredient: row.isIngredient,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     variants: [for (final v in variants) _variantFromRow(v)],

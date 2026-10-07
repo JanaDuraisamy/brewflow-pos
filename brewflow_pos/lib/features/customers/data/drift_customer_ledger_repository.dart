@@ -76,15 +76,21 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
       }
       final sales = await _dao.salesAggregateFor(customerId);
       final payments = await _dao.paymentsAggregateFor(customerId);
+      final validPayments = await _dao.validPaymentsAggregateFor(customerId);
       final totalPurchases = sales?.totalPaise ?? 0;
-      final totalPaid = payments?.totalPaise ?? 0;
+      // Total paid sums every valid (non-reversed) payment — including the
+      // ones that settled a bill and flipped it to PAID — and the payment
+      // count comes from the same set, so the two can never disagree.
+      // Outstanding stays scoped to the still-open credit bills and the
+      // payments recorded on them, exactly as before.
+      final totalPaid = validPayments?.totalPaise ?? 0;
       return CustomerLedgerSummary(
         customerId: customerId,
         totalPurchasesPaise: totalPurchases,
         totalPaidPaise: totalPaid,
-        outstandingPaise: totalPurchases - totalPaid,
+        outstandingPaise: totalPurchases - (payments?.totalPaise ?? 0),
         purchaseCount: sales?.count ?? 0,
-        paymentCount: payments?.count ?? 0,
+        paymentCount: validPayments?.count ?? 0,
       );
     } on CustomerLedgerFailure {
       rethrow;

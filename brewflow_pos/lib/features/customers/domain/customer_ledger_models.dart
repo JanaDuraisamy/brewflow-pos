@@ -135,14 +135,17 @@ final class CustomerLedgerSummary {
   /// value. Paid sales are settled at the counter and never count as debt.
   final int totalPurchasesPaise;
 
-  /// Sum of all non-reversed payments.
+  /// Sum of the customer's valid (non-reversed) payments, whether they are
+  /// still offsetting an open bill or already settled one.
   final int totalPaidPaise;
 
-  /// totalPurchasesPaise - totalPaidPaise; never negative by construction.
+  /// Open bill value minus the payments recorded on those open bills; never
+  /// negative because a payment can never exceed its bill's remaining due.
   final int outstandingPaise;
   final int purchaseCount;
 
-  /// Count of non-reversed payments.
+  /// Count of valid (non-reversed) payments — the same set [totalPaidPaise]
+  /// sums.
   final int paymentCount;
 }
 

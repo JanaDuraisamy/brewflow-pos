@@ -231,6 +231,9 @@ final class SupabaseStaffPayrollGateway implements StaffPayrollCloudGateway {
             '${json['attendance_date']}T00:00:00Z',
           ),
           workedMinutes: (json['worked_minutes'] as num).toInt(),
+          // Rows written before migration 0038 carry no flag; they stay shifts.
+          isLeave: (json['is_leave'] as bool?) ?? false,
+          leaveReason: json['leave_reason'] as String?,
         ),
     ];
   }
@@ -250,6 +253,8 @@ final class SupabaseStaffPayrollGateway implements StaffPayrollCloudGateway {
       'out_at': record.outAt?.toUtc().toIso8601String(),
       'attendance_date': _day(record.attendanceDate),
       'worked_minutes': record.workedMinutes,
+      'is_leave': record.isLeave,
+      'leave_reason': record.leaveReason,
     }, onConflict: 'id');
   }
 

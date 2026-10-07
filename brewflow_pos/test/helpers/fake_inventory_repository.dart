@@ -15,6 +15,9 @@ final class FakeInventoryRepository implements InventoryRepository {
   final List<Category> storedCategories = [];
   final List<Product> storedProducts = [];
 
+  /// Recipe rows by menu product id, in set order.
+  final List<ProductRecipe> storedRecipes = [];
+
   /// When set, every load and mutation throws this error instead of running.
   Object? loadError;
 
@@ -307,6 +310,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     List<ProductVariantInput> variants = const [],
     String? shopId,
     bool visibleInShops = false,
+    bool isIngredient = false,
   }) async {
     _throwIfLoadError();
     _validatePrices(sellingPricePaise, costPricePaise);
@@ -381,6 +385,7 @@ final class FakeInventoryRepository implements InventoryRepository {
       // row and quietly turn scoping assertions into false passes.
       shopId: shopId ?? kTestCafeShopId,
       visibleInShops: visibleInShops,
+      isIngredient: isIngredient,
       variants: createdVariants,
     );
     storedProducts.add(product);
@@ -407,6 +412,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     String? shopId,
     List<String>? shopIds,
     bool visibleInShops = false,
+    bool? isIngredient,
   }) async {
     _throwIfLoadError();
     _requireProductOwnedBy(id, shopIds);
@@ -497,6 +503,7 @@ final class FakeInventoryRepository implements InventoryRepository {
         updatedAt: DateTime.now().toUtc(),
         variants: updatedVariants,
         visibleInShops: visibleInShops,
+        isIngredient: isIngredient ?? existing.isIngredient,
       ),
     );
   }
@@ -536,6 +543,87 @@ final class FakeInventoryRepository implements InventoryRepository {
     // row is always removed — never replaced with a deactivated one.
     storedProducts.removeWhere((product) => product.id == id);
     return ProductDeleteResult.deleted;
+  }
+
+  @override
+  Future<void> setRecipe({
+    required String productId,
+    String? variantId,
+    required List<RecipeIngredientInput> ingredients,
+    String? shopId,
+  }) async {
+    _throwIfLoadError();
+    final menu = _requireProduct(productId);
+    if (variantId != null && !menu.variants.any((v) => v.id == variantId)) {
+      throw const UnexpectedInventoryFailure(
+        'This variant is not part of the product.',
+      );
+    }
+    for (final input in ingredients) {
+      if (input.quantity < 1) {
+        throw const UnexpectedInventoryFailure(
+          'Recipe quantity must be at least 1.',
+        );
+      }
+      if (input.ingredientProductId == productId) {
+        throw const UnexpectedInventoryFailure(
+          'A product cannot consume itself.',
+        );
+      }
+      final ingredient = _requireProduct(input.ingredientProductId);
+      if (ingredient.stockUnit == StockUnit.none) {
+        throw const UnexpectedInventoryFailure(
+          'Recipe ingredients must track stock.',
+        );
+      }
+      if (input.ingredientVariantId != null &&
+          !ingredient.variants.any((v) => v.id == input.ingredientVariantId)) {
+        throw const UnexpectedInventoryFailure(
+          'This variant is not part of the ingredient product.',
+        );
+      }
+    }
+    // Replace semantics mirroring the Drift repository: the scope's rows go
+    // first, then the new mapping — an empty list clears it.
+    storedRecipes.removeWhere(
+      (row) =>
+          row.productId == productId &&
+          row.variantId == variantId &&
+          (row.shopId ?? unscopedShopIdFallback) ==
+              (shopId ?? unscopedShopIdFallback),
+    );
+    final resolvedShop = shopId ?? menu.shopId ?? unscopedShopIdFallback;
+    final now = DateTime.now().toUtc();
+    for (final input in ingredients) {
+      storedRecipes.add(
+        ProductRecipe(
+          id: 'recipe-${storedRecipes.length + 1}',
+          shopId: resolvedShop,
+          productId: productId,
+          variantId: variantId,
+          ingredientProductId: input.ingredientProductId,
+          ingredientVariantId: input.ingredientVariantId,
+          quantity: input.quantity,
+          createdAt: now,
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<List<ProductRecipe>> recipesForProduct(
+    String productId, {
+    List<String>? shopIds,
+  }) async {
+    _throwIfLoadError();
+    if (shopIds != null && shopIds.isEmpty) return const [];
+    return [
+      for (final row in storedRecipes)
+        if (row.productId == productId &&
+            (shopIds == null ||
+                shopIds.contains(row.shopId ?? unscopedShopIdFallback)))
+          row,
+    ];
   }
 
   /// Mirrors `ProductsDao.isOwnedBy`: null scope is unrestricted, an empty

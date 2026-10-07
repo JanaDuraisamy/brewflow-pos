@@ -644,6 +644,44 @@ void main() {
       expect(find.text('₹80.00'), findsOneWidget);
     });
 
+    testWidgets('total paid caption counts only valid payments', (
+      tester,
+    ) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.bills.add(
+        bill(id: 's1', receiptNumber: 'BF-000001', totalPaise: 15000),
+      );
+      fakeLedger.storedPayments
+        ..add(payment(id: 'p1', saleId: 's1', amountPaise: 5000))
+        ..add(
+          // A reversed (compensating) row stays in the history list but is
+          // not money received: neither the amount nor the caption count.
+          CustomerPayment(
+            id: 'p2',
+            customerId: 'c1',
+            saleId: 's1',
+            amountPaise: 9000,
+            paymentMethod: PaymentMethod.cash,
+            paidAt: now,
+            reversed: true,
+            reversedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      // ₹50.00 shows in the Total paid tile and in the valid history row.
+      expect(find.text('₹50.00'), findsWidgets, reason: 'valid payment only');
+      expect(find.text('1 payment'), findsOneWidget);
+      // ₹100.00 outstanding shows in the tile and the bill's Due line.
+      expect(find.text('₹100.00'), findsWidgets, reason: 'outstanding due');
+      // The reversed row is still listed in the payment history.
+      await scrollDetailTo(tester, find.text('₹90.00'));
+      expect(find.text('₹90.00'), findsOneWidget);
+    });
+
     testWidgets('records a payment and the ledger refreshes', (tester) async {
       fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
       fakeLedger.bills.add(

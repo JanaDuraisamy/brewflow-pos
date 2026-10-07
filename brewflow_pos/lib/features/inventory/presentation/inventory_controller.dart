@@ -207,6 +207,8 @@ final class InventoryFilter {
     this.status = ProductStatusFilter.all,
     this.lowStockOnly = false,
     this.outOfStockOnly = false,
+    this.focusProductId,
+    this.focusVariantId,
   });
 
   /// Search text matched against product name and SKU.
@@ -230,12 +232,24 @@ final class InventoryFilter {
   /// active-entity rules as the low-stock filter.
   final bool outOfStockOnly;
 
+  /// Deep-link focus set by the stock notification center (and by Android
+  /// notification taps): narrows the list to exactly one product so the user
+  /// lands on the shelf row that needs attention. The variant id further
+  /// identifies the exact variant row; it never filters products out on its
+  /// own. Null means no focus — the list follows the other filters.
+  final String? focusProductId;
+
+  /// Variant targeted by [focusProductId]; carried for row scroll/highlight.
+  final String? focusVariantId;
+
   InventoryFilter withQuery(String query) => InventoryFilter(
     query: query,
     categoryId: categoryId,
     status: status,
     lowStockOnly: lowStockOnly,
     outOfStockOnly: outOfStockOnly,
+    focusProductId: focusProductId,
+    focusVariantId: focusVariantId,
   );
 
   InventoryFilter withCategory(String? categoryId) => InventoryFilter(
@@ -244,6 +258,8 @@ final class InventoryFilter {
     status: status,
     lowStockOnly: lowStockOnly,
     outOfStockOnly: outOfStockOnly,
+    focusProductId: focusProductId,
+    focusVariantId: focusVariantId,
   );
 
   InventoryFilter withStatus(ProductStatusFilter status) => InventoryFilter(
@@ -252,6 +268,8 @@ final class InventoryFilter {
     status: status,
     lowStockOnly: lowStockOnly,
     outOfStockOnly: outOfStockOnly,
+    focusProductId: focusProductId,
+    focusVariantId: focusVariantId,
   );
 
   InventoryFilter withLowStockOnly(bool lowStockOnly) => InventoryFilter(
@@ -260,6 +278,8 @@ final class InventoryFilter {
     status: status,
     lowStockOnly: lowStockOnly,
     outOfStockOnly: outOfStockOnly,
+    focusProductId: focusProductId,
+    focusVariantId: focusVariantId,
   );
 
   InventoryFilter withOutOfStockOnly(bool outOfStockOnly) => InventoryFilter(
@@ -268,7 +288,24 @@ final class InventoryFilter {
     status: status,
     lowStockOnly: lowStockOnly,
     outOfStockOnly: outOfStockOnly,
+    focusProductId: focusProductId,
+    focusVariantId: focusVariantId,
   );
+
+  /// Narrows the list to exactly [productId] (plus [variantId] for row
+  /// targeting). Replaces any previous focus; other filters are left as-is
+  /// and the focus narrowing applies last, so the focused row is shown even
+  /// when it would not match them.
+  InventoryFilter focusOn({required String productId, String? variantId}) =>
+      InventoryFilter(
+        query: query,
+        categoryId: categoryId,
+        status: status,
+        lowStockOnly: lowStockOnly,
+        outOfStockOnly: outOfStockOnly,
+        focusProductId: productId,
+        focusVariantId: variantId,
+      );
 }
 
 /// Holds the current product list filter; changes rebuild [inventoryFilterProvider].
@@ -294,6 +331,11 @@ final class InventoryFilterController extends Notifier<InventoryFilter> {
 
   void setOutOfStockOnly(bool outOfStockOnly) =>
       state = state.withOutOfStockOnly(outOfStockOnly);
+
+  /// Deep-link focus from the stock notification center: narrows the list to
+  /// exactly one product (see [InventoryFilter.focusProductId]).
+  void focusOn({required String productId, String? variantId}) =>
+      state = state.focusOn(productId: productId, variantId: variantId);
 
   void clear() => state = const InventoryFilter();
 }
@@ -359,7 +401,15 @@ final class ProductsController extends AsyncNotifier<List<Product>> {
               repository: ref.read(shopProductStockRepositoryProvider),
               shopId: overlayShopId,
             );
-      return await _applyStockFilters(withEffectiveStock, filter);
+      final filtered = await _applyStockFilters(withEffectiveStock, filter);
+      // Notification-center / notification-tap focus narrows last: the
+      // focused row is shown even when it would not match the other filters.
+      final focusId = filter.focusProductId;
+      if (focusId == null) return filtered;
+      return [
+        for (final product in filtered)
+          if (product.id == focusId) product,
+      ];
     } on InventoryFailure {
       rethrow;
     } catch (error, stackTrace) {

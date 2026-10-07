@@ -382,7 +382,9 @@ final class _FinancialSummaryCard extends StatelessWidget {
     final summary = ledger.summary;
     final hasDue = summary.outstandingPaise > 0;
     final billCount = ledger.purchases.length;
-    final paymentCount = ledger.payments.length;
+    // Same filtered payment set as the Total paid amount above: valid
+    // (non-reversed) payments only, never the raw history-row count.
+    final paymentCount = summary.paymentCount;
     return SectionCard(
       title: 'Financial summary',
       subtitle: 'Sales, payments and what is still owed.',

@@ -17,6 +17,12 @@ import 'staff_payroll_models.dart';
 /// resolve the owning shop internally. Implementations must reject invalid
 /// amounts with the typed [StaffPayrollFailure] values.
 ///
+/// [localOnly] (default false) serves the local mirror WITHOUT the
+/// best-effort cloud reconciliation pulls. The payroll summary controller
+/// builds from the local mirror first so taps paint immediately, then
+/// reconciles in the background; direct repository users keep the
+/// cloud-authoritative behavior.
+///
 /// Cloud is authoritative: implementations backed by Supabase read
 /// cloud-first when online (mirroring into the local cache) and fall back to
 /// the local cache offline. The local cache alone is never the source of
@@ -25,17 +31,43 @@ import 'staff_payroll_models.dart';
 
 abstract interface class StaffPayrollRepository {
   /// The single open shift for [staffUserId]; null when none is in progress.
-  Future<StaffAttendanceRecord?> openShiftFor(String staffUserId);
+  Future<StaffAttendanceRecord?> openShiftFor(
+    String staffUserId, {
+    bool localOnly = false,
+  });
 
   /// Opens a new shift at [inAt] (UTC instant) for [staffUserId]. The shift's
   /// business day is derived from [inAt]'s local calendar day. Throws
-  /// [StaffPayrollShiftAlreadyOpenFailure] when a shift is already open.
+  /// [StaffPayrollShiftAlreadyOpenFailure] when a shift is already open, and
+  /// [StaffPayrollAlreadyOnLeaveFailure] when the business day is marked Leave.
   Future<void> clockIn({required String staffUserId, required DateTime inAt});
 
   /// Closes the open shift at [outAt] (UTC instant) and fixes its worked
   /// minutes. Throws [StaffPayrollNoOpenShiftFailure] /
   /// [StaffPayrollClockOutBeforeClockInFailure].
   Future<void> clockOut({required String staffUserId, required DateTime outAt});
+
+  /// Marks [attendanceDate] (UTC-midnight business-day cookie) as a Leave day
+  /// for [staffUserId]: a day-level state on the same attendance row shape,
+  /// never a worked shift. [reason] is an optional owner note (blank is stored
+  /// as null).
+  ///
+  /// Idempotent per staff + date: re-marking the same day updates the reason
+  /// on the SAME row (no duplicate). Throws [StaffPayrollShiftAlreadyOpenFailure]
+  /// when any shift is still open, and [StaffPayrollLeaveConflictFailure] when
+  /// the date already has worked attendance.
+  Future<void> markLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+    String? reason,
+  });
+
+  /// Clears the Leave day for [staffUserId] + [attendanceDate]. Safe and
+  /// idempotent: a day without Leave is a no-op that queues nothing.
+  Future<void> clearLeave({
+    required String staffUserId,
+    required DateTime attendanceDate,
+  });
 
   /// Attendance rows dated in [startDate]..[endExclusiveDate), oldest first.
   /// [shopIds] restricts the read to those businesses; null reads the
@@ -45,6 +77,7 @@ abstract interface class StaffPayrollRepository {
     required DateTime startDate,
     required DateTime endExclusiveDate,
     List<String>? shopIds,
+    bool localOnly = false,
   });
 
   /// Owner-only removal of one attendance shift, by its row id. This is a real
@@ -64,11 +97,16 @@ abstract interface class StaffPayrollRepository {
     required DateTime startDate,
     required DateTime endExclusiveDate,
     List<String>? shopIds,
+    bool localOnly = false,
   });
 
   /// The owner-entered manual salary in paise for [staffUserId] and [month]
   /// (UTC first-of-month cookie); null when the owner has not set one yet.
-  Future<int?> salaryForMonth(String staffUserId, DateTime month);
+  Future<int?> salaryForMonth(
+    String staffUserId,
+    DateTime month, {
+    bool localOnly = false,
+  });
 
   /// Sets (or with a null argument clears) the manual monthly salary in
   /// paise. Throws [StaffPayrollNegativeSalaryFailure] for negative values.
@@ -85,6 +123,7 @@ abstract interface class StaffPayrollRepository {
     required DateTime startDate,
     required DateTime endExclusiveDate,
     List<String>? shopIds,
+    bool localOnly = false,
   });
 
   /// Sets (or with a null argument clears) the daily salary amount in paise

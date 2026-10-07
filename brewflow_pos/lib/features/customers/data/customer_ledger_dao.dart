@@ -133,6 +133,36 @@ final class CustomerLedgerDao {
     );
   }
 
+  /// Count and total of one customer's valid (non-reversed) payments,
+  /// regardless of the settlement status of the bill they settled.
+  ///
+  /// A payment that fully settles a credit bill flips that sale to PAID (see
+  /// [DriftCustomerLedgerRepository._recordPaymentCore]); scoping to
+  /// still-open bills would erase exactly the collections the financial
+  /// summary must report as money received. The void flow reverses the
+  /// payments of a voided bill, so the `reversed = false` filter already
+  /// keeps them out.
+  Future<({int count, int totalPaise})?> validPaymentsAggregateFor(
+    String customerId,
+  ) async {
+    final query = _db.selectOnly(_db.customerPayments)
+      ..addColumns([
+        _db.customerPayments.id.count(),
+        _db.customerPayments.amountPaise.sum(),
+      ])
+      ..where(
+        _db.customerPayments.customerId.equals(customerId) &
+            _db.customerPayments.reversed.equals(false),
+      );
+    final row = await query.getSingle();
+    final count = row.read(_db.customerPayments.id.count())!;
+    if (count == 0) return null;
+    return (
+      count: count,
+      totalPaise: row.read(_db.customerPayments.amountPaise.sum())!,
+    );
+  }
+
   /// True when the given payment's sale row is still NOT_PAID (open credit).
   /// Payments on settled (PAID) sales no longer offset any outstanding.
   /// Null `saleId`s (reserved for future advance payments) never offset debt.

@@ -580,6 +580,144 @@ void main() {
         throwsA(isA<CustomerNotFoundFailure>()),
       );
     });
+
+    test(
+      'total paid sums payments that settled a bill, count included',
+      () async {
+        // Reported bug: the customer paid 12 times across their bills, some of
+        // which settled fully (flipping to PAID), yet Total paid showed ₹0
+        // because the aggregate only counted payments on still-open bills.
+        await seedCustomer('c1');
+        await seedSale(
+          id: 's-open-1',
+          customerId: 'c1',
+          receiptNumber: 'BF-000001',
+          totalPaise: 10000,
+        );
+        await seedSale(
+          id: 's-open-2',
+          customerId: 'c1',
+          receiptNumber: 'BF-000002',
+          totalPaise: 22000,
+        );
+        await seedSale(
+          id: 's-settled',
+          customerId: 'c1',
+          receiptNumber: 'BF-000003',
+          totalPaise: 50000,
+        );
+        // Two payments settle the third bill completely (30000 + 20000).
+        await repository.recordPayment(
+          customerId: 'c1',
+          saleId: 's-settled',
+          amountPaise: 30000,
+          paymentMethod: PaymentMethod.cash,
+        );
+        await repository.recordPayment(
+          customerId: 'c1',
+          saleId: 's-settled',
+          amountPaise: 20000,
+          paymentMethod: PaymentMethod.upi,
+        );
+        // One partial payment on an open bill.
+        await repository.recordPayment(
+          customerId: 'c1',
+          saleId: 's-open-1',
+          amountPaise: 5000,
+          paymentMethod: PaymentMethod.cash,
+        );
+
+        final summary = await repository.summary('c1');
+        // Total paid counts every valid payment, settled bills included.
+        expect(summary.totalPaidPaise, 55000);
+        expect(summary.paymentCount, 3);
+        // Outstanding stays scoped to the open bills and their payments.
+        expect(summary.outstandingPaise, 27000);
+        expect(summary.totalPurchasesPaise, 32000);
+        expect(summary.purchaseCount, 2);
+        expect(await repository.outstandingForCustomer('c1'), 27000);
+      },
+    );
+
+    test(
+      'reversed payments are excluded from both the amount and the count',
+      () async {
+        await seedCustomer('c1');
+        await seedSale(
+          id: 's1',
+          customerId: 'c1',
+          receiptNumber: 'BF-000001',
+          totalPaise: 10000,
+        );
+        await repository.recordPayment(
+          customerId: 'c1',
+          saleId: 's1',
+          amountPaise: 4000,
+          paymentMethod: PaymentMethod.cash,
+        );
+        // A compensating (reversed) row must never inflate money received.
+        final now = DateTime.now().toUtc();
+        await database
+            .into(database.customerPayments)
+            .insert(
+              CustomerPaymentsCompanion.insert(
+                id: const Value('p-reversed'),
+                customerId: 'c1',
+                saleId: const Value('s1'),
+                amountPaise: 9000,
+                paymentMethod: 'CASH',
+                paidAt: now,
+                reversed: const Value(true),
+                reversedAt: Value(now),
+                createdAt: Value(now),
+                updatedAt: Value(now),
+              ),
+            );
+
+        final summary = await repository.summary('c1');
+        expect(summary.totalPaidPaise, 4000);
+        expect(summary.paymentCount, 1);
+        expect(summary.outstandingPaise, 6000);
+      },
+    );
+
+    test(
+      'payment count and amount always come from the same payment set',
+      () async {
+        await seedCustomer('c1');
+        await seedSale(
+          id: 's1',
+          customerId: 'c1',
+          receiptNumber: 'BF-000001',
+          totalPaise: 30000,
+        );
+        await seedSale(
+          id: 's2',
+          customerId: 'c1',
+          receiptNumber: 'BF-000002',
+          totalPaise: 30000,
+        );
+        // Settle s2 in three instalments; leave s1 open.
+        for (final amount in [10000, 10000, 10000]) {
+          await repository.recordPayment(
+            customerId: 'c1',
+            saleId: 's2',
+            amountPaise: amount,
+            paymentMethod: PaymentMethod.cash,
+          );
+        }
+
+        final summary = await repository.summary('c1');
+        expect(summary.totalPaidPaise, 30000);
+        expect(summary.paymentCount, 3);
+        expect(summary.outstandingPaise, 30000);
+        // The raw history holds exactly the rows the summary counted.
+        expect(
+          (await repository.payments('c1')).where((p) => !p.reversed),
+          hasLength(3),
+        );
+      },
+    );
   });
 
   group('outstandingForCustomer', () {

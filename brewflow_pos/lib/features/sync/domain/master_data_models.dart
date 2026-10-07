@@ -33,7 +33,10 @@ enum MasterEntity {
   expensePayment('EXPENSE_PAYMENT'),
   offer('OFFER'),
   staffProfile('STAFF_PROFILE'),
-  staffAttendance('STAFF_ATTENDANCE');
+  staffAttendance('STAFF_ATTENDANCE'),
+  productRecipe('PRODUCT_RECIPE'),
+  monthlyReportConfirmation('MONTHLY_REPORT_CONFIRMATION'),
+  monthCleanup('MONTH_CLEANUP');
 
   const MasterEntity(this.wire);
   final String wire;
@@ -182,6 +185,7 @@ final class SyncProduct {
     required this.createdAt,
     this.cloudImagePath,
     this.visibleInShops = false,
+    this.isIngredient = false,
   });
 
   factory SyncProduct.fromJson(Map<String, dynamic> json) => SyncProduct(
@@ -202,6 +206,7 @@ final class SyncProduct {
     createdAt: DateTime.parse(json['createdAt'] as String),
     cloudImagePath: json['cloudImagePath'] as String?,
     visibleInShops: json['visible_in_shops'] as bool,
+    isIngredient: (json['is_ingredient'] as bool?) ?? false,
   );
 
   final String id;
@@ -229,6 +234,10 @@ final class SyncProduct {
   final String? cloudImagePath;
   final bool visibleInShops;
 
+  /// Stock-source ingredient marker (see `Product.isIngredient`). Defaults
+  /// false on read so rows written before the flag existed stay sellable.
+  final bool isIngredient;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -247,6 +256,7 @@ final class SyncProduct {
     'createdAt': createdAt.toIso8601String(),
     'cloudImagePath': cloudImagePath,
     'visible_in_shops': visibleInShops,
+    'is_ingredient': isIngredient,
   };
 }
 
@@ -319,6 +329,172 @@ final class SyncProductVariant {
     'membershipEnabled': membershipEnabled,
     'memberPricePaise': memberPricePaise,
     'isActive': isActive,
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Product recipes — shared-stock consumption mapping
+// ---------------------------------------------------------------------------
+
+/// One recipe row on the wire. Mirrors `product_recipes` exactly: a sellable
+/// product (or one of its variants) consumes [quantity] units of a
+/// stock-source ingredient per unit sold.
+final class SyncProductRecipe {
+  const SyncProductRecipe({
+    required this.id,
+    required this.shopId,
+    required this.productId,
+    this.variantId,
+    required this.ingredientProductId,
+    this.ingredientVariantId,
+    required this.quantity,
+    required this.createdAt,
+  });
+
+  factory SyncProductRecipe.fromJson(Map<String, dynamic> json) =>
+      SyncProductRecipe(
+        id: json['id'] as String,
+        shopId: json['shopId'] as String,
+        productId: json['productId'] as String,
+        variantId: json['variantId'] as String?,
+        ingredientProductId: json['ingredientProductId'] as String,
+        ingredientVariantId: json['ingredientVariantId'] as String?,
+        quantity: json['quantity'] as int,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+
+  final String id;
+  final String shopId;
+  final String productId;
+  final String? variantId;
+  final String ingredientProductId;
+  final String? ingredientVariantId;
+  final int quantity;
+
+  /// Creation instant from the OWNING device (UTC).
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'productId': productId,
+    'variantId': variantId,
+    'ingredientProductId': ingredientProductId,
+    'ingredientVariantId': ingredientVariantId,
+    'quantity': quantity,
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Monthly report confirmations — owner-recorded per-month report markers
+// ---------------------------------------------------------------------------
+
+/// One "report generated/saved for this month" marker crossing the sync
+/// boundary. A month's destructive cleanup is gated on one of these rows
+/// existing for the shop, on every device.
+final class SyncMonthlyReportConfirmation {
+  const SyncMonthlyReportConfirmation({
+    required this.id,
+    required this.shopId,
+    required this.month,
+    required this.confirmedAt,
+    this.confirmedBy,
+    this.source = 'management-report',
+    required this.createdAt,
+  });
+
+  factory SyncMonthlyReportConfirmation.fromJson(Map<String, dynamic> json) =>
+      SyncMonthlyReportConfirmation(
+        id: json['id'] as String,
+        shopId: json['shopId'] as String,
+        month: DateTime.parse(json['month'] as String),
+        confirmedAt: DateTime.parse(json['confirmedAt'] as String),
+        confirmedBy: json['confirmedBy'] as String?,
+        source: (json['source'] as String?) ?? 'management-report',
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+
+  final String id;
+  final String shopId;
+
+  /// First-of-month UTC cookie the report covers.
+  final DateTime month;
+  final DateTime confirmedAt;
+  final String? confirmedBy;
+  final String source;
+
+  /// Creation instant from the OWNING device (UTC).
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'month': month.toIso8601String(),
+    'confirmedAt': confirmedAt.toIso8601String(),
+    'confirmedBy': confirmedBy,
+    'source': source,
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Month cleanup markers — applied-ledger for completed month cleanups
+// ---------------------------------------------------------------------------
+
+/// One completed month cleanup crossing the sync boundary. Peers apply a
+/// marker by deleting their local month mirrors in dependency order, so
+/// every device converges without per-row tombstone floods. Markers are
+/// never deleted.
+final class SyncMonthCleanupMarker {
+  const SyncMonthCleanupMarker({
+    required this.id,
+    required this.shopId,
+    required this.month,
+    required this.tables,
+    required this.deletedCounts,
+    required this.completedAt,
+    required this.createdAt,
+  });
+
+  factory SyncMonthCleanupMarker.fromJson(Map<String, dynamic> json) =>
+      SyncMonthCleanupMarker(
+        id: json['id'] as String,
+        shopId: json['shopId'] as String,
+        month: DateTime.parse(json['month'] as String),
+        tables: (json['tables'] as List).map((e) => e.toString()).toList(),
+        deletedCounts: {
+          for (final e in (json['deletedCounts'] as Map).entries)
+            e.key.toString(): (e.value as num).toInt(),
+        },
+        completedAt: DateTime.parse(json['completedAt'] as String),
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+
+  final String id;
+  final String shopId;
+
+  /// First-of-month UTC cookie that was cleaned.
+  final DateTime month;
+
+  /// Affected table keys, for display/audit.
+  final List<String> tables;
+
+  /// Actual affected-row counts by category key.
+  final Map<String, int> deletedCounts;
+  final DateTime completedAt;
+
+  /// Creation instant from the OWNING device (UTC).
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'shopId': shopId,
+    'month': month.toIso8601String(),
+    'tables': tables,
+    'deletedCounts': deletedCounts,
+    'completedAt': completedAt.toIso8601String(),
     'createdAt': createdAt.toIso8601String(),
   };
 }
@@ -912,6 +1088,8 @@ final class SyncStaffAttendance {
     required this.workedMinutes,
     required this.createdAt,
     required this.updatedAt,
+    this.isLeave = false,
+    this.leaveReason,
   });
 
   factory SyncStaffAttendance.fromJson(Map<String, dynamic> json) =>
@@ -928,6 +1106,9 @@ final class SyncStaffAttendance {
         workedMinutes: (json['workedMinutes'] as num).toInt(),
         createdAt: DateTime.parse(json['createdAt'] as String),
         updatedAt: DateTime.parse(json['updatedAt'] as String),
+        // Rows written before Leave existed carry no flag; they stay shifts.
+        isLeave: (json['isLeave'] as bool?) ?? false,
+        leaveReason: json['leaveReason'] as String?,
       );
 
   final String id;
@@ -953,6 +1134,12 @@ final class SyncStaffAttendance {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  /// Day-level Leave marker; false for every worked shift.
+  final bool isLeave;
+
+  /// Optional owner note recorded with a Leave day; null when absent.
+  final String? leaveReason;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -964,5 +1151,7 @@ final class SyncStaffAttendance {
     'workedMinutes': workedMinutes,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
+    'isLeave': isLeave,
+    'leaveReason': leaveReason,
   };
 }

@@ -69,6 +69,44 @@ abstract interface class RemoteMasterDataGateway
     required int limit,
   });
 
+  // ---- Product recipes ------------------------------------------------------
+
+  /// Pushes shared-stock recipe rows. Idempotent UPSERTS keyed by the row
+  /// UUID: re-saving the same mapping converges, never duplicates. Clearing
+  /// a mapping removes local rows without a tombstone (peers keep their copy
+  /// until the mapping is re-saved); deleting a product converges through
+  /// the PRODUCT tombstone, whose local CASCADE drops the mapping rows on
+  /// every device.
+  Future<void> upsertProductRecipes(List<SyncProductRecipe> rows);
+
+  Future<PullPage<SyncProductRecipe>> pullProductRecipes({
+    required DateTime since,
+    required int limit,
+  });
+
+  // ---- Monthly report confirmations -----------------------------------------
+
+  /// Pushes owner-recorded per-month report markers. Idempotent UPSERTS keyed
+  /// by row UUID; re-confirming a month converges on the latest confirmation.
+  Future<void> upsertMonthlyReportConfirmations(
+    List<SyncMonthlyReportConfirmation> rows,
+  );
+
+  Future<PullPage<SyncMonthlyReportConfirmation>>
+  pullMonthlyReportConfirmations({required DateTime since, required int limit});
+
+  // ---- Month cleanup markers --------------------------------------------------
+
+  /// Pushes completed-cleanup markers. Markers are written server-side by the
+  /// atomic cleanup itself; this path exists for outbox-driven convergence
+  /// and stays idempotent by marker id. Markers are never deleted.
+  Future<void> upsertMonthCleanupMarkers(List<SyncMonthCleanupMarker> rows);
+
+  Future<PullPage<SyncMonthCleanupMarker>> pullMonthCleanupMarkers({
+    required DateTime since,
+    required int limit,
+  });
+
   // ---- Suppliers ----------------------------------------------------------
 
   Future<void> upsertSuppliers(List<SyncSupplier> rows);

@@ -3662,6 +3662,21 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     ),
     defaultValue: const Constant(true),
   );
+  static const VerificationMeta _isIngredientMeta = const VerificationMeta(
+    'isIngredient',
+  );
+  @override
+  late final GeneratedColumn<bool> isIngredient = GeneratedColumn<bool>(
+    'is_ingredient',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_ingredient" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _visibleInShopsMeta = const VerificationMeta(
     'visibleInShops',
   );
@@ -3719,6 +3734,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     imagePath,
     cloudImagePath,
     isActive,
+    isIngredient,
     visibleInShops,
     createdAt,
     updatedAt,
@@ -3858,6 +3874,15 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         isActive.isAcceptableOrUnknown(data['is_active']!, _isActiveMeta),
       );
     }
+    if (data.containsKey('is_ingredient')) {
+      context.handle(
+        _isIngredientMeta,
+        isIngredient.isAcceptableOrUnknown(
+          data['is_ingredient']!,
+          _isIngredientMeta,
+        ),
+      );
+    }
     if (data.containsKey('visible_in_shops')) {
       context.handle(
         _visibleInShopsMeta,
@@ -3956,6 +3981,10 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.bool,
         data['${effectivePrefix}is_active'],
       )!,
+      isIngredient: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_ingredient'],
+      )!,
       visibleInShops: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}visible_in_shops'],
@@ -4041,6 +4070,14 @@ class Product extends DataClass implements Insertable<Product> {
   /// Soft switch to hide a product from the POS without deleting it.
   final bool isActive;
 
+  /// Marks a stock-source ingredient (e.g. the shared Maggi Packet several
+  /// menu products consume). Ingredients are ordinary products — purchased
+  /// and restocked through the existing purchase flow, alerted through the
+  /// existing low-stock rules — except the sale shelf hides them; they are
+  /// sold only indirectly through the recipe mapping. Defaults to false so
+  /// upgrading never hides an existing product from the shelf.
+  final bool isIngredient;
+
   /// Controls whether this product is visible in the Food Truck shop.
   /// Defaults to false; the owner can toggle it to make the product available
   /// in Food Truck Billing. Cafe behavior is completely unchanged.
@@ -4068,6 +4105,7 @@ class Product extends DataClass implements Insertable<Product> {
     this.imagePath,
     this.cloudImagePath,
     required this.isActive,
+    required this.isIngredient,
     required this.visibleInShops,
     required this.createdAt,
     required this.updatedAt,
@@ -4105,6 +4143,7 @@ class Product extends DataClass implements Insertable<Product> {
       map['cloud_image_path'] = Variable<String>(cloudImagePath);
     }
     map['is_active'] = Variable<bool>(isActive);
+    map['is_ingredient'] = Variable<bool>(isIngredient);
     map['visible_in_shops'] = Variable<bool>(visibleInShops);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -4141,6 +4180,7 @@ class Product extends DataClass implements Insertable<Product> {
           ? const Value.absent()
           : Value(cloudImagePath),
       isActive: Value(isActive),
+      isIngredient: Value(isIngredient),
       visibleInShops: Value(visibleInShops),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -4169,6 +4209,7 @@ class Product extends DataClass implements Insertable<Product> {
       imagePath: serializer.fromJson<String?>(json['imagePath']),
       cloudImagePath: serializer.fromJson<String?>(json['cloudImagePath']),
       isActive: serializer.fromJson<bool>(json['isActive']),
+      isIngredient: serializer.fromJson<bool>(json['isIngredient']),
       visibleInShops: serializer.fromJson<bool>(json['visibleInShops']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -4194,6 +4235,7 @@ class Product extends DataClass implements Insertable<Product> {
       'imagePath': serializer.toJson<String?>(imagePath),
       'cloudImagePath': serializer.toJson<String?>(cloudImagePath),
       'isActive': serializer.toJson<bool>(isActive),
+      'isIngredient': serializer.toJson<bool>(isIngredient),
       'visibleInShops': serializer.toJson<bool>(visibleInShops),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -4217,6 +4259,7 @@ class Product extends DataClass implements Insertable<Product> {
     Value<String?> imagePath = const Value.absent(),
     Value<String?> cloudImagePath = const Value.absent(),
     bool? isActive,
+    bool? isIngredient,
     bool? visibleInShops,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -4245,6 +4288,7 @@ class Product extends DataClass implements Insertable<Product> {
         ? cloudImagePath.value
         : this.cloudImagePath,
     isActive: isActive ?? this.isActive,
+    isIngredient: isIngredient ?? this.isIngredient,
     visibleInShops: visibleInShops ?? this.visibleInShops,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -4285,6 +4329,9 @@ class Product extends DataClass implements Insertable<Product> {
           ? data.cloudImagePath.value
           : this.cloudImagePath,
       isActive: data.isActive.present ? data.isActive.value : this.isActive,
+      isIngredient: data.isIngredient.present
+          ? data.isIngredient.value
+          : this.isIngredient,
       visibleInShops: data.visibleInShops.present
           ? data.visibleInShops.value
           : this.visibleInShops,
@@ -4312,6 +4359,7 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('imagePath: $imagePath, ')
           ..write('cloudImagePath: $cloudImagePath, ')
           ..write('isActive: $isActive, ')
+          ..write('isIngredient: $isIngredient, ')
           ..write('visibleInShops: $visibleInShops, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -4337,6 +4385,7 @@ class Product extends DataClass implements Insertable<Product> {
     imagePath,
     cloudImagePath,
     isActive,
+    isIngredient,
     visibleInShops,
     createdAt,
     updatedAt,
@@ -4361,6 +4410,7 @@ class Product extends DataClass implements Insertable<Product> {
           other.imagePath == this.imagePath &&
           other.cloudImagePath == this.cloudImagePath &&
           other.isActive == this.isActive &&
+          other.isIngredient == this.isIngredient &&
           other.visibleInShops == this.visibleInShops &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -4383,6 +4433,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<String?> imagePath;
   final Value<String?> cloudImagePath;
   final Value<bool> isActive;
+  final Value<bool> isIngredient;
   final Value<bool> visibleInShops;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -4404,6 +4455,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.imagePath = const Value.absent(),
     this.cloudImagePath = const Value.absent(),
     this.isActive = const Value.absent(),
+    this.isIngredient = const Value.absent(),
     this.visibleInShops = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4426,6 +4478,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.imagePath = const Value.absent(),
     this.cloudImagePath = const Value.absent(),
     this.isActive = const Value.absent(),
+    this.isIngredient = const Value.absent(),
     this.visibleInShops = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4450,6 +4503,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<String>? imagePath,
     Expression<String>? cloudImagePath,
     Expression<bool>? isActive,
+    Expression<bool>? isIngredient,
     Expression<bool>? visibleInShops,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -4472,6 +4526,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       if (imagePath != null) 'image_path': imagePath,
       if (cloudImagePath != null) 'cloud_image_path': cloudImagePath,
       if (isActive != null) 'is_active': isActive,
+      if (isIngredient != null) 'is_ingredient': isIngredient,
       if (visibleInShops != null) 'visible_in_shops': visibleInShops,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -4496,6 +4551,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<String?>? imagePath,
     Value<String?>? cloudImagePath,
     Value<bool>? isActive,
+    Value<bool>? isIngredient,
     Value<bool>? visibleInShops,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -4518,6 +4574,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       imagePath: imagePath ?? this.imagePath,
       cloudImagePath: cloudImagePath ?? this.cloudImagePath,
       isActive: isActive ?? this.isActive,
+      isIngredient: isIngredient ?? this.isIngredient,
       visibleInShops: visibleInShops ?? this.visibleInShops,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -4576,6 +4633,9 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (isActive.present) {
       map['is_active'] = Variable<bool>(isActive.value);
     }
+    if (isIngredient.present) {
+      map['is_ingredient'] = Variable<bool>(isIngredient.value);
+    }
     if (visibleInShops.present) {
       map['visible_in_shops'] = Variable<bool>(visibleInShops.value);
     }
@@ -4610,6 +4670,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('imagePath: $imagePath, ')
           ..write('cloudImagePath: $cloudImagePath, ')
           ..write('isActive: $isActive, ')
+          ..write('isIngredient: $isIngredient, ')
           ..write('visibleInShops: $visibleInShops, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -5548,6 +5609,616 @@ class ProductVariantsCompanion extends UpdateCompanion<ProductVariant> {
           ..write('membershipEnabled: $membershipEnabled, ')
           ..write('memberPricePaise: $memberPricePaise, ')
           ..write('isActive: $isActive, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ProductRecipesTable extends ProductRecipes
+    with TableInfo<$ProductRecipesTable, ProductRecipe> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ProductRecipesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    clientDefault: () => const Uuid().v4(),
+  );
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES shops (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _productIdMeta = const VerificationMeta(
+    'productId',
+  );
+  @override
+  late final GeneratedColumn<String> productId = GeneratedColumn<String>(
+    'product_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES products (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _variantIdMeta = const VerificationMeta(
+    'variantId',
+  );
+  @override
+  late final GeneratedColumn<String> variantId = GeneratedColumn<String>(
+    'variant_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES product_variants (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _ingredientProductIdMeta =
+      const VerificationMeta('ingredientProductId');
+  @override
+  late final GeneratedColumn<String> ingredientProductId =
+      GeneratedColumn<String>(
+        'ingredient_product_id',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'REFERENCES products (id) ON DELETE CASCADE',
+        ),
+      );
+  static const VerificationMeta _ingredientVariantIdMeta =
+      const VerificationMeta('ingredientVariantId');
+  @override
+  late final GeneratedColumn<String> ingredientVariantId =
+      GeneratedColumn<String>(
+        'ingredient_variant_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'REFERENCES product_variants (id) ON DELETE CASCADE',
+        ),
+      );
+  static const VerificationMeta _quantityMeta = const VerificationMeta(
+    'quantity',
+  );
+  @override
+  late final GeneratedColumn<int> quantity = GeneratedColumn<int>(
+    'quantity',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL CHECK (quantity >= 1)',
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    shopId,
+    productId,
+    variantId,
+    ingredientProductId,
+    ingredientVariantId,
+    quantity,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'product_recipes';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ProductRecipe> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    }
+    if (data.containsKey('product_id')) {
+      context.handle(
+        _productIdMeta,
+        productId.isAcceptableOrUnknown(data['product_id']!, _productIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_productIdMeta);
+    }
+    if (data.containsKey('variant_id')) {
+      context.handle(
+        _variantIdMeta,
+        variantId.isAcceptableOrUnknown(data['variant_id']!, _variantIdMeta),
+      );
+    }
+    if (data.containsKey('ingredient_product_id')) {
+      context.handle(
+        _ingredientProductIdMeta,
+        ingredientProductId.isAcceptableOrUnknown(
+          data['ingredient_product_id']!,
+          _ingredientProductIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_ingredientProductIdMeta);
+    }
+    if (data.containsKey('ingredient_variant_id')) {
+      context.handle(
+        _ingredientVariantIdMeta,
+        ingredientVariantId.isAcceptableOrUnknown(
+          data['ingredient_variant_id']!,
+          _ingredientVariantIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('quantity')) {
+      context.handle(
+        _quantityMeta,
+        quantity.isAcceptableOrUnknown(data['quantity']!, _quantityMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_quantityMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  ProductRecipe map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ProductRecipe(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      ),
+      productId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}product_id'],
+      )!,
+      variantId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}variant_id'],
+      ),
+      ingredientProductId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}ingredient_product_id'],
+      )!,
+      ingredientVariantId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}ingredient_variant_id'],
+      ),
+      quantity: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}quantity'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $ProductRecipesTable createAlias(String alias) {
+    return $ProductRecipesTable(attachedDatabase, alias);
+  }
+}
+
+class ProductRecipe extends DataClass implements Insertable<ProductRecipe> {
+  /// Local UUID v4 identifier, generated on this device.
+  final String id;
+
+  /// Owning shop; null only for legacy/unsynced rows.
+  final String? shopId;
+
+  /// The sellable product this mapping belongs to.
+  final String productId;
+
+  /// One variant of [productId], or NULL for every variant of the product.
+  final String? variantId;
+
+  /// The stock-source ingredient product consumed per sale.
+  final String ingredientProductId;
+
+  /// One variant of the ingredient, or NULL for the product-level stock.
+  final String? ingredientVariantId;
+
+  /// Units of the ingredient consumed per ONE unit sold. Must be >= 1.
+  final int quantity;
+
+  /// UTC timestamp of record creation.
+  final DateTime createdAt;
+
+  /// UTC timestamp of the last change; drives incremental sync.
+  final DateTime updatedAt;
+  const ProductRecipe({
+    required this.id,
+    this.shopId,
+    required this.productId,
+    this.variantId,
+    required this.ingredientProductId,
+    this.ingredientVariantId,
+    required this.quantity,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    if (!nullToAbsent || shopId != null) {
+      map['shop_id'] = Variable<String>(shopId);
+    }
+    map['product_id'] = Variable<String>(productId);
+    if (!nullToAbsent || variantId != null) {
+      map['variant_id'] = Variable<String>(variantId);
+    }
+    map['ingredient_product_id'] = Variable<String>(ingredientProductId);
+    if (!nullToAbsent || ingredientVariantId != null) {
+      map['ingredient_variant_id'] = Variable<String>(ingredientVariantId);
+    }
+    map['quantity'] = Variable<int>(quantity);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  ProductRecipesCompanion toCompanion(bool nullToAbsent) {
+    return ProductRecipesCompanion(
+      id: Value(id),
+      shopId: shopId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(shopId),
+      productId: Value(productId),
+      variantId: variantId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(variantId),
+      ingredientProductId: Value(ingredientProductId),
+      ingredientVariantId: ingredientVariantId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(ingredientVariantId),
+      quantity: Value(quantity),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory ProductRecipe.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ProductRecipe(
+      id: serializer.fromJson<String>(json['id']),
+      shopId: serializer.fromJson<String?>(json['shopId']),
+      productId: serializer.fromJson<String>(json['productId']),
+      variantId: serializer.fromJson<String?>(json['variantId']),
+      ingredientProductId: serializer.fromJson<String>(
+        json['ingredientProductId'],
+      ),
+      ingredientVariantId: serializer.fromJson<String?>(
+        json['ingredientVariantId'],
+      ),
+      quantity: serializer.fromJson<int>(json['quantity']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'shopId': serializer.toJson<String?>(shopId),
+      'productId': serializer.toJson<String>(productId),
+      'variantId': serializer.toJson<String?>(variantId),
+      'ingredientProductId': serializer.toJson<String>(ingredientProductId),
+      'ingredientVariantId': serializer.toJson<String?>(ingredientVariantId),
+      'quantity': serializer.toJson<int>(quantity),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  ProductRecipe copyWith({
+    String? id,
+    Value<String?> shopId = const Value.absent(),
+    String? productId,
+    Value<String?> variantId = const Value.absent(),
+    String? ingredientProductId,
+    Value<String?> ingredientVariantId = const Value.absent(),
+    int? quantity,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => ProductRecipe(
+    id: id ?? this.id,
+    shopId: shopId.present ? shopId.value : this.shopId,
+    productId: productId ?? this.productId,
+    variantId: variantId.present ? variantId.value : this.variantId,
+    ingredientProductId: ingredientProductId ?? this.ingredientProductId,
+    ingredientVariantId: ingredientVariantId.present
+        ? ingredientVariantId.value
+        : this.ingredientVariantId,
+    quantity: quantity ?? this.quantity,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  ProductRecipe copyWithCompanion(ProductRecipesCompanion data) {
+    return ProductRecipe(
+      id: data.id.present ? data.id.value : this.id,
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      productId: data.productId.present ? data.productId.value : this.productId,
+      variantId: data.variantId.present ? data.variantId.value : this.variantId,
+      ingredientProductId: data.ingredientProductId.present
+          ? data.ingredientProductId.value
+          : this.ingredientProductId,
+      ingredientVariantId: data.ingredientVariantId.present
+          ? data.ingredientVariantId.value
+          : this.ingredientVariantId,
+      quantity: data.quantity.present ? data.quantity.value : this.quantity,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProductRecipe(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('productId: $productId, ')
+          ..write('variantId: $variantId, ')
+          ..write('ingredientProductId: $ingredientProductId, ')
+          ..write('ingredientVariantId: $ingredientVariantId, ')
+          ..write('quantity: $quantity, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    shopId,
+    productId,
+    variantId,
+    ingredientProductId,
+    ingredientVariantId,
+    quantity,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ProductRecipe &&
+          other.id == this.id &&
+          other.shopId == this.shopId &&
+          other.productId == this.productId &&
+          other.variantId == this.variantId &&
+          other.ingredientProductId == this.ingredientProductId &&
+          other.ingredientVariantId == this.ingredientVariantId &&
+          other.quantity == this.quantity &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class ProductRecipesCompanion extends UpdateCompanion<ProductRecipe> {
+  final Value<String> id;
+  final Value<String?> shopId;
+  final Value<String> productId;
+  final Value<String?> variantId;
+  final Value<String> ingredientProductId;
+  final Value<String?> ingredientVariantId;
+  final Value<int> quantity;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const ProductRecipesCompanion({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    this.productId = const Value.absent(),
+    this.variantId = const Value.absent(),
+    this.ingredientProductId = const Value.absent(),
+    this.ingredientVariantId = const Value.absent(),
+    this.quantity = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ProductRecipesCompanion.insert({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    required String productId,
+    this.variantId = const Value.absent(),
+    required String ingredientProductId,
+    this.ingredientVariantId = const Value.absent(),
+    required int quantity,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : productId = Value(productId),
+       ingredientProductId = Value(ingredientProductId),
+       quantity = Value(quantity);
+  static Insertable<ProductRecipe> custom({
+    Expression<String>? id,
+    Expression<String>? shopId,
+    Expression<String>? productId,
+    Expression<String>? variantId,
+    Expression<String>? ingredientProductId,
+    Expression<String>? ingredientVariantId,
+    Expression<int>? quantity,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (shopId != null) 'shop_id': shopId,
+      if (productId != null) 'product_id': productId,
+      if (variantId != null) 'variant_id': variantId,
+      if (ingredientProductId != null)
+        'ingredient_product_id': ingredientProductId,
+      if (ingredientVariantId != null)
+        'ingredient_variant_id': ingredientVariantId,
+      if (quantity != null) 'quantity': quantity,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ProductRecipesCompanion copyWith({
+    Value<String>? id,
+    Value<String?>? shopId,
+    Value<String>? productId,
+    Value<String?>? variantId,
+    Value<String>? ingredientProductId,
+    Value<String?>? ingredientVariantId,
+    Value<int>? quantity,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return ProductRecipesCompanion(
+      id: id ?? this.id,
+      shopId: shopId ?? this.shopId,
+      productId: productId ?? this.productId,
+      variantId: variantId ?? this.variantId,
+      ingredientProductId: ingredientProductId ?? this.ingredientProductId,
+      ingredientVariantId: ingredientVariantId ?? this.ingredientVariantId,
+      quantity: quantity ?? this.quantity,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (productId.present) {
+      map['product_id'] = Variable<String>(productId.value);
+    }
+    if (variantId.present) {
+      map['variant_id'] = Variable<String>(variantId.value);
+    }
+    if (ingredientProductId.present) {
+      map['ingredient_product_id'] = Variable<String>(
+        ingredientProductId.value,
+      );
+    }
+    if (ingredientVariantId.present) {
+      map['ingredient_variant_id'] = Variable<String>(
+        ingredientVariantId.value,
+      );
+    }
+    if (quantity.present) {
+      map['quantity'] = Variable<int>(quantity.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProductRecipesCompanion(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('productId: $productId, ')
+          ..write('variantId: $variantId, ')
+          ..write('ingredientProductId: $ingredientProductId, ')
+          ..write('ingredientVariantId: $ingredientVariantId, ')
+          ..write('quantity: $quantity, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -16871,6 +17542,1717 @@ class StorageCleanupStateCompanion
   }
 }
 
+class $StorageMonthlySnapshotsTable extends StorageMonthlySnapshots
+    with TableInfo<$StorageMonthlySnapshotsTable, StorageMonthlySnapshot> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StorageMonthlySnapshotsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    clientDefault: () => const Uuid().v4(),
+  );
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES shops (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _monthMeta = const VerificationMeta('month');
+  @override
+  late final GeneratedColumn<DateTime> month = GeneratedColumn<DateTime>(
+    'month',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _countsJsonMeta = const VerificationMeta(
+    'countsJson',
+  );
+  @override
+  late final GeneratedColumn<String> countsJson = GeneratedColumn<String>(
+    'counts_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _logicalBytesEstMeta = const VerificationMeta(
+    'logicalBytesEst',
+  );
+  @override
+  late final GeneratedColumn<int> logicalBytesEst = GeneratedColumn<int>(
+    'logical_bytes_est',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 0 CHECK (logical_bytes_est >= 0)',
+    defaultValue: const CustomExpression('0'),
+  );
+  static const VerificationMeta _dbBytesTotalMeta = const VerificationMeta(
+    'dbBytesTotal',
+  );
+  @override
+  late final GeneratedColumn<int> dbBytesTotal = GeneratedColumn<int>(
+    'db_bytes_total',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _snapshotAtMeta = const VerificationMeta(
+    'snapshotAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> snapshotAt = GeneratedColumn<DateTime>(
+    'snapshot_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    shopId,
+    month,
+    countsJson,
+    logicalBytesEst,
+    dbBytesTotal,
+    snapshotAt,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'storage_monthly_snapshots';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<StorageMonthlySnapshot> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    }
+    if (data.containsKey('month')) {
+      context.handle(
+        _monthMeta,
+        month.isAcceptableOrUnknown(data['month']!, _monthMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_monthMeta);
+    }
+    if (data.containsKey('counts_json')) {
+      context.handle(
+        _countsJsonMeta,
+        countsJson.isAcceptableOrUnknown(data['counts_json']!, _countsJsonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_countsJsonMeta);
+    }
+    if (data.containsKey('logical_bytes_est')) {
+      context.handle(
+        _logicalBytesEstMeta,
+        logicalBytesEst.isAcceptableOrUnknown(
+          data['logical_bytes_est']!,
+          _logicalBytesEstMeta,
+        ),
+      );
+    }
+    if (data.containsKey('db_bytes_total')) {
+      context.handle(
+        _dbBytesTotalMeta,
+        dbBytesTotal.isAcceptableOrUnknown(
+          data['db_bytes_total']!,
+          _dbBytesTotalMeta,
+        ),
+      );
+    }
+    if (data.containsKey('snapshot_at')) {
+      context.handle(
+        _snapshotAtMeta,
+        snapshotAt.isAcceptableOrUnknown(data['snapshot_at']!, _snapshotAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_snapshotAtMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StorageMonthlySnapshot map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StorageMonthlySnapshot(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      ),
+      month: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}month'],
+      )!,
+      countsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}counts_json'],
+      )!,
+      logicalBytesEst: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}logical_bytes_est'],
+      )!,
+      dbBytesTotal: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}db_bytes_total'],
+      ),
+      snapshotAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}snapshot_at'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $StorageMonthlySnapshotsTable createAlias(String alias) {
+    return $StorageMonthlySnapshotsTable(attachedDatabase, alias);
+  }
+}
+
+class StorageMonthlySnapshot extends DataClass
+    implements Insertable<StorageMonthlySnapshot> {
+  /// Local UUID v4 identifier, generated on this device.
+  final String id;
+
+  /// Owning shop; null only for legacy/unsynced rows.
+  final String? shopId;
+
+  /// First-of-month UTC cookie this snapshot covers.
+  final DateTime month;
+
+  /// Exact row counts by category key, JSON-encoded.
+  final String countsJson;
+
+  /// Estimated logical bytes for the month (server estimate, labeled so).
+  final int logicalBytesEst;
+
+  /// Physical database size when computed, DB-wide (nullable when unknown).
+  final int? dbBytesTotal;
+
+  /// When the server recorded the snapshot.
+  final DateTime snapshotAt;
+
+  /// UTC timestamp of record creation.
+  final DateTime createdAt;
+
+  /// UTC timestamp of the last change.
+  final DateTime updatedAt;
+  const StorageMonthlySnapshot({
+    required this.id,
+    this.shopId,
+    required this.month,
+    required this.countsJson,
+    required this.logicalBytesEst,
+    this.dbBytesTotal,
+    required this.snapshotAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    if (!nullToAbsent || shopId != null) {
+      map['shop_id'] = Variable<String>(shopId);
+    }
+    map['month'] = Variable<DateTime>(month);
+    map['counts_json'] = Variable<String>(countsJson);
+    map['logical_bytes_est'] = Variable<int>(logicalBytesEst);
+    if (!nullToAbsent || dbBytesTotal != null) {
+      map['db_bytes_total'] = Variable<int>(dbBytesTotal);
+    }
+    map['snapshot_at'] = Variable<DateTime>(snapshotAt);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  StorageMonthlySnapshotsCompanion toCompanion(bool nullToAbsent) {
+    return StorageMonthlySnapshotsCompanion(
+      id: Value(id),
+      shopId: shopId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(shopId),
+      month: Value(month),
+      countsJson: Value(countsJson),
+      logicalBytesEst: Value(logicalBytesEst),
+      dbBytesTotal: dbBytesTotal == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dbBytesTotal),
+      snapshotAt: Value(snapshotAt),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory StorageMonthlySnapshot.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StorageMonthlySnapshot(
+      id: serializer.fromJson<String>(json['id']),
+      shopId: serializer.fromJson<String?>(json['shopId']),
+      month: serializer.fromJson<DateTime>(json['month']),
+      countsJson: serializer.fromJson<String>(json['countsJson']),
+      logicalBytesEst: serializer.fromJson<int>(json['logicalBytesEst']),
+      dbBytesTotal: serializer.fromJson<int?>(json['dbBytesTotal']),
+      snapshotAt: serializer.fromJson<DateTime>(json['snapshotAt']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'shopId': serializer.toJson<String?>(shopId),
+      'month': serializer.toJson<DateTime>(month),
+      'countsJson': serializer.toJson<String>(countsJson),
+      'logicalBytesEst': serializer.toJson<int>(logicalBytesEst),
+      'dbBytesTotal': serializer.toJson<int?>(dbBytesTotal),
+      'snapshotAt': serializer.toJson<DateTime>(snapshotAt),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  StorageMonthlySnapshot copyWith({
+    String? id,
+    Value<String?> shopId = const Value.absent(),
+    DateTime? month,
+    String? countsJson,
+    int? logicalBytesEst,
+    Value<int?> dbBytesTotal = const Value.absent(),
+    DateTime? snapshotAt,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => StorageMonthlySnapshot(
+    id: id ?? this.id,
+    shopId: shopId.present ? shopId.value : this.shopId,
+    month: month ?? this.month,
+    countsJson: countsJson ?? this.countsJson,
+    logicalBytesEst: logicalBytesEst ?? this.logicalBytesEst,
+    dbBytesTotal: dbBytesTotal.present ? dbBytesTotal.value : this.dbBytesTotal,
+    snapshotAt: snapshotAt ?? this.snapshotAt,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  StorageMonthlySnapshot copyWithCompanion(
+    StorageMonthlySnapshotsCompanion data,
+  ) {
+    return StorageMonthlySnapshot(
+      id: data.id.present ? data.id.value : this.id,
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      month: data.month.present ? data.month.value : this.month,
+      countsJson: data.countsJson.present
+          ? data.countsJson.value
+          : this.countsJson,
+      logicalBytesEst: data.logicalBytesEst.present
+          ? data.logicalBytesEst.value
+          : this.logicalBytesEst,
+      dbBytesTotal: data.dbBytesTotal.present
+          ? data.dbBytesTotal.value
+          : this.dbBytesTotal,
+      snapshotAt: data.snapshotAt.present
+          ? data.snapshotAt.value
+          : this.snapshotAt,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageMonthlySnapshot(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('month: $month, ')
+          ..write('countsJson: $countsJson, ')
+          ..write('logicalBytesEst: $logicalBytesEst, ')
+          ..write('dbBytesTotal: $dbBytesTotal, ')
+          ..write('snapshotAt: $snapshotAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    shopId,
+    month,
+    countsJson,
+    logicalBytesEst,
+    dbBytesTotal,
+    snapshotAt,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StorageMonthlySnapshot &&
+          other.id == this.id &&
+          other.shopId == this.shopId &&
+          other.month == this.month &&
+          other.countsJson == this.countsJson &&
+          other.logicalBytesEst == this.logicalBytesEst &&
+          other.dbBytesTotal == this.dbBytesTotal &&
+          other.snapshotAt == this.snapshotAt &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class StorageMonthlySnapshotsCompanion
+    extends UpdateCompanion<StorageMonthlySnapshot> {
+  final Value<String> id;
+  final Value<String?> shopId;
+  final Value<DateTime> month;
+  final Value<String> countsJson;
+  final Value<int> logicalBytesEst;
+  final Value<int?> dbBytesTotal;
+  final Value<DateTime> snapshotAt;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const StorageMonthlySnapshotsCompanion({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    this.month = const Value.absent(),
+    this.countsJson = const Value.absent(),
+    this.logicalBytesEst = const Value.absent(),
+    this.dbBytesTotal = const Value.absent(),
+    this.snapshotAt = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  StorageMonthlySnapshotsCompanion.insert({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    required DateTime month,
+    required String countsJson,
+    this.logicalBytesEst = const Value.absent(),
+    this.dbBytesTotal = const Value.absent(),
+    required DateTime snapshotAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : month = Value(month),
+       countsJson = Value(countsJson),
+       snapshotAt = Value(snapshotAt);
+  static Insertable<StorageMonthlySnapshot> custom({
+    Expression<String>? id,
+    Expression<String>? shopId,
+    Expression<DateTime>? month,
+    Expression<String>? countsJson,
+    Expression<int>? logicalBytesEst,
+    Expression<int>? dbBytesTotal,
+    Expression<DateTime>? snapshotAt,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (shopId != null) 'shop_id': shopId,
+      if (month != null) 'month': month,
+      if (countsJson != null) 'counts_json': countsJson,
+      if (logicalBytesEst != null) 'logical_bytes_est': logicalBytesEst,
+      if (dbBytesTotal != null) 'db_bytes_total': dbBytesTotal,
+      if (snapshotAt != null) 'snapshot_at': snapshotAt,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  StorageMonthlySnapshotsCompanion copyWith({
+    Value<String>? id,
+    Value<String?>? shopId,
+    Value<DateTime>? month,
+    Value<String>? countsJson,
+    Value<int>? logicalBytesEst,
+    Value<int?>? dbBytesTotal,
+    Value<DateTime>? snapshotAt,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return StorageMonthlySnapshotsCompanion(
+      id: id ?? this.id,
+      shopId: shopId ?? this.shopId,
+      month: month ?? this.month,
+      countsJson: countsJson ?? this.countsJson,
+      logicalBytesEst: logicalBytesEst ?? this.logicalBytesEst,
+      dbBytesTotal: dbBytesTotal ?? this.dbBytesTotal,
+      snapshotAt: snapshotAt ?? this.snapshotAt,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (month.present) {
+      map['month'] = Variable<DateTime>(month.value);
+    }
+    if (countsJson.present) {
+      map['counts_json'] = Variable<String>(countsJson.value);
+    }
+    if (logicalBytesEst.present) {
+      map['logical_bytes_est'] = Variable<int>(logicalBytesEst.value);
+    }
+    if (dbBytesTotal.present) {
+      map['db_bytes_total'] = Variable<int>(dbBytesTotal.value);
+    }
+    if (snapshotAt.present) {
+      map['snapshot_at'] = Variable<DateTime>(snapshotAt.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageMonthlySnapshotsCompanion(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('month: $month, ')
+          ..write('countsJson: $countsJson, ')
+          ..write('logicalBytesEst: $logicalBytesEst, ')
+          ..write('dbBytesTotal: $dbBytesTotal, ')
+          ..write('snapshotAt: $snapshotAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MonthlyReportConfirmationsTable extends MonthlyReportConfirmations
+    with
+        TableInfo<$MonthlyReportConfirmationsTable, MonthlyReportConfirmation> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MonthlyReportConfirmationsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    clientDefault: () => const Uuid().v4(),
+  );
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES shops (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _monthMeta = const VerificationMeta('month');
+  @override
+  late final GeneratedColumn<DateTime> month = GeneratedColumn<DateTime>(
+    'month',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _confirmedAtMeta = const VerificationMeta(
+    'confirmedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> confirmedAt = GeneratedColumn<DateTime>(
+    'confirmed_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _confirmedByMeta = const VerificationMeta(
+    'confirmedBy',
+  );
+  @override
+  late final GeneratedColumn<String> confirmedBy = GeneratedColumn<String>(
+    'confirmed_by',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+    'source',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('management-report'),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    shopId,
+    month,
+    confirmedAt,
+    confirmedBy,
+    source,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'monthly_report_confirmations';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MonthlyReportConfirmation> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    }
+    if (data.containsKey('month')) {
+      context.handle(
+        _monthMeta,
+        month.isAcceptableOrUnknown(data['month']!, _monthMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_monthMeta);
+    }
+    if (data.containsKey('confirmed_at')) {
+      context.handle(
+        _confirmedAtMeta,
+        confirmedAt.isAcceptableOrUnknown(
+          data['confirmed_at']!,
+          _confirmedAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_confirmedAtMeta);
+    }
+    if (data.containsKey('confirmed_by')) {
+      context.handle(
+        _confirmedByMeta,
+        confirmedBy.isAcceptableOrUnknown(
+          data['confirmed_by']!,
+          _confirmedByMeta,
+        ),
+      );
+    }
+    if (data.containsKey('source')) {
+      context.handle(
+        _sourceMeta,
+        source.isAcceptableOrUnknown(data['source']!, _sourceMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MonthlyReportConfirmation map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MonthlyReportConfirmation(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      ),
+      month: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}month'],
+      )!,
+      confirmedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}confirmed_at'],
+      )!,
+      confirmedBy: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}confirmed_by'],
+      ),
+      source: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MonthlyReportConfirmationsTable createAlias(String alias) {
+    return $MonthlyReportConfirmationsTable(attachedDatabase, alias);
+  }
+}
+
+class MonthlyReportConfirmation extends DataClass
+    implements Insertable<MonthlyReportConfirmation> {
+  /// UUID identifier. Client-generated; stable per confirm action.
+  final String id;
+
+  /// Owning shop; null only for legacy/unsynced rows.
+  final String? shopId;
+
+  /// First-of-month UTC cookie the report covers.
+  final DateTime month;
+
+  /// When the owner confirmed the report.
+  final DateTime confirmedAt;
+
+  /// Auth identity that confirmed, when known.
+  final String? confirmedBy;
+
+  /// Where the report came from (e.g. 'management-report').
+  final String source;
+
+  /// UTC timestamp of record creation.
+  final DateTime createdAt;
+
+  /// UTC timestamp of the last change; drives incremental sync.
+  final DateTime updatedAt;
+  const MonthlyReportConfirmation({
+    required this.id,
+    this.shopId,
+    required this.month,
+    required this.confirmedAt,
+    this.confirmedBy,
+    required this.source,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    if (!nullToAbsent || shopId != null) {
+      map['shop_id'] = Variable<String>(shopId);
+    }
+    map['month'] = Variable<DateTime>(month);
+    map['confirmed_at'] = Variable<DateTime>(confirmedAt);
+    if (!nullToAbsent || confirmedBy != null) {
+      map['confirmed_by'] = Variable<String>(confirmedBy);
+    }
+    map['source'] = Variable<String>(source);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  MonthlyReportConfirmationsCompanion toCompanion(bool nullToAbsent) {
+    return MonthlyReportConfirmationsCompanion(
+      id: Value(id),
+      shopId: shopId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(shopId),
+      month: Value(month),
+      confirmedAt: Value(confirmedAt),
+      confirmedBy: confirmedBy == null && nullToAbsent
+          ? const Value.absent()
+          : Value(confirmedBy),
+      source: Value(source),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory MonthlyReportConfirmation.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MonthlyReportConfirmation(
+      id: serializer.fromJson<String>(json['id']),
+      shopId: serializer.fromJson<String?>(json['shopId']),
+      month: serializer.fromJson<DateTime>(json['month']),
+      confirmedAt: serializer.fromJson<DateTime>(json['confirmedAt']),
+      confirmedBy: serializer.fromJson<String?>(json['confirmedBy']),
+      source: serializer.fromJson<String>(json['source']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'shopId': serializer.toJson<String?>(shopId),
+      'month': serializer.toJson<DateTime>(month),
+      'confirmedAt': serializer.toJson<DateTime>(confirmedAt),
+      'confirmedBy': serializer.toJson<String?>(confirmedBy),
+      'source': serializer.toJson<String>(source),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  MonthlyReportConfirmation copyWith({
+    String? id,
+    Value<String?> shopId = const Value.absent(),
+    DateTime? month,
+    DateTime? confirmedAt,
+    Value<String?> confirmedBy = const Value.absent(),
+    String? source,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => MonthlyReportConfirmation(
+    id: id ?? this.id,
+    shopId: shopId.present ? shopId.value : this.shopId,
+    month: month ?? this.month,
+    confirmedAt: confirmedAt ?? this.confirmedAt,
+    confirmedBy: confirmedBy.present ? confirmedBy.value : this.confirmedBy,
+    source: source ?? this.source,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  MonthlyReportConfirmation copyWithCompanion(
+    MonthlyReportConfirmationsCompanion data,
+  ) {
+    return MonthlyReportConfirmation(
+      id: data.id.present ? data.id.value : this.id,
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      month: data.month.present ? data.month.value : this.month,
+      confirmedAt: data.confirmedAt.present
+          ? data.confirmedAt.value
+          : this.confirmedAt,
+      confirmedBy: data.confirmedBy.present
+          ? data.confirmedBy.value
+          : this.confirmedBy,
+      source: data.source.present ? data.source.value : this.source,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MonthlyReportConfirmation(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('month: $month, ')
+          ..write('confirmedAt: $confirmedAt, ')
+          ..write('confirmedBy: $confirmedBy, ')
+          ..write('source: $source, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    shopId,
+    month,
+    confirmedAt,
+    confirmedBy,
+    source,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MonthlyReportConfirmation &&
+          other.id == this.id &&
+          other.shopId == this.shopId &&
+          other.month == this.month &&
+          other.confirmedAt == this.confirmedAt &&
+          other.confirmedBy == this.confirmedBy &&
+          other.source == this.source &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class MonthlyReportConfirmationsCompanion
+    extends UpdateCompanion<MonthlyReportConfirmation> {
+  final Value<String> id;
+  final Value<String?> shopId;
+  final Value<DateTime> month;
+  final Value<DateTime> confirmedAt;
+  final Value<String?> confirmedBy;
+  final Value<String> source;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const MonthlyReportConfirmationsCompanion({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    this.month = const Value.absent(),
+    this.confirmedAt = const Value.absent(),
+    this.confirmedBy = const Value.absent(),
+    this.source = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MonthlyReportConfirmationsCompanion.insert({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    required DateTime month,
+    required DateTime confirmedAt,
+    this.confirmedBy = const Value.absent(),
+    this.source = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : month = Value(month),
+       confirmedAt = Value(confirmedAt);
+  static Insertable<MonthlyReportConfirmation> custom({
+    Expression<String>? id,
+    Expression<String>? shopId,
+    Expression<DateTime>? month,
+    Expression<DateTime>? confirmedAt,
+    Expression<String>? confirmedBy,
+    Expression<String>? source,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (shopId != null) 'shop_id': shopId,
+      if (month != null) 'month': month,
+      if (confirmedAt != null) 'confirmed_at': confirmedAt,
+      if (confirmedBy != null) 'confirmed_by': confirmedBy,
+      if (source != null) 'source': source,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MonthlyReportConfirmationsCompanion copyWith({
+    Value<String>? id,
+    Value<String?>? shopId,
+    Value<DateTime>? month,
+    Value<DateTime>? confirmedAt,
+    Value<String?>? confirmedBy,
+    Value<String>? source,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return MonthlyReportConfirmationsCompanion(
+      id: id ?? this.id,
+      shopId: shopId ?? this.shopId,
+      month: month ?? this.month,
+      confirmedAt: confirmedAt ?? this.confirmedAt,
+      confirmedBy: confirmedBy ?? this.confirmedBy,
+      source: source ?? this.source,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (month.present) {
+      map['month'] = Variable<DateTime>(month.value);
+    }
+    if (confirmedAt.present) {
+      map['confirmed_at'] = Variable<DateTime>(confirmedAt.value);
+    }
+    if (confirmedBy.present) {
+      map['confirmed_by'] = Variable<String>(confirmedBy.value);
+    }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MonthlyReportConfirmationsCompanion(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('month: $month, ')
+          ..write('confirmedAt: $confirmedAt, ')
+          ..write('confirmedBy: $confirmedBy, ')
+          ..write('source: $source, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MonthCleanupMarkersTable extends MonthCleanupMarkers
+    with TableInfo<$MonthCleanupMarkersTable, MonthCleanupMarker> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MonthCleanupMarkersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    clientDefault: () => const Uuid().v4(),
+  );
+  static const VerificationMeta _shopIdMeta = const VerificationMeta('shopId');
+  @override
+  late final GeneratedColumn<String> shopId = GeneratedColumn<String>(
+    'shop_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES shops (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _monthMeta = const VerificationMeta('month');
+  @override
+  late final GeneratedColumn<DateTime> month = GeneratedColumn<DateTime>(
+    'month',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tablesJsonMeta = const VerificationMeta(
+    'tablesJson',
+  );
+  @override
+  late final GeneratedColumn<String> tablesJson = GeneratedColumn<String>(
+    'tables_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('{}'),
+  );
+  static const VerificationMeta _deletedCountsJsonMeta = const VerificationMeta(
+    'deletedCountsJson',
+  );
+  @override
+  late final GeneratedColumn<String> deletedCountsJson =
+      GeneratedColumn<String>(
+        'deleted_counts_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('{}'),
+      );
+  static const VerificationMeta _completedAtMeta = const VerificationMeta(
+    'completedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> completedAt = GeneratedColumn<DateTime>(
+    'completed_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _appliedMeta = const VerificationMeta(
+    'applied',
+  );
+  @override
+  late final GeneratedColumn<bool> applied = GeneratedColumn<bool>(
+    'applied',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("applied" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    clientDefault: () => DateTime.now().toUtc(),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    shopId,
+    month,
+    tablesJson,
+    deletedCountsJson,
+    completedAt,
+    applied,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'month_cleanup_markers';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MonthCleanupMarker> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('shop_id')) {
+      context.handle(
+        _shopIdMeta,
+        shopId.isAcceptableOrUnknown(data['shop_id']!, _shopIdMeta),
+      );
+    }
+    if (data.containsKey('month')) {
+      context.handle(
+        _monthMeta,
+        month.isAcceptableOrUnknown(data['month']!, _monthMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_monthMeta);
+    }
+    if (data.containsKey('tables_json')) {
+      context.handle(
+        _tablesJsonMeta,
+        tablesJson.isAcceptableOrUnknown(data['tables_json']!, _tablesJsonMeta),
+      );
+    }
+    if (data.containsKey('deleted_counts_json')) {
+      context.handle(
+        _deletedCountsJsonMeta,
+        deletedCountsJson.isAcceptableOrUnknown(
+          data['deleted_counts_json']!,
+          _deletedCountsJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('completed_at')) {
+      context.handle(
+        _completedAtMeta,
+        completedAt.isAcceptableOrUnknown(
+          data['completed_at']!,
+          _completedAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_completedAtMeta);
+    }
+    if (data.containsKey('applied')) {
+      context.handle(
+        _appliedMeta,
+        applied.isAcceptableOrUnknown(data['applied']!, _appliedMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MonthCleanupMarker map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MonthCleanupMarker(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      shopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shop_id'],
+      ),
+      month: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}month'],
+      )!,
+      tablesJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tables_json'],
+      )!,
+      deletedCountsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}deleted_counts_json'],
+      )!,
+      completedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}completed_at'],
+      )!,
+      applied: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}applied'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MonthCleanupMarkersTable createAlias(String alias) {
+    return $MonthCleanupMarkersTable(attachedDatabase, alias);
+  }
+}
+
+class MonthCleanupMarker extends DataClass
+    implements Insertable<MonthCleanupMarker> {
+  /// UUID identifier. The cleaning device generates one per cleanup flow and
+  /// reuses it across retries so a retry converges instead of duplicating.
+  final String id;
+
+  /// Owning shop; null only for legacy/unsynced rows.
+  final String? shopId;
+
+  /// First-of-month UTC cookie that was cleaned.
+  final DateTime month;
+
+  /// Affected tables, JSON-encoded key set (for display/audit).
+  final String tablesJson;
+
+  /// Actual affected-row counts by category key, JSON-encoded.
+  final String deletedCountsJson;
+
+  /// When the cleanup completed server-side.
+  final DateTime completedAt;
+
+  /// Whether this device already applied the marker (deleted its month
+  /// mirrors). A pulled marker that arrives while transactional writes are
+  /// still queued is recorded unapplied and retried on later cycles — the
+  /// pull cursor must never advance past work that has not happened yet.
+  final bool applied;
+
+  /// UTC timestamp of record creation.
+  final DateTime createdAt;
+
+  /// UTC timestamp of the last change; drives incremental sync.
+  final DateTime updatedAt;
+  const MonthCleanupMarker({
+    required this.id,
+    this.shopId,
+    required this.month,
+    required this.tablesJson,
+    required this.deletedCountsJson,
+    required this.completedAt,
+    required this.applied,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    if (!nullToAbsent || shopId != null) {
+      map['shop_id'] = Variable<String>(shopId);
+    }
+    map['month'] = Variable<DateTime>(month);
+    map['tables_json'] = Variable<String>(tablesJson);
+    map['deleted_counts_json'] = Variable<String>(deletedCountsJson);
+    map['completed_at'] = Variable<DateTime>(completedAt);
+    map['applied'] = Variable<bool>(applied);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  MonthCleanupMarkersCompanion toCompanion(bool nullToAbsent) {
+    return MonthCleanupMarkersCompanion(
+      id: Value(id),
+      shopId: shopId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(shopId),
+      month: Value(month),
+      tablesJson: Value(tablesJson),
+      deletedCountsJson: Value(deletedCountsJson),
+      completedAt: Value(completedAt),
+      applied: Value(applied),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory MonthCleanupMarker.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MonthCleanupMarker(
+      id: serializer.fromJson<String>(json['id']),
+      shopId: serializer.fromJson<String?>(json['shopId']),
+      month: serializer.fromJson<DateTime>(json['month']),
+      tablesJson: serializer.fromJson<String>(json['tablesJson']),
+      deletedCountsJson: serializer.fromJson<String>(json['deletedCountsJson']),
+      completedAt: serializer.fromJson<DateTime>(json['completedAt']),
+      applied: serializer.fromJson<bool>(json['applied']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'shopId': serializer.toJson<String?>(shopId),
+      'month': serializer.toJson<DateTime>(month),
+      'tablesJson': serializer.toJson<String>(tablesJson),
+      'deletedCountsJson': serializer.toJson<String>(deletedCountsJson),
+      'completedAt': serializer.toJson<DateTime>(completedAt),
+      'applied': serializer.toJson<bool>(applied),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  MonthCleanupMarker copyWith({
+    String? id,
+    Value<String?> shopId = const Value.absent(),
+    DateTime? month,
+    String? tablesJson,
+    String? deletedCountsJson,
+    DateTime? completedAt,
+    bool? applied,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => MonthCleanupMarker(
+    id: id ?? this.id,
+    shopId: shopId.present ? shopId.value : this.shopId,
+    month: month ?? this.month,
+    tablesJson: tablesJson ?? this.tablesJson,
+    deletedCountsJson: deletedCountsJson ?? this.deletedCountsJson,
+    completedAt: completedAt ?? this.completedAt,
+    applied: applied ?? this.applied,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  MonthCleanupMarker copyWithCompanion(MonthCleanupMarkersCompanion data) {
+    return MonthCleanupMarker(
+      id: data.id.present ? data.id.value : this.id,
+      shopId: data.shopId.present ? data.shopId.value : this.shopId,
+      month: data.month.present ? data.month.value : this.month,
+      tablesJson: data.tablesJson.present
+          ? data.tablesJson.value
+          : this.tablesJson,
+      deletedCountsJson: data.deletedCountsJson.present
+          ? data.deletedCountsJson.value
+          : this.deletedCountsJson,
+      completedAt: data.completedAt.present
+          ? data.completedAt.value
+          : this.completedAt,
+      applied: data.applied.present ? data.applied.value : this.applied,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MonthCleanupMarker(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('month: $month, ')
+          ..write('tablesJson: $tablesJson, ')
+          ..write('deletedCountsJson: $deletedCountsJson, ')
+          ..write('completedAt: $completedAt, ')
+          ..write('applied: $applied, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    shopId,
+    month,
+    tablesJson,
+    deletedCountsJson,
+    completedAt,
+    applied,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MonthCleanupMarker &&
+          other.id == this.id &&
+          other.shopId == this.shopId &&
+          other.month == this.month &&
+          other.tablesJson == this.tablesJson &&
+          other.deletedCountsJson == this.deletedCountsJson &&
+          other.completedAt == this.completedAt &&
+          other.applied == this.applied &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class MonthCleanupMarkersCompanion extends UpdateCompanion<MonthCleanupMarker> {
+  final Value<String> id;
+  final Value<String?> shopId;
+  final Value<DateTime> month;
+  final Value<String> tablesJson;
+  final Value<String> deletedCountsJson;
+  final Value<DateTime> completedAt;
+  final Value<bool> applied;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const MonthCleanupMarkersCompanion({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    this.month = const Value.absent(),
+    this.tablesJson = const Value.absent(),
+    this.deletedCountsJson = const Value.absent(),
+    this.completedAt = const Value.absent(),
+    this.applied = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MonthCleanupMarkersCompanion.insert({
+    this.id = const Value.absent(),
+    this.shopId = const Value.absent(),
+    required DateTime month,
+    this.tablesJson = const Value.absent(),
+    this.deletedCountsJson = const Value.absent(),
+    required DateTime completedAt,
+    this.applied = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : month = Value(month),
+       completedAt = Value(completedAt);
+  static Insertable<MonthCleanupMarker> custom({
+    Expression<String>? id,
+    Expression<String>? shopId,
+    Expression<DateTime>? month,
+    Expression<String>? tablesJson,
+    Expression<String>? deletedCountsJson,
+    Expression<DateTime>? completedAt,
+    Expression<bool>? applied,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (shopId != null) 'shop_id': shopId,
+      if (month != null) 'month': month,
+      if (tablesJson != null) 'tables_json': tablesJson,
+      if (deletedCountsJson != null) 'deleted_counts_json': deletedCountsJson,
+      if (completedAt != null) 'completed_at': completedAt,
+      if (applied != null) 'applied': applied,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MonthCleanupMarkersCompanion copyWith({
+    Value<String>? id,
+    Value<String?>? shopId,
+    Value<DateTime>? month,
+    Value<String>? tablesJson,
+    Value<String>? deletedCountsJson,
+    Value<DateTime>? completedAt,
+    Value<bool>? applied,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return MonthCleanupMarkersCompanion(
+      id: id ?? this.id,
+      shopId: shopId ?? this.shopId,
+      month: month ?? this.month,
+      tablesJson: tablesJson ?? this.tablesJson,
+      deletedCountsJson: deletedCountsJson ?? this.deletedCountsJson,
+      completedAt: completedAt ?? this.completedAt,
+      applied: applied ?? this.applied,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (shopId.present) {
+      map['shop_id'] = Variable<String>(shopId.value);
+    }
+    if (month.present) {
+      map['month'] = Variable<DateTime>(month.value);
+    }
+    if (tablesJson.present) {
+      map['tables_json'] = Variable<String>(tablesJson.value);
+    }
+    if (deletedCountsJson.present) {
+      map['deleted_counts_json'] = Variable<String>(deletedCountsJson.value);
+    }
+    if (completedAt.present) {
+      map['completed_at'] = Variable<DateTime>(completedAt.value);
+    }
+    if (applied.present) {
+      map['applied'] = Variable<bool>(applied.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MonthCleanupMarkersCompanion(')
+          ..write('id: $id, ')
+          ..write('shopId: $shopId, ')
+          ..write('month: $month, ')
+          ..write('tablesJson: $tablesJson, ')
+          ..write('deletedCountsJson: $deletedCountsJson, ')
+          ..write('completedAt: $completedAt, ')
+          ..write('applied: $applied, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $StaffAttendanceTable extends StaffAttendance
     with TableInfo<$StaffAttendanceTable, StaffAttendanceData> {
   @override
@@ -16955,6 +19337,32 @@ class $StaffAttendanceTable extends StaffAttendance
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _isLeaveMeta = const VerificationMeta(
+    'isLeave',
+  );
+  @override
+  late final GeneratedColumn<bool> isLeave = GeneratedColumn<bool>(
+    'is_leave',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_leave" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _leaveReasonMeta = const VerificationMeta(
+    'leaveReason',
+  );
+  @override
+  late final GeneratedColumn<String> leaveReason = GeneratedColumn<String>(
+    'leave_reason',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -16988,6 +19396,8 @@ class $StaffAttendanceTable extends StaffAttendance
     outAt,
     attendanceDate,
     workedMinutes,
+    isLeave,
+    leaveReason,
     createdAt,
     updatedAt,
   ];
@@ -17057,6 +19467,21 @@ class $StaffAttendanceTable extends StaffAttendance
         ),
       );
     }
+    if (data.containsKey('is_leave')) {
+      context.handle(
+        _isLeaveMeta,
+        isLeave.isAcceptableOrUnknown(data['is_leave']!, _isLeaveMeta),
+      );
+    }
+    if (data.containsKey('leave_reason')) {
+      context.handle(
+        _leaveReasonMeta,
+        leaveReason.isAcceptableOrUnknown(
+          data['leave_reason']!,
+          _leaveReasonMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -17106,6 +19531,14 @@ class $StaffAttendanceTable extends StaffAttendance
         DriftSqlType.int,
         data['${effectivePrefix}worked_minutes'],
       )!,
+      isLeave: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_leave'],
+      )!,
+      leaveReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}leave_reason'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -17146,6 +19579,14 @@ class StaffAttendanceData extends DataClass
   /// Worked minutes once the shift is closed; 0 while open.
   final int workedMinutes;
 
+  /// Day-level Leave marker: an explicit attendance state, never a fake
+  /// shift. Leave rows carry worked_minutes 0 (enforced server-side);
+  /// every pre-existing row stays a worked shift (false).
+  final bool isLeave;
+
+  /// Optional owner note recorded with a Leave day; null when absent.
+  final String? leaveReason;
+
   /// UTC timestamp of record creation.
   final DateTime createdAt;
 
@@ -17159,6 +19600,8 @@ class StaffAttendanceData extends DataClass
     this.outAt,
     required this.attendanceDate,
     required this.workedMinutes,
+    required this.isLeave,
+    this.leaveReason,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -17176,6 +19619,10 @@ class StaffAttendanceData extends DataClass
     }
     map['attendance_date'] = Variable<DateTime>(attendanceDate);
     map['worked_minutes'] = Variable<int>(workedMinutes);
+    map['is_leave'] = Variable<bool>(isLeave);
+    if (!nullToAbsent || leaveReason != null) {
+      map['leave_reason'] = Variable<String>(leaveReason);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -17194,6 +19641,10 @@ class StaffAttendanceData extends DataClass
           : Value(outAt),
       attendanceDate: Value(attendanceDate),
       workedMinutes: Value(workedMinutes),
+      isLeave: Value(isLeave),
+      leaveReason: leaveReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaveReason),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -17212,6 +19663,8 @@ class StaffAttendanceData extends DataClass
       outAt: serializer.fromJson<DateTime?>(json['outAt']),
       attendanceDate: serializer.fromJson<DateTime>(json['attendanceDate']),
       workedMinutes: serializer.fromJson<int>(json['workedMinutes']),
+      isLeave: serializer.fromJson<bool>(json['isLeave']),
+      leaveReason: serializer.fromJson<String?>(json['leaveReason']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -17227,6 +19680,8 @@ class StaffAttendanceData extends DataClass
       'outAt': serializer.toJson<DateTime?>(outAt),
       'attendanceDate': serializer.toJson<DateTime>(attendanceDate),
       'workedMinutes': serializer.toJson<int>(workedMinutes),
+      'isLeave': serializer.toJson<bool>(isLeave),
+      'leaveReason': serializer.toJson<String?>(leaveReason),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -17240,6 +19695,8 @@ class StaffAttendanceData extends DataClass
     Value<DateTime?> outAt = const Value.absent(),
     DateTime? attendanceDate,
     int? workedMinutes,
+    bool? isLeave,
+    Value<String?> leaveReason = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => StaffAttendanceData(
@@ -17250,6 +19707,8 @@ class StaffAttendanceData extends DataClass
     outAt: outAt.present ? outAt.value : this.outAt,
     attendanceDate: attendanceDate ?? this.attendanceDate,
     workedMinutes: workedMinutes ?? this.workedMinutes,
+    isLeave: isLeave ?? this.isLeave,
+    leaveReason: leaveReason.present ? leaveReason.value : this.leaveReason,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -17268,6 +19727,10 @@ class StaffAttendanceData extends DataClass
       workedMinutes: data.workedMinutes.present
           ? data.workedMinutes.value
           : this.workedMinutes,
+      isLeave: data.isLeave.present ? data.isLeave.value : this.isLeave,
+      leaveReason: data.leaveReason.present
+          ? data.leaveReason.value
+          : this.leaveReason,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -17283,6 +19746,8 @@ class StaffAttendanceData extends DataClass
           ..write('outAt: $outAt, ')
           ..write('attendanceDate: $attendanceDate, ')
           ..write('workedMinutes: $workedMinutes, ')
+          ..write('isLeave: $isLeave, ')
+          ..write('leaveReason: $leaveReason, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -17298,6 +19763,8 @@ class StaffAttendanceData extends DataClass
     outAt,
     attendanceDate,
     workedMinutes,
+    isLeave,
+    leaveReason,
     createdAt,
     updatedAt,
   );
@@ -17312,6 +19779,8 @@ class StaffAttendanceData extends DataClass
           other.outAt == this.outAt &&
           other.attendanceDate == this.attendanceDate &&
           other.workedMinutes == this.workedMinutes &&
+          other.isLeave == this.isLeave &&
+          other.leaveReason == this.leaveReason &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -17324,6 +19793,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
   final Value<DateTime?> outAt;
   final Value<DateTime> attendanceDate;
   final Value<int> workedMinutes;
+  final Value<bool> isLeave;
+  final Value<String?> leaveReason;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
@@ -17335,6 +19806,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
     this.outAt = const Value.absent(),
     this.attendanceDate = const Value.absent(),
     this.workedMinutes = const Value.absent(),
+    this.isLeave = const Value.absent(),
+    this.leaveReason = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -17347,6 +19820,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
     this.outAt = const Value.absent(),
     required DateTime attendanceDate,
     this.workedMinutes = const Value.absent(),
+    this.isLeave = const Value.absent(),
+    this.leaveReason = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -17361,6 +19836,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
     Expression<DateTime>? outAt,
     Expression<DateTime>? attendanceDate,
     Expression<int>? workedMinutes,
+    Expression<bool>? isLeave,
+    Expression<String>? leaveReason,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
@@ -17373,6 +19850,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
       if (outAt != null) 'out_at': outAt,
       if (attendanceDate != null) 'attendance_date': attendanceDate,
       if (workedMinutes != null) 'worked_minutes': workedMinutes,
+      if (isLeave != null) 'is_leave': isLeave,
+      if (leaveReason != null) 'leave_reason': leaveReason,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -17387,6 +19866,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
     Value<DateTime?>? outAt,
     Value<DateTime>? attendanceDate,
     Value<int>? workedMinutes,
+    Value<bool>? isLeave,
+    Value<String?>? leaveReason,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
@@ -17399,6 +19880,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
       outAt: outAt ?? this.outAt,
       attendanceDate: attendanceDate ?? this.attendanceDate,
       workedMinutes: workedMinutes ?? this.workedMinutes,
+      isLeave: isLeave ?? this.isLeave,
+      leaveReason: leaveReason ?? this.leaveReason,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -17429,6 +19912,12 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
     if (workedMinutes.present) {
       map['worked_minutes'] = Variable<int>(workedMinutes.value);
     }
+    if (isLeave.present) {
+      map['is_leave'] = Variable<bool>(isLeave.value);
+    }
+    if (leaveReason.present) {
+      map['leave_reason'] = Variable<String>(leaveReason.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -17451,6 +19940,8 @@ class StaffAttendanceCompanion extends UpdateCompanion<StaffAttendanceData> {
           ..write('outAt: $outAt, ')
           ..write('attendanceDate: $attendanceDate, ')
           ..write('workedMinutes: $workedMinutes, ')
+          ..write('isLeave: $isLeave, ')
+          ..write('leaveReason: $leaveReason, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -19845,6 +22336,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $ProductVariantsTable productVariants = $ProductVariantsTable(
     this,
   );
+  late final $ProductRecipesTable productRecipes = $ProductRecipesTable(this);
   late final $CustomersTable customers = $CustomersTable(this);
   late final $SalesTable sales = $SalesTable(this);
   late final $CustomerPaymentsTable customerPayments = $CustomerPaymentsTable(
@@ -19874,6 +22366,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $StorageCleanupNotificationTable(this);
   late final $StorageCleanupStateTable storageCleanupState =
       $StorageCleanupStateTable(this);
+  late final $StorageMonthlySnapshotsTable storageMonthlySnapshots =
+      $StorageMonthlySnapshotsTable(this);
+  late final $MonthlyReportConfirmationsTable monthlyReportConfirmations =
+      $MonthlyReportConfirmationsTable(this);
+  late final $MonthCleanupMarkersTable monthCleanupMarkers =
+      $MonthCleanupMarkersTable(this);
   late final $StaffAttendanceTable staffAttendance = $StaffAttendanceTable(
     this,
   );
@@ -19935,6 +22433,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxProductsUpdatedAt = Index(
     'idx_products_updated_at',
     'CREATE INDEX idx_products_updated_at ON products (shop_id, updated_at)',
+  );
+  late final Index idxProductRecipesProduct = Index(
+    'idx_product_recipes_product',
+    'CREATE INDEX idx_product_recipes_product ON product_recipes (shop_id, product_id, variant_id)',
+  );
+  late final Index idxProductRecipesUpdatedAt = Index(
+    'idx_product_recipes_updated_at',
+    'CREATE INDEX idx_product_recipes_updated_at ON product_recipes (updated_at)',
   );
   late final Index idxProductVariantsShop = Index(
     'idx_product_variants_shop',
@@ -20116,6 +22622,30 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_storage_cleanup_notification',
     'CREATE INDEX idx_storage_cleanup_notification ON storage_cleanup_notification (shop_id, kind)',
   );
+  late final Index idxStorageMonthlySnapshotsShop = Index(
+    'idx_storage_monthly_snapshots_shop',
+    'CREATE INDEX idx_storage_monthly_snapshots_shop ON storage_monthly_snapshots (shop_id)',
+  );
+  late final Index idxStorageMonthlySnapshotsMonth = Index(
+    'idx_storage_monthly_snapshots_month',
+    'CREATE INDEX idx_storage_monthly_snapshots_month ON storage_monthly_snapshots (month)',
+  );
+  late final Index idxMonthlyReportConfirmationsShop = Index(
+    'idx_monthly_report_confirmations_shop',
+    'CREATE INDEX idx_monthly_report_confirmations_shop ON monthly_report_confirmations (shop_id)',
+  );
+  late final Index idxMonthlyReportConfirmationsMonth = Index(
+    'idx_monthly_report_confirmations_month',
+    'CREATE INDEX idx_monthly_report_confirmations_month ON monthly_report_confirmations (shop_id, month)',
+  );
+  late final Index idxMonthCleanupMarkersShop = Index(
+    'idx_month_cleanup_markers_shop',
+    'CREATE INDEX idx_month_cleanup_markers_shop ON month_cleanup_markers (shop_id)',
+  );
+  late final Index idxMonthCleanupMarkersMonth = Index(
+    'idx_month_cleanup_markers_month',
+    'CREATE INDEX idx_month_cleanup_markers_month ON month_cleanup_markers (shop_id, month)',
+  );
   late final Index idxStaffAttendanceShopDate = Index(
     'idx_staff_attendance_shop_date',
     'CREATE INDEX idx_staff_attendance_shop_date ON staff_attendance (shop_id, attendance_date)',
@@ -20186,6 +22716,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     categories,
     products,
     productVariants,
+    productRecipes,
     customers,
     sales,
     customerPayments,
@@ -20204,6 +22735,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     shopProductStock,
     storageCleanupNotification,
     storageCleanupState,
+    storageMonthlySnapshots,
+    monthlyReportConfirmations,
+    monthCleanupMarkers,
     staffAttendance,
     staffAdvances,
     staffDailySalary,
@@ -20222,6 +22756,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxProductsCategoryId,
     idxProductsName,
     idxProductsUpdatedAt,
+    idxProductRecipesProduct,
+    idxProductRecipesUpdatedAt,
     idxProductVariantsShop,
     idxProductVariantsProductId,
     idxProductVariantsSku,
@@ -20267,6 +22803,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     uxShopProductStockProductLevel,
     uxShopProductStockVariantLevel,
     idxStorageCleanupNotification,
+    idxStorageMonthlySnapshotsShop,
+    idxStorageMonthlySnapshotsMonth,
+    idxMonthlyReportConfirmationsShop,
+    idxMonthlyReportConfirmationsMonth,
+    idxMonthCleanupMarkersShop,
+    idxMonthCleanupMarkersMonth,
     idxStaffAttendanceShopDate,
     idxStaffAttendanceStaffDate,
     idxStaffAttendanceUpdatedAt,
@@ -20311,6 +22853,41 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('product_variants', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'shops',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('product_recipes', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'products',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('product_recipes', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'product_variants',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('product_recipes', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'products',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('product_recipes', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'product_variants',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('product_recipes', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -20423,6 +23000,31 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('shop_product_stock', kind: UpdateKind.update)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'shops',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('storage_monthly_snapshots', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'shops',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('monthly_report_confirmations', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'shops',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('month_cleanup_markers', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -20606,6 +23208,24 @@ final class $$ShopsTableReferences
     final cache = $_typedResult.readTableOrNull(
       _productVariantsRefsTable($_db),
     );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$ProductRecipesTable, List<ProductRecipe>>
+  _productRecipesRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.productRecipes,
+    aliasName: $_aliasNameGenerator(db.shops.id, db.productRecipes.shopId),
+  );
+
+  $$ProductRecipesTableProcessedTableManager get productRecipesRefs {
+    final manager = $$ProductRecipesTableTableManager(
+      $_db,
+      $_db.productRecipes,
+    ).filter((f) => f.shopId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_productRecipesRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -20878,6 +23498,89 @@ final class $$ShopsTableReferences
     );
   }
 
+  static MultiTypedResultKey<
+    $StorageMonthlySnapshotsTable,
+    List<StorageMonthlySnapshot>
+  >
+  _storageMonthlySnapshotsRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.storageMonthlySnapshots,
+        aliasName: $_aliasNameGenerator(
+          db.shops.id,
+          db.storageMonthlySnapshots.shopId,
+        ),
+      );
+
+  $$StorageMonthlySnapshotsTableProcessedTableManager
+  get storageMonthlySnapshotsRefs {
+    final manager = $$StorageMonthlySnapshotsTableTableManager(
+      $_db,
+      $_db.storageMonthlySnapshots,
+    ).filter((f) => f.shopId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _storageMonthlySnapshotsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<
+    $MonthlyReportConfirmationsTable,
+    List<MonthlyReportConfirmation>
+  >
+  _monthlyReportConfirmationsRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.monthlyReportConfirmations,
+        aliasName: $_aliasNameGenerator(
+          db.shops.id,
+          db.monthlyReportConfirmations.shopId,
+        ),
+      );
+
+  $$MonthlyReportConfirmationsTableProcessedTableManager
+  get monthlyReportConfirmationsRefs {
+    final manager = $$MonthlyReportConfirmationsTableTableManager(
+      $_db,
+      $_db.monthlyReportConfirmations,
+    ).filter((f) => f.shopId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _monthlyReportConfirmationsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<
+    $MonthCleanupMarkersTable,
+    List<MonthCleanupMarker>
+  >
+  _monthCleanupMarkersRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.monthCleanupMarkers,
+        aliasName: $_aliasNameGenerator(
+          db.shops.id,
+          db.monthCleanupMarkers.shopId,
+        ),
+      );
+
+  $$MonthCleanupMarkersTableProcessedTableManager get monthCleanupMarkersRefs {
+    final manager = $$MonthCleanupMarkersTableTableManager(
+      $_db,
+      $_db.monthCleanupMarkers,
+    ).filter((f) => f.shopId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _monthCleanupMarkersRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
   static MultiTypedResultKey<$StaffAttendanceTable, List<StaffAttendanceData>>
   _staffAttendanceRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
     db.staffAttendance,
@@ -21132,6 +23835,31 @@ class $$ShopsTableFilterComposer extends Composer<_$AppDatabase, $ShopsTable> {
           }) => $$ProductVariantsTableFilterComposer(
             $db: $db,
             $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> productRecipesRefs(
+    Expression<bool> Function($$ProductRecipesTableFilterComposer f) f,
+  ) {
+    final $$ProductRecipesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.productRecipes,
+      getReferencedColumn: (t) => t.shopId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductRecipesTableFilterComposer(
+            $db: $db,
+            $table: $db.productRecipes,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -21491,6 +24219,84 @@ class $$ShopsTableFilterComposer extends Composer<_$AppDatabase, $ShopsTable> {
     return f(composer);
   }
 
+  Expression<bool> storageMonthlySnapshotsRefs(
+    Expression<bool> Function($$StorageMonthlySnapshotsTableFilterComposer f) f,
+  ) {
+    final $$StorageMonthlySnapshotsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.storageMonthlySnapshots,
+          getReferencedColumn: (t) => t.shopId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$StorageMonthlySnapshotsTableFilterComposer(
+                $db: $db,
+                $table: $db.storageMonthlySnapshots,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<bool> monthlyReportConfirmationsRefs(
+    Expression<bool> Function($$MonthlyReportConfirmationsTableFilterComposer f)
+    f,
+  ) {
+    final $$MonthlyReportConfirmationsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.monthlyReportConfirmations,
+          getReferencedColumn: (t) => t.shopId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$MonthlyReportConfirmationsTableFilterComposer(
+                $db: $db,
+                $table: $db.monthlyReportConfirmations,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<bool> monthCleanupMarkersRefs(
+    Expression<bool> Function($$MonthCleanupMarkersTableFilterComposer f) f,
+  ) {
+    final $$MonthCleanupMarkersTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.monthCleanupMarkers,
+      getReferencedColumn: (t) => t.shopId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$MonthCleanupMarkersTableFilterComposer(
+            $db: $db,
+            $table: $db.monthCleanupMarkers,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
   Expression<bool> staffAttendanceRefs(
     Expression<bool> Function($$StaffAttendanceTableFilterComposer f) f,
   ) {
@@ -21794,6 +24600,31 @@ class $$ShopsTableAnnotationComposer
           }) => $$ProductVariantsTableAnnotationComposer(
             $db: $db,
             $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<T> productRecipesRefs<T extends Object>(
+    Expression<T> Function($$ProductRecipesTableAnnotationComposer a) f,
+  ) {
+    final $$ProductRecipesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.productRecipes,
+      getReferencedColumn: (t) => t.shopId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductRecipesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.productRecipes,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -22154,6 +24985,88 @@ class $$ShopsTableAnnotationComposer
     return f(composer);
   }
 
+  Expression<T> storageMonthlySnapshotsRefs<T extends Object>(
+    Expression<T> Function($$StorageMonthlySnapshotsTableAnnotationComposer a)
+    f,
+  ) {
+    final $$StorageMonthlySnapshotsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.storageMonthlySnapshots,
+          getReferencedColumn: (t) => t.shopId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$StorageMonthlySnapshotsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.storageMonthlySnapshots,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<T> monthlyReportConfirmationsRefs<T extends Object>(
+    Expression<T> Function(
+      $$MonthlyReportConfirmationsTableAnnotationComposer a,
+    )
+    f,
+  ) {
+    final $$MonthlyReportConfirmationsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.monthlyReportConfirmations,
+          getReferencedColumn: (t) => t.shopId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$MonthlyReportConfirmationsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.monthlyReportConfirmations,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<T> monthCleanupMarkersRefs<T extends Object>(
+    Expression<T> Function($$MonthCleanupMarkersTableAnnotationComposer a) f,
+  ) {
+    final $$MonthCleanupMarkersTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.monthCleanupMarkers,
+          getReferencedColumn: (t) => t.shopId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$MonthCleanupMarkersTableAnnotationComposer(
+                $db: $db,
+                $table: $db.monthCleanupMarkers,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
   Expression<T> staffAttendanceRefs<T extends Object>(
     Expression<T> Function($$StaffAttendanceTableAnnotationComposer a) f,
   ) {
@@ -22300,6 +25213,7 @@ class $$ShopsTableTableManager
             bool categoriesRefs,
             bool productsRefs,
             bool productVariantsRefs,
+            bool productRecipesRefs,
             bool customersRefs,
             bool salesRefs,
             bool customerPaymentsRefs,
@@ -22314,6 +25228,9 @@ class $$ShopsTableTableManager
             bool purchaseSequencesRefs,
             bool offersRefs,
             bool shopProductStockRefs,
+            bool storageMonthlySnapshotsRefs,
+            bool monthlyReportConfirmationsRefs,
+            bool monthCleanupMarkersRefs,
             bool staffAttendanceRefs,
             bool staffAdvancesRefs,
             bool staffDailySalaryRefs,
@@ -22377,6 +25294,7 @@ class $$ShopsTableTableManager
                 categoriesRefs = false,
                 productsRefs = false,
                 productVariantsRefs = false,
+                productRecipesRefs = false,
                 customersRefs = false,
                 salesRefs = false,
                 customerPaymentsRefs = false,
@@ -22391,6 +25309,9 @@ class $$ShopsTableTableManager
                 purchaseSequencesRefs = false,
                 offersRefs = false,
                 shopProductStockRefs = false,
+                storageMonthlySnapshotsRefs = false,
+                monthlyReportConfirmationsRefs = false,
+                monthCleanupMarkersRefs = false,
                 staffAttendanceRefs = false,
                 staffAdvancesRefs = false,
                 staffDailySalaryRefs = false,
@@ -22405,6 +25326,7 @@ class $$ShopsTableTableManager
                     if (categoriesRefs) db.categories,
                     if (productsRefs) db.products,
                     if (productVariantsRefs) db.productVariants,
+                    if (productRecipesRefs) db.productRecipes,
                     if (customersRefs) db.customers,
                     if (salesRefs) db.sales,
                     if (customerPaymentsRefs) db.customerPayments,
@@ -22419,6 +25341,10 @@ class $$ShopsTableTableManager
                     if (purchaseSequencesRefs) db.purchaseSequences,
                     if (offersRefs) db.offers,
                     if (shopProductStockRefs) db.shopProductStock,
+                    if (storageMonthlySnapshotsRefs) db.storageMonthlySnapshots,
+                    if (monthlyReportConfirmationsRefs)
+                      db.monthlyReportConfirmations,
+                    if (monthCleanupMarkersRefs) db.monthCleanupMarkers,
                     if (staffAttendanceRefs) db.staffAttendance,
                     if (staffAdvancesRefs) db.staffAdvances,
                     if (staffDailySalaryRefs) db.staffDailySalary,
@@ -22503,6 +25429,27 @@ class $$ShopsTableTableManager
                                 table,
                                 p0,
                               ).productVariantsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.shopId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (productRecipesRefs)
+                        await $_getPrefetchedData<
+                          Shop,
+                          $ShopsTable,
+                          ProductRecipe
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ShopsTableReferences
+                              ._productRecipesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ShopsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).productRecipesRefs,
                           referencedItemsForCurrentItem:
                               (item, referencedItems) => referencedItems.where(
                                 (e) => e.shopId == item.id,
@@ -22767,6 +25714,69 @@ class $$ShopsTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (storageMonthlySnapshotsRefs)
+                        await $_getPrefetchedData<
+                          Shop,
+                          $ShopsTable,
+                          StorageMonthlySnapshot
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ShopsTableReferences
+                              ._storageMonthlySnapshotsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ShopsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).storageMonthlySnapshotsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.shopId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (monthlyReportConfirmationsRefs)
+                        await $_getPrefetchedData<
+                          Shop,
+                          $ShopsTable,
+                          MonthlyReportConfirmation
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ShopsTableReferences
+                              ._monthlyReportConfirmationsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ShopsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).monthlyReportConfirmationsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.shopId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (monthCleanupMarkersRefs)
+                        await $_getPrefetchedData<
+                          Shop,
+                          $ShopsTable,
+                          MonthCleanupMarker
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ShopsTableReferences
+                              ._monthCleanupMarkersRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ShopsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).monthCleanupMarkersRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.shopId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                       if (staffAttendanceRefs)
                         await $_getPrefetchedData<
                           Shop,
@@ -22898,6 +25908,7 @@ typedef $$ShopsTableProcessedTableManager =
         bool categoriesRefs,
         bool productsRefs,
         bool productVariantsRefs,
+        bool productRecipesRefs,
         bool customersRefs,
         bool salesRefs,
         bool customerPaymentsRefs,
@@ -22912,6 +25923,9 @@ typedef $$ShopsTableProcessedTableManager =
         bool purchaseSequencesRefs,
         bool offersRefs,
         bool shopProductStockRefs,
+        bool storageMonthlySnapshotsRefs,
+        bool monthlyReportConfirmationsRefs,
+        bool monthCleanupMarkersRefs,
         bool staffAttendanceRefs,
         bool staffAdvancesRefs,
         bool staffDailySalaryRefs,
@@ -25524,6 +28538,7 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<String?> imagePath,
       Value<String?> cloudImagePath,
       Value<bool> isActive,
+      Value<bool> isIngredient,
       Value<bool> visibleInShops,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -25547,6 +28562,7 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<String?> imagePath,
       Value<String?> cloudImagePath,
       Value<bool> isActive,
+      Value<bool> isIngredient,
       Value<bool> visibleInShops,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -25717,6 +28733,11 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<bool> get isActive => $composableBuilder(
     column: $table.isActive,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isIngredient => $composableBuilder(
+    column: $table.isIngredient,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -25911,6 +28932,11 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isIngredient => $composableBuilder(
+    column: $table.isIngredient,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get visibleInShops => $composableBuilder(
     column: $table.visibleInShops,
     builder: (column) => ColumnOrderings(column),
@@ -26039,6 +29065,11 @@ class $$ProductsTableAnnotationComposer
 
   GeneratedColumn<bool> get isActive =>
       $composableBuilder(column: $table.isActive, builder: (column) => column);
+
+  GeneratedColumn<bool> get isIngredient => $composableBuilder(
+    column: $table.isIngredient,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<bool> get visibleInShops => $composableBuilder(
     column: $table.visibleInShops,
@@ -26197,6 +29228,7 @@ class $$ProductsTableTableManager
                 Value<String?> imagePath = const Value.absent(),
                 Value<String?> cloudImagePath = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
+                Value<bool> isIngredient = const Value.absent(),
                 Value<bool> visibleInShops = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -26218,6 +29250,7 @@ class $$ProductsTableTableManager
                 imagePath: imagePath,
                 cloudImagePath: cloudImagePath,
                 isActive: isActive,
+                isIngredient: isIngredient,
                 visibleInShops: visibleInShops,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -26241,6 +29274,7 @@ class $$ProductsTableTableManager
                 Value<String?> imagePath = const Value.absent(),
                 Value<String?> cloudImagePath = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
+                Value<bool> isIngredient = const Value.absent(),
                 Value<bool> visibleInShops = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -26262,6 +29296,7 @@ class $$ProductsTableTableManager
                 imagePath: imagePath,
                 cloudImagePath: cloudImagePath,
                 isActive: isActive,
+                isIngredient: isIngredient,
                 visibleInShops: visibleInShops,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -27133,6 +30168,796 @@ typedef $$ProductVariantsTableProcessedTableManager =
         bool shopId,
         bool productId,
         bool shopProductStockRefs,
+      })
+    >;
+typedef $$ProductRecipesTableCreateCompanionBuilder =
+    ProductRecipesCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      required String productId,
+      Value<String?> variantId,
+      required String ingredientProductId,
+      Value<String?> ingredientVariantId,
+      required int quantity,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+typedef $$ProductRecipesTableUpdateCompanionBuilder =
+    ProductRecipesCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      Value<String> productId,
+      Value<String?> variantId,
+      Value<String> ingredientProductId,
+      Value<String?> ingredientVariantId,
+      Value<int> quantity,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+final class $$ProductRecipesTableReferences
+    extends BaseReferences<_$AppDatabase, $ProductRecipesTable, ProductRecipe> {
+  $$ProductRecipesTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ShopsTable _shopIdTable(_$AppDatabase db) => db.shops.createAlias(
+    $_aliasNameGenerator(db.productRecipes.shopId, db.shops.id),
+  );
+
+  $$ShopsTableProcessedTableManager? get shopId {
+    final $_column = $_itemColumn<String>('shop_id');
+    if ($_column == null) return null;
+    final manager = $$ShopsTableTableManager(
+      $_db,
+      $_db.shops,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_shopIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $ProductsTable _productIdTable(_$AppDatabase db) =>
+      db.products.createAlias(
+        $_aliasNameGenerator(db.productRecipes.productId, db.products.id),
+      );
+
+  $$ProductsTableProcessedTableManager get productId {
+    final $_column = $_itemColumn<String>('product_id')!;
+
+    final manager = $$ProductsTableTableManager(
+      $_db,
+      $_db.products,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_productIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $ProductVariantsTable _variantIdTable(_$AppDatabase db) =>
+      db.productVariants.createAlias(
+        $_aliasNameGenerator(
+          db.productRecipes.variantId,
+          db.productVariants.id,
+        ),
+      );
+
+  $$ProductVariantsTableProcessedTableManager? get variantId {
+    final $_column = $_itemColumn<String>('variant_id');
+    if ($_column == null) return null;
+    final manager = $$ProductVariantsTableTableManager(
+      $_db,
+      $_db.productVariants,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_variantIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $ProductsTable _ingredientProductIdTable(_$AppDatabase db) =>
+      db.products.createAlias(
+        $_aliasNameGenerator(
+          db.productRecipes.ingredientProductId,
+          db.products.id,
+        ),
+      );
+
+  $$ProductsTableProcessedTableManager get ingredientProductId {
+    final $_column = $_itemColumn<String>('ingredient_product_id')!;
+
+    final manager = $$ProductsTableTableManager(
+      $_db,
+      $_db.products,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_ingredientProductIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $ProductVariantsTable _ingredientVariantIdTable(_$AppDatabase db) =>
+      db.productVariants.createAlias(
+        $_aliasNameGenerator(
+          db.productRecipes.ingredientVariantId,
+          db.productVariants.id,
+        ),
+      );
+
+  $$ProductVariantsTableProcessedTableManager? get ingredientVariantId {
+    final $_column = $_itemColumn<String>('ingredient_variant_id');
+    if ($_column == null) return null;
+    final manager = $$ProductVariantsTableTableManager(
+      $_db,
+      $_db.productVariants,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_ingredientVariantIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$ProductRecipesTableFilterComposer
+    extends Composer<_$AppDatabase, $ProductRecipesTable> {
+  $$ProductRecipesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get quantity => $composableBuilder(
+    column: $table.quantity,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ShopsTableFilterComposer get shopId {
+    final $$ShopsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableFilterComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductsTableFilterComposer get productId {
+    final $$ProductsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.productId,
+      referencedTable: $db.products,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductsTableFilterComposer(
+            $db: $db,
+            $table: $db.products,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductVariantsTableFilterComposer get variantId {
+    final $$ProductVariantsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.variantId,
+      referencedTable: $db.productVariants,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductVariantsTableFilterComposer(
+            $db: $db,
+            $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductsTableFilterComposer get ingredientProductId {
+    final $$ProductsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.ingredientProductId,
+      referencedTable: $db.products,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductsTableFilterComposer(
+            $db: $db,
+            $table: $db.products,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductVariantsTableFilterComposer get ingredientVariantId {
+    final $$ProductVariantsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.ingredientVariantId,
+      referencedTable: $db.productVariants,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductVariantsTableFilterComposer(
+            $db: $db,
+            $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ProductRecipesTableOrderingComposer
+    extends Composer<_$AppDatabase, $ProductRecipesTable> {
+  $$ProductRecipesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get quantity => $composableBuilder(
+    column: $table.quantity,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ShopsTableOrderingComposer get shopId {
+    final $$ShopsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableOrderingComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductsTableOrderingComposer get productId {
+    final $$ProductsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.productId,
+      referencedTable: $db.products,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductsTableOrderingComposer(
+            $db: $db,
+            $table: $db.products,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductVariantsTableOrderingComposer get variantId {
+    final $$ProductVariantsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.variantId,
+      referencedTable: $db.productVariants,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductVariantsTableOrderingComposer(
+            $db: $db,
+            $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductsTableOrderingComposer get ingredientProductId {
+    final $$ProductsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.ingredientProductId,
+      referencedTable: $db.products,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductsTableOrderingComposer(
+            $db: $db,
+            $table: $db.products,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductVariantsTableOrderingComposer get ingredientVariantId {
+    final $$ProductVariantsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.ingredientVariantId,
+      referencedTable: $db.productVariants,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductVariantsTableOrderingComposer(
+            $db: $db,
+            $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ProductRecipesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ProductRecipesTable> {
+  $$ProductRecipesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get quantity =>
+      $composableBuilder(column: $table.quantity, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  $$ShopsTableAnnotationComposer get shopId {
+    final $$ShopsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductsTableAnnotationComposer get productId {
+    final $$ProductsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.productId,
+      referencedTable: $db.products,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.products,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductVariantsTableAnnotationComposer get variantId {
+    final $$ProductVariantsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.variantId,
+      referencedTable: $db.productVariants,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductVariantsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductsTableAnnotationComposer get ingredientProductId {
+    final $$ProductsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.ingredientProductId,
+      referencedTable: $db.products,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.products,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ProductVariantsTableAnnotationComposer get ingredientVariantId {
+    final $$ProductVariantsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.ingredientVariantId,
+      referencedTable: $db.productVariants,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProductVariantsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.productVariants,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ProductRecipesTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $ProductRecipesTable,
+          ProductRecipe,
+          $$ProductRecipesTableFilterComposer,
+          $$ProductRecipesTableOrderingComposer,
+          $$ProductRecipesTableAnnotationComposer,
+          $$ProductRecipesTableCreateCompanionBuilder,
+          $$ProductRecipesTableUpdateCompanionBuilder,
+          (ProductRecipe, $$ProductRecipesTableReferences),
+          ProductRecipe,
+          PrefetchHooks Function({
+            bool shopId,
+            bool productId,
+            bool variantId,
+            bool ingredientProductId,
+            bool ingredientVariantId,
+          })
+        > {
+  $$ProductRecipesTableTableManager(
+    _$AppDatabase db,
+    $ProductRecipesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ProductRecipesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ProductRecipesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ProductRecipesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                Value<String> productId = const Value.absent(),
+                Value<String?> variantId = const Value.absent(),
+                Value<String> ingredientProductId = const Value.absent(),
+                Value<String?> ingredientVariantId = const Value.absent(),
+                Value<int> quantity = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ProductRecipesCompanion(
+                id: id,
+                shopId: shopId,
+                productId: productId,
+                variantId: variantId,
+                ingredientProductId: ingredientProductId,
+                ingredientVariantId: ingredientVariantId,
+                quantity: quantity,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                required String productId,
+                Value<String?> variantId = const Value.absent(),
+                required String ingredientProductId,
+                Value<String?> ingredientVariantId = const Value.absent(),
+                required int quantity,
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ProductRecipesCompanion.insert(
+                id: id,
+                shopId: shopId,
+                productId: productId,
+                variantId: variantId,
+                ingredientProductId: ingredientProductId,
+                ingredientVariantId: ingredientVariantId,
+                quantity: quantity,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$ProductRecipesTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback:
+              ({
+                shopId = false,
+                productId = false,
+                variantId = false,
+                ingredientProductId = false,
+                ingredientVariantId = false,
+              }) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [],
+                  addJoins:
+                      <
+                        T extends TableManagerState<
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic
+                        >
+                      >(state) {
+                        if (shopId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.shopId,
+                                    referencedTable:
+                                        $$ProductRecipesTableReferences
+                                            ._shopIdTable(db),
+                                    referencedColumn:
+                                        $$ProductRecipesTableReferences
+                                            ._shopIdTable(db)
+                                            .id,
+                                  )
+                                  as T;
+                        }
+                        if (productId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.productId,
+                                    referencedTable:
+                                        $$ProductRecipesTableReferences
+                                            ._productIdTable(db),
+                                    referencedColumn:
+                                        $$ProductRecipesTableReferences
+                                            ._productIdTable(db)
+                                            .id,
+                                  )
+                                  as T;
+                        }
+                        if (variantId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.variantId,
+                                    referencedTable:
+                                        $$ProductRecipesTableReferences
+                                            ._variantIdTable(db),
+                                    referencedColumn:
+                                        $$ProductRecipesTableReferences
+                                            ._variantIdTable(db)
+                                            .id,
+                                  )
+                                  as T;
+                        }
+                        if (ingredientProductId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.ingredientProductId,
+                                    referencedTable:
+                                        $$ProductRecipesTableReferences
+                                            ._ingredientProductIdTable(db),
+                                    referencedColumn:
+                                        $$ProductRecipesTableReferences
+                                            ._ingredientProductIdTable(db)
+                                            .id,
+                                  )
+                                  as T;
+                        }
+                        if (ingredientVariantId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.ingredientVariantId,
+                                    referencedTable:
+                                        $$ProductRecipesTableReferences
+                                            ._ingredientVariantIdTable(db),
+                                    referencedColumn:
+                                        $$ProductRecipesTableReferences
+                                            ._ingredientVariantIdTable(db)
+                                            .id,
+                                  )
+                                  as T;
+                        }
+
+                        return state;
+                      },
+                  getPrefetchedDataCallback: (items) async {
+                    return [];
+                  },
+                );
+              },
+        ),
+      );
+}
+
+typedef $$ProductRecipesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $ProductRecipesTable,
+      ProductRecipe,
+      $$ProductRecipesTableFilterComposer,
+      $$ProductRecipesTableOrderingComposer,
+      $$ProductRecipesTableAnnotationComposer,
+      $$ProductRecipesTableCreateCompanionBuilder,
+      $$ProductRecipesTableUpdateCompanionBuilder,
+      (ProductRecipe, $$ProductRecipesTableReferences),
+      ProductRecipe,
+      PrefetchHooks Function({
+        bool shopId,
+        bool productId,
+        bool variantId,
+        bool ingredientProductId,
+        bool ingredientVariantId,
       })
     >;
 typedef $$CustomersTableCreateCompanionBuilder =
@@ -35327,6 +39152,1253 @@ typedef $$StorageCleanupStateTableProcessedTableManager =
       StorageCleanupStateData,
       PrefetchHooks Function()
     >;
+typedef $$StorageMonthlySnapshotsTableCreateCompanionBuilder =
+    StorageMonthlySnapshotsCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      required DateTime month,
+      required String countsJson,
+      Value<int> logicalBytesEst,
+      Value<int?> dbBytesTotal,
+      required DateTime snapshotAt,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+typedef $$StorageMonthlySnapshotsTableUpdateCompanionBuilder =
+    StorageMonthlySnapshotsCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      Value<DateTime> month,
+      Value<String> countsJson,
+      Value<int> logicalBytesEst,
+      Value<int?> dbBytesTotal,
+      Value<DateTime> snapshotAt,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+final class $$StorageMonthlySnapshotsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $StorageMonthlySnapshotsTable,
+          StorageMonthlySnapshot
+        > {
+  $$StorageMonthlySnapshotsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ShopsTable _shopIdTable(_$AppDatabase db) => db.shops.createAlias(
+    $_aliasNameGenerator(db.storageMonthlySnapshots.shopId, db.shops.id),
+  );
+
+  $$ShopsTableProcessedTableManager? get shopId {
+    final $_column = $_itemColumn<String>('shop_id');
+    if ($_column == null) return null;
+    final manager = $$ShopsTableTableManager(
+      $_db,
+      $_db.shops,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_shopIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$StorageMonthlySnapshotsTableFilterComposer
+    extends Composer<_$AppDatabase, $StorageMonthlySnapshotsTable> {
+  $$StorageMonthlySnapshotsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get countsJson => $composableBuilder(
+    column: $table.countsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get logicalBytesEst => $composableBuilder(
+    column: $table.logicalBytesEst,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dbBytesTotal => $composableBuilder(
+    column: $table.dbBytesTotal,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get snapshotAt => $composableBuilder(
+    column: $table.snapshotAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ShopsTableFilterComposer get shopId {
+    final $$ShopsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableFilterComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$StorageMonthlySnapshotsTableOrderingComposer
+    extends Composer<_$AppDatabase, $StorageMonthlySnapshotsTable> {
+  $$StorageMonthlySnapshotsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get countsJson => $composableBuilder(
+    column: $table.countsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get logicalBytesEst => $composableBuilder(
+    column: $table.logicalBytesEst,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dbBytesTotal => $composableBuilder(
+    column: $table.dbBytesTotal,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get snapshotAt => $composableBuilder(
+    column: $table.snapshotAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ShopsTableOrderingComposer get shopId {
+    final $$ShopsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableOrderingComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$StorageMonthlySnapshotsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $StorageMonthlySnapshotsTable> {
+  $$StorageMonthlySnapshotsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get month =>
+      $composableBuilder(column: $table.month, builder: (column) => column);
+
+  GeneratedColumn<String> get countsJson => $composableBuilder(
+    column: $table.countsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get logicalBytesEst => $composableBuilder(
+    column: $table.logicalBytesEst,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get dbBytesTotal => $composableBuilder(
+    column: $table.dbBytesTotal,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get snapshotAt => $composableBuilder(
+    column: $table.snapshotAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  $$ShopsTableAnnotationComposer get shopId {
+    final $$ShopsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$StorageMonthlySnapshotsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $StorageMonthlySnapshotsTable,
+          StorageMonthlySnapshot,
+          $$StorageMonthlySnapshotsTableFilterComposer,
+          $$StorageMonthlySnapshotsTableOrderingComposer,
+          $$StorageMonthlySnapshotsTableAnnotationComposer,
+          $$StorageMonthlySnapshotsTableCreateCompanionBuilder,
+          $$StorageMonthlySnapshotsTableUpdateCompanionBuilder,
+          (StorageMonthlySnapshot, $$StorageMonthlySnapshotsTableReferences),
+          StorageMonthlySnapshot,
+          PrefetchHooks Function({bool shopId})
+        > {
+  $$StorageMonthlySnapshotsTableTableManager(
+    _$AppDatabase db,
+    $StorageMonthlySnapshotsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StorageMonthlySnapshotsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$StorageMonthlySnapshotsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$StorageMonthlySnapshotsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                Value<DateTime> month = const Value.absent(),
+                Value<String> countsJson = const Value.absent(),
+                Value<int> logicalBytesEst = const Value.absent(),
+                Value<int?> dbBytesTotal = const Value.absent(),
+                Value<DateTime> snapshotAt = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => StorageMonthlySnapshotsCompanion(
+                id: id,
+                shopId: shopId,
+                month: month,
+                countsJson: countsJson,
+                logicalBytesEst: logicalBytesEst,
+                dbBytesTotal: dbBytesTotal,
+                snapshotAt: snapshotAt,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                required DateTime month,
+                required String countsJson,
+                Value<int> logicalBytesEst = const Value.absent(),
+                Value<int?> dbBytesTotal = const Value.absent(),
+                required DateTime snapshotAt,
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => StorageMonthlySnapshotsCompanion.insert(
+                id: id,
+                shopId: shopId,
+                month: month,
+                countsJson: countsJson,
+                logicalBytesEst: logicalBytesEst,
+                dbBytesTotal: dbBytesTotal,
+                snapshotAt: snapshotAt,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$StorageMonthlySnapshotsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({shopId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (shopId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.shopId,
+                                referencedTable:
+                                    $$StorageMonthlySnapshotsTableReferences
+                                        ._shopIdTable(db),
+                                referencedColumn:
+                                    $$StorageMonthlySnapshotsTableReferences
+                                        ._shopIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$StorageMonthlySnapshotsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $StorageMonthlySnapshotsTable,
+      StorageMonthlySnapshot,
+      $$StorageMonthlySnapshotsTableFilterComposer,
+      $$StorageMonthlySnapshotsTableOrderingComposer,
+      $$StorageMonthlySnapshotsTableAnnotationComposer,
+      $$StorageMonthlySnapshotsTableCreateCompanionBuilder,
+      $$StorageMonthlySnapshotsTableUpdateCompanionBuilder,
+      (StorageMonthlySnapshot, $$StorageMonthlySnapshotsTableReferences),
+      StorageMonthlySnapshot,
+      PrefetchHooks Function({bool shopId})
+    >;
+typedef $$MonthlyReportConfirmationsTableCreateCompanionBuilder =
+    MonthlyReportConfirmationsCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      required DateTime month,
+      required DateTime confirmedAt,
+      Value<String?> confirmedBy,
+      Value<String> source,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+typedef $$MonthlyReportConfirmationsTableUpdateCompanionBuilder =
+    MonthlyReportConfirmationsCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      Value<DateTime> month,
+      Value<DateTime> confirmedAt,
+      Value<String?> confirmedBy,
+      Value<String> source,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+final class $$MonthlyReportConfirmationsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $MonthlyReportConfirmationsTable,
+          MonthlyReportConfirmation
+        > {
+  $$MonthlyReportConfirmationsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ShopsTable _shopIdTable(_$AppDatabase db) => db.shops.createAlias(
+    $_aliasNameGenerator(db.monthlyReportConfirmations.shopId, db.shops.id),
+  );
+
+  $$ShopsTableProcessedTableManager? get shopId {
+    final $_column = $_itemColumn<String>('shop_id');
+    if ($_column == null) return null;
+    final manager = $$ShopsTableTableManager(
+      $_db,
+      $_db.shops,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_shopIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$MonthlyReportConfirmationsTableFilterComposer
+    extends Composer<_$AppDatabase, $MonthlyReportConfirmationsTable> {
+  $$MonthlyReportConfirmationsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get confirmedAt => $composableBuilder(
+    column: $table.confirmedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get confirmedBy => $composableBuilder(
+    column: $table.confirmedBy,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ShopsTableFilterComposer get shopId {
+    final $$ShopsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableFilterComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$MonthlyReportConfirmationsTableOrderingComposer
+    extends Composer<_$AppDatabase, $MonthlyReportConfirmationsTable> {
+  $$MonthlyReportConfirmationsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get confirmedAt => $composableBuilder(
+    column: $table.confirmedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get confirmedBy => $composableBuilder(
+    column: $table.confirmedBy,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ShopsTableOrderingComposer get shopId {
+    final $$ShopsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableOrderingComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$MonthlyReportConfirmationsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $MonthlyReportConfirmationsTable> {
+  $$MonthlyReportConfirmationsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get month =>
+      $composableBuilder(column: $table.month, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get confirmedAt => $composableBuilder(
+    column: $table.confirmedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get confirmedBy => $composableBuilder(
+    column: $table.confirmedBy,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  $$ShopsTableAnnotationComposer get shopId {
+    final $$ShopsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$MonthlyReportConfirmationsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $MonthlyReportConfirmationsTable,
+          MonthlyReportConfirmation,
+          $$MonthlyReportConfirmationsTableFilterComposer,
+          $$MonthlyReportConfirmationsTableOrderingComposer,
+          $$MonthlyReportConfirmationsTableAnnotationComposer,
+          $$MonthlyReportConfirmationsTableCreateCompanionBuilder,
+          $$MonthlyReportConfirmationsTableUpdateCompanionBuilder,
+          (
+            MonthlyReportConfirmation,
+            $$MonthlyReportConfirmationsTableReferences,
+          ),
+          MonthlyReportConfirmation,
+          PrefetchHooks Function({bool shopId})
+        > {
+  $$MonthlyReportConfirmationsTableTableManager(
+    _$AppDatabase db,
+    $MonthlyReportConfirmationsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MonthlyReportConfirmationsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$MonthlyReportConfirmationsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$MonthlyReportConfirmationsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                Value<DateTime> month = const Value.absent(),
+                Value<DateTime> confirmedAt = const Value.absent(),
+                Value<String?> confirmedBy = const Value.absent(),
+                Value<String> source = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MonthlyReportConfirmationsCompanion(
+                id: id,
+                shopId: shopId,
+                month: month,
+                confirmedAt: confirmedAt,
+                confirmedBy: confirmedBy,
+                source: source,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                required DateTime month,
+                required DateTime confirmedAt,
+                Value<String?> confirmedBy = const Value.absent(),
+                Value<String> source = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MonthlyReportConfirmationsCompanion.insert(
+                id: id,
+                shopId: shopId,
+                month: month,
+                confirmedAt: confirmedAt,
+                confirmedBy: confirmedBy,
+                source: source,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$MonthlyReportConfirmationsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({shopId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (shopId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.shopId,
+                                referencedTable:
+                                    $$MonthlyReportConfirmationsTableReferences
+                                        ._shopIdTable(db),
+                                referencedColumn:
+                                    $$MonthlyReportConfirmationsTableReferences
+                                        ._shopIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$MonthlyReportConfirmationsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $MonthlyReportConfirmationsTable,
+      MonthlyReportConfirmation,
+      $$MonthlyReportConfirmationsTableFilterComposer,
+      $$MonthlyReportConfirmationsTableOrderingComposer,
+      $$MonthlyReportConfirmationsTableAnnotationComposer,
+      $$MonthlyReportConfirmationsTableCreateCompanionBuilder,
+      $$MonthlyReportConfirmationsTableUpdateCompanionBuilder,
+      (MonthlyReportConfirmation, $$MonthlyReportConfirmationsTableReferences),
+      MonthlyReportConfirmation,
+      PrefetchHooks Function({bool shopId})
+    >;
+typedef $$MonthCleanupMarkersTableCreateCompanionBuilder =
+    MonthCleanupMarkersCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      required DateTime month,
+      Value<String> tablesJson,
+      Value<String> deletedCountsJson,
+      required DateTime completedAt,
+      Value<bool> applied,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+typedef $$MonthCleanupMarkersTableUpdateCompanionBuilder =
+    MonthCleanupMarkersCompanion Function({
+      Value<String> id,
+      Value<String?> shopId,
+      Value<DateTime> month,
+      Value<String> tablesJson,
+      Value<String> deletedCountsJson,
+      Value<DateTime> completedAt,
+      Value<bool> applied,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+final class $$MonthCleanupMarkersTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $MonthCleanupMarkersTable,
+          MonthCleanupMarker
+        > {
+  $$MonthCleanupMarkersTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ShopsTable _shopIdTable(_$AppDatabase db) => db.shops.createAlias(
+    $_aliasNameGenerator(db.monthCleanupMarkers.shopId, db.shops.id),
+  );
+
+  $$ShopsTableProcessedTableManager? get shopId {
+    final $_column = $_itemColumn<String>('shop_id');
+    if ($_column == null) return null;
+    final manager = $$ShopsTableTableManager(
+      $_db,
+      $_db.shops,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_shopIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$MonthCleanupMarkersTableFilterComposer
+    extends Composer<_$AppDatabase, $MonthCleanupMarkersTable> {
+  $$MonthCleanupMarkersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tablesJson => $composableBuilder(
+    column: $table.tablesJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get deletedCountsJson => $composableBuilder(
+    column: $table.deletedCountsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get completedAt => $composableBuilder(
+    column: $table.completedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get applied => $composableBuilder(
+    column: $table.applied,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ShopsTableFilterComposer get shopId {
+    final $$ShopsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableFilterComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$MonthCleanupMarkersTableOrderingComposer
+    extends Composer<_$AppDatabase, $MonthCleanupMarkersTable> {
+  $$MonthCleanupMarkersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tablesJson => $composableBuilder(
+    column: $table.tablesJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get deletedCountsJson => $composableBuilder(
+    column: $table.deletedCountsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get completedAt => $composableBuilder(
+    column: $table.completedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get applied => $composableBuilder(
+    column: $table.applied,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ShopsTableOrderingComposer get shopId {
+    final $$ShopsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableOrderingComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$MonthCleanupMarkersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $MonthCleanupMarkersTable> {
+  $$MonthCleanupMarkersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get month =>
+      $composableBuilder(column: $table.month, builder: (column) => column);
+
+  GeneratedColumn<String> get tablesJson => $composableBuilder(
+    column: $table.tablesJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get deletedCountsJson => $composableBuilder(
+    column: $table.deletedCountsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get completedAt => $composableBuilder(
+    column: $table.completedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get applied =>
+      $composableBuilder(column: $table.applied, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  $$ShopsTableAnnotationComposer get shopId {
+    final $$ShopsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.shopId,
+      referencedTable: $db.shops,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ShopsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.shops,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$MonthCleanupMarkersTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $MonthCleanupMarkersTable,
+          MonthCleanupMarker,
+          $$MonthCleanupMarkersTableFilterComposer,
+          $$MonthCleanupMarkersTableOrderingComposer,
+          $$MonthCleanupMarkersTableAnnotationComposer,
+          $$MonthCleanupMarkersTableCreateCompanionBuilder,
+          $$MonthCleanupMarkersTableUpdateCompanionBuilder,
+          (MonthCleanupMarker, $$MonthCleanupMarkersTableReferences),
+          MonthCleanupMarker,
+          PrefetchHooks Function({bool shopId})
+        > {
+  $$MonthCleanupMarkersTableTableManager(
+    _$AppDatabase db,
+    $MonthCleanupMarkersTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MonthCleanupMarkersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$MonthCleanupMarkersTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$MonthCleanupMarkersTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                Value<DateTime> month = const Value.absent(),
+                Value<String> tablesJson = const Value.absent(),
+                Value<String> deletedCountsJson = const Value.absent(),
+                Value<DateTime> completedAt = const Value.absent(),
+                Value<bool> applied = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MonthCleanupMarkersCompanion(
+                id: id,
+                shopId: shopId,
+                month: month,
+                tablesJson: tablesJson,
+                deletedCountsJson: deletedCountsJson,
+                completedAt: completedAt,
+                applied: applied,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> shopId = const Value.absent(),
+                required DateTime month,
+                Value<String> tablesJson = const Value.absent(),
+                Value<String> deletedCountsJson = const Value.absent(),
+                required DateTime completedAt,
+                Value<bool> applied = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MonthCleanupMarkersCompanion.insert(
+                id: id,
+                shopId: shopId,
+                month: month,
+                tablesJson: tablesJson,
+                deletedCountsJson: deletedCountsJson,
+                completedAt: completedAt,
+                applied: applied,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$MonthCleanupMarkersTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({shopId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (shopId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.shopId,
+                                referencedTable:
+                                    $$MonthCleanupMarkersTableReferences
+                                        ._shopIdTable(db),
+                                referencedColumn:
+                                    $$MonthCleanupMarkersTableReferences
+                                        ._shopIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$MonthCleanupMarkersTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $MonthCleanupMarkersTable,
+      MonthCleanupMarker,
+      $$MonthCleanupMarkersTableFilterComposer,
+      $$MonthCleanupMarkersTableOrderingComposer,
+      $$MonthCleanupMarkersTableAnnotationComposer,
+      $$MonthCleanupMarkersTableCreateCompanionBuilder,
+      $$MonthCleanupMarkersTableUpdateCompanionBuilder,
+      (MonthCleanupMarker, $$MonthCleanupMarkersTableReferences),
+      MonthCleanupMarker,
+      PrefetchHooks Function({bool shopId})
+    >;
 typedef $$StaffAttendanceTableCreateCompanionBuilder =
     StaffAttendanceCompanion Function({
       Value<String> id,
@@ -35336,6 +40408,8 @@ typedef $$StaffAttendanceTableCreateCompanionBuilder =
       Value<DateTime?> outAt,
       required DateTime attendanceDate,
       Value<int> workedMinutes,
+      Value<bool> isLeave,
+      Value<String?> leaveReason,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -35349,6 +40423,8 @@ typedef $$StaffAttendanceTableUpdateCompanionBuilder =
       Value<DateTime?> outAt,
       Value<DateTime> attendanceDate,
       Value<int> workedMinutes,
+      Value<bool> isLeave,
+      Value<String?> leaveReason,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -35436,6 +40512,16 @@ class $$StaffAttendanceTableFilterComposer
 
   ColumnFilters<int> get workedMinutes => $composableBuilder(
     column: $table.workedMinutes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isLeave => $composableBuilder(
+    column: $table.isLeave,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaveReason => $composableBuilder(
+    column: $table.leaveReason,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -35530,6 +40616,16 @@ class $$StaffAttendanceTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isLeave => $composableBuilder(
+    column: $table.isLeave,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaveReason => $composableBuilder(
+    column: $table.leaveReason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -35612,6 +40708,14 @@ class $$StaffAttendanceTableAnnotationComposer
 
   GeneratedColumn<int> get workedMinutes => $composableBuilder(
     column: $table.workedMinutes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isLeave =>
+      $composableBuilder(column: $table.isLeave, builder: (column) => column);
+
+  GeneratedColumn<String> get leaveReason => $composableBuilder(
+    column: $table.leaveReason,
     builder: (column) => column,
   );
 
@@ -35705,6 +40809,8 @@ class $$StaffAttendanceTableTableManager
                 Value<DateTime?> outAt = const Value.absent(),
                 Value<DateTime> attendanceDate = const Value.absent(),
                 Value<int> workedMinutes = const Value.absent(),
+                Value<bool> isLeave = const Value.absent(),
+                Value<String?> leaveReason = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -35716,6 +40822,8 @@ class $$StaffAttendanceTableTableManager
                 outAt: outAt,
                 attendanceDate: attendanceDate,
                 workedMinutes: workedMinutes,
+                isLeave: isLeave,
+                leaveReason: leaveReason,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -35729,6 +40837,8 @@ class $$StaffAttendanceTableTableManager
                 Value<DateTime?> outAt = const Value.absent(),
                 required DateTime attendanceDate,
                 Value<int> workedMinutes = const Value.absent(),
+                Value<bool> isLeave = const Value.absent(),
+                Value<String?> leaveReason = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -35740,6 +40850,8 @@ class $$StaffAttendanceTableTableManager
                 outAt: outAt,
                 attendanceDate: attendanceDate,
                 workedMinutes: workedMinutes,
+                isLeave: isLeave,
+                leaveReason: leaveReason,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -37760,6 +42872,8 @@ class $AppDatabaseManager {
       $$ProductsTableTableManager(_db, _db.products);
   $$ProductVariantsTableTableManager get productVariants =>
       $$ProductVariantsTableTableManager(_db, _db.productVariants);
+  $$ProductRecipesTableTableManager get productRecipes =>
+      $$ProductRecipesTableTableManager(_db, _db.productRecipes);
   $$CustomersTableTableManager get customers =>
       $$CustomersTableTableManager(_db, _db.customers);
   $$SalesTableTableManager get sales =>
@@ -37800,6 +42914,19 @@ class $AppDatabaseManager {
       );
   $$StorageCleanupStateTableTableManager get storageCleanupState =>
       $$StorageCleanupStateTableTableManager(_db, _db.storageCleanupState);
+  $$StorageMonthlySnapshotsTableTableManager get storageMonthlySnapshots =>
+      $$StorageMonthlySnapshotsTableTableManager(
+        _db,
+        _db.storageMonthlySnapshots,
+      );
+  $$MonthlyReportConfirmationsTableTableManager
+  get monthlyReportConfirmations =>
+      $$MonthlyReportConfirmationsTableTableManager(
+        _db,
+        _db.monthlyReportConfirmations,
+      );
+  $$MonthCleanupMarkersTableTableManager get monthCleanupMarkers =>
+      $$MonthCleanupMarkersTableTableManager(_db, _db.monthCleanupMarkers);
   $$StaffAttendanceTableTableManager get staffAttendance =>
       $$StaffAttendanceTableTableManager(_db, _db.staffAttendance);
   $$StaffAdvancesTableTableManager get staffAdvances =>

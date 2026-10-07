@@ -34,6 +34,10 @@ final class FakeRemoteStore {
   final Map<String, StoredRow<SyncCategory>> categories = {};
   final Map<String, StoredRow<SyncProduct>> products = {};
   final Map<String, StoredRow<SyncProductVariant>> productVariants = {};
+  final Map<String, StoredRow<SyncProductRecipe>> productRecipes = {};
+  final Map<String, StoredRow<SyncMonthlyReportConfirmation>>
+  monthlyReportConfirmations = {};
+  final Map<String, StoredRow<SyncMonthCleanupMarker>> monthCleanupMarkers = {};
   final Map<String, StoredRow<SyncSupplier>> suppliers = {};
   final Map<String, StoredRow<SyncCustomer>> customers = {};
   final Map<String, StoredRow<SyncSale>> sales = {};
@@ -232,6 +236,42 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
       _ensureOnline();
     }
     return _page(_store.productVariants, since, limit, (r) => r.row);
+  }
+
+  // ---- Product recipes --------------------------------------------------------
+
+  @override
+  Future<void> upsertProductRecipes(List<SyncProductRecipe> rows) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.productRecipes[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.productRecipes[row.id] = StoredRow(
+          row,
+          row.shopId,
+          _store._tick(),
+        );
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncProductRecipe>> pullProductRecipes({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) {
+      _ensureOnline();
+    }
+    return _page(_store.productRecipes, since, limit, (r) => r.row);
   }
 
   // ---- Suppliers ---------------------------------------------------------------------
@@ -579,6 +619,83 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
       _ensureOnline();
     }
     return _page(_store.deletions, since, limit, (r) => r.row);
+  }
+
+  // ---- Monthly report confirmations -------------------------------------
+
+  @override
+  Future<void> upsertMonthlyReportConfirmations(
+    List<SyncMonthlyReportConfirmation> rows,
+  ) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.monthlyReportConfirmations[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.monthlyReportConfirmations[row.id] = StoredRow(
+          row,
+          row.shopId,
+          _store._tick(),
+        );
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncMonthlyReportConfirmation>>
+  pullMonthlyReportConfirmations({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) {
+      _ensureOnline();
+    }
+    return _page(_store.monthlyReportConfirmations, since, limit, (r) => r.row);
+  }
+
+  // ---- Month cleanup markers ------------------------------------------------
+
+  @override
+  Future<void> upsertMonthCleanupMarkers(
+    List<SyncMonthCleanupMarker> rows,
+  ) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    for (final row in rows) {
+      _rejectForeign(row.shopId);
+      final existing = _store.monthCleanupMarkers[row.id];
+      if (existing != null) {
+        existing
+          ..row = row
+          ..updatedAt = _store._tick();
+      } else {
+        _store.monthCleanupMarkers[row.id] = StoredRow(
+          row,
+          row.shopId,
+          _store._tick(),
+        );
+      }
+    }
+  }
+
+  @override
+  Future<PullPage<SyncMonthCleanupMarker>> pullMonthCleanupMarkers({
+    required DateTime since,
+    required int limit,
+  }) async {
+    if (pullsFail) {
+      _ensureOnline();
+    }
+    return _page(_store.monthCleanupMarkers, since, limit, (r) => r.row);
   }
 
   // ---- Shared page assembly ------------------------------------------------------------------

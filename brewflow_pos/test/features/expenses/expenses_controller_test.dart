@@ -27,7 +27,16 @@ void main() {
 
   /// Start of the current local day in UTC — expenses default to TODAY because
   /// the expenses filter defaults to the Today preset.
-  final todayUtc = DateTime(now.year, now.month, now.day).toUtc();
+  ///
+  /// Computed from the LOCAL day (not the UTC day): the filter bounds a whole
+  /// local day, so seeding from the UTC day lands on "yesterday" whenever the
+  /// two dates differ and the seeded rows fall outside the default view.
+  final localNow = DateTime.now();
+  final todayUtc = DateTime(
+    localNow.year,
+    localNow.month,
+    localNow.day,
+  ).toUtc();
 
   Expense expense(
     String id,

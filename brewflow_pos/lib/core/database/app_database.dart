@@ -15,7 +15,11 @@ import 'tables/daily_closings.dart';
 import 'tables/expense_payments.dart';
 import 'tables/expenses.dart';
 import 'tables/products.dart';
+import 'tables/product_recipes.dart';
 import 'tables/product_variants.dart';
+import 'tables/month_cleanup_markers.dart';
+import 'tables/monthly_report_confirmations.dart';
+import 'tables/storage_monthly_snapshots.dart';
 import 'tables/purchase_items.dart';
 import 'tables/purchase_sequences.dart';
 import 'tables/purchases.dart';
@@ -73,6 +77,7 @@ part 'app_database.g.dart';
     StaffPermissions,
     Categories,
     Products,
+    ProductRecipes,
     ProductVariants,
     Customers,
     CustomerPayments,
@@ -92,6 +97,9 @@ part 'app_database.g.dart';
     ShopProductStock,
     StorageCleanupNotification,
     StorageCleanupState,
+    StorageMonthlySnapshots,
+    MonthlyReportConfirmations,
+    MonthCleanupMarkers,
     StaffAttendance,
     StaffAdvances,
     StaffDailySalary,

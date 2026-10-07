@@ -76,16 +76,73 @@ final payrollMonthProvider =
     );
 
 /// The monthly attendance + manual-salary summary for one staff member.
+///
+/// Local-first paint: [build] serves the device mirror immediately (no
+/// network), then reconciles with the cloud in the background and refreshes
+/// when it lands — the Daily Closing pattern (tap → local save → immediate
+/// UI, cloud continues behind). The repository's own reads stay
+/// cloud-authoritative for every other caller; only this summary takes the
+/// local-first path, and reconciliation (pulls, conflict rules, retry) is
+/// unchanged, just asynchronous.
 final class PayrollSummaryController
     extends AsyncNotifier<MonthlyPayrollSummary> {
   PayrollSummaryController(this.staffUserId);
 
   final String staffUserId;
 
+  /// Set whenever the view (re)builds for a reason that may have moved cloud
+  /// state: first paint and every mutation. Consumed exactly once per build
+  /// so background reconciliations can never chase each other.
+  bool _reconcileArmed = true;
+
+  /// False once the provider is disposed; background work must never touch
+  /// a dead ref.
+  bool _alive = true;
+
   @override
   Future<MonthlyPayrollSummary> build() async {
+    ref.onDispose(() => _alive = false);
     final repository = ref.watch(staffPayrollRepositoryProvider);
     final month = ref.watch(payrollMonthProvider(staffUserId));
+    final summary = await _load(
+      repository: repository,
+      month: month,
+      localOnly: true,
+    );
+    if (_reconcileArmed) {
+      _reconcileArmed = false;
+      _reconcileInBackground(repository: repository, month: month);
+    }
+    return summary;
+  }
+
+  /// Cloud reconciliation behind the painted mirror: pulls the authoritative
+  /// reads (same calls, same conflict/prune rules as before) and refreshes
+  /// the view when they land. Best-effort and fully guarded — a failure or
+  /// a disposed provider leaves the already-painted local state alone.
+  Future<void> _reconcileInBackground({
+    required StaffPayrollRepository repository,
+    required DateTime month,
+  }) async {
+    try {
+      await _load(repository: repository, month: month, localOnly: false);
+    } catch (_) {
+      // Local DB failures surface on the next foreground build; cloud-pull
+      // failures are already best-effort inside the repository.
+    }
+    if (!_alive) return;
+    try {
+      ref.invalidateSelf();
+    } catch (_) {
+      // Disposed between the guard and the call: nothing to refresh.
+    }
+  }
+
+  Future<MonthlyPayrollSummary> _load({
+    required StaffPayrollRepository repository,
+    required DateTime month,
+    required bool localOnly,
+  }) async {
     final start = DateTime.utc(month.year, month.month);
     final end = DateTime.utc(month.year, month.month + 1);
     final shopIds = await _scopeShopIds();
@@ -94,21 +151,31 @@ final class PayrollSummaryController
       startDate: start,
       endExclusiveDate: end,
       shopIds: shopIds,
+      localOnly: localOnly,
     );
     final advances = await repository.advancesFor(
       staffUserId: staffUserId,
       startDate: start,
       endExclusiveDate: end,
       shopIds: shopIds,
+      localOnly: localOnly,
     );
-    final salary = await repository.salaryForMonth(staffUserId, month);
+    final salary = await repository.salaryForMonth(
+      staffUserId,
+      month,
+      localOnly: localOnly,
+    );
     final dailySalaries = await repository.dailySalariesFor(
       staffUserId: staffUserId,
       startDate: start,
       endExclusiveDate: end,
       shopIds: shopIds,
+      localOnly: localOnly,
     );
-    final open = await repository.openShiftFor(staffUserId);
+    final open = await repository.openShiftFor(
+      staffUserId,
+      localOnly: localOnly,
+    );
     return MonthlyPayrollSummary(
       shifts: shifts,
       advances: advances,
@@ -266,13 +333,51 @@ final class PayrollSummaryController
     );
   }
 
+  /// Owner-only marking of one business day as Leave (day-level state, never
+  /// a worked shift). [requireOwner] is the boundary guard, so hiding the
+  /// action in the UI is never the only protection. [_mutate] reloads the
+  /// month afterwards, so working days, leave days, hours and final payable
+  /// recompute immediately.
+  ///
+  /// `async` so a non-owner session surfaces as a rejected future (like every
+  /// other payroll failure) rather than a synchronous throw.
+  Future<void> markLeave({
+    required DateTime attendanceDate,
+    String? reason,
+  }) async {
+    requireOwner(ref);
+    return _mutate(
+      (repository) => repository.markLeave(
+        staffUserId: staffUserId,
+        attendanceDate: attendanceDate,
+        reason: reason,
+      ),
+    );
+  }
+
+  /// Owner-only clearing of a Leave day. Same boundary and reload contract
+  /// as [markLeave]; a day without Leave is a safe no-op in the repository.
+  Future<void> clearLeave({required DateTime attendanceDate}) async {
+    requireOwner(ref);
+    return _mutate(
+      (repository) => repository.clearLeave(
+        staffUserId: staffUserId,
+        attendanceDate: attendanceDate,
+      ),
+    );
+  }
+
   Future<void> _mutate(
     Future<void> Function(StaffPayrollRepository repository) action,
   ) async {
+    // The loading state only ever spans the LOCAL write (fast): the rebuild
+    // paints from the mirror immediately, so taps release without waiting
+    // for cloud reconciliation, which follows in the background.
     state = const AsyncLoading();
     try {
       final repository = ref.read(staffPayrollRepositoryProvider);
       await action(repository);
+      _reconcileArmed = true;
       ref.invalidateSelf();
     } on Object catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);

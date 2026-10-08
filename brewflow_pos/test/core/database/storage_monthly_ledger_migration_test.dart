@@ -150,10 +150,7 @@ void main() {
     final shops = await db
         .customSelect('SELECT id FROM shops ORDER BY id')
         .get();
-    expect(
-      [for (final row in shops) row.data['id']],
-      ['shop-cafe'],
-    );
+    expect([for (final row in shops) row.data['id']], ['shop-cafe']);
   });
 
   test('the step is idempotent and the new tables are writable', () async {

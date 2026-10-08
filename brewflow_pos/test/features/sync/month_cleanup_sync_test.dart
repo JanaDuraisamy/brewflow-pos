@@ -27,6 +27,8 @@ import '../../helpers/fake_remote_master_data_gateway.dart';
 ///      apply once the queue drains (no resurrection without a tombstone).
 ///   4. markers never cross shops.
 ///   5. replaying a marker is a no-op.
+///   6. a deferred marker holds the cursor until it applies, then cloud
+///      records it deleted are re-pulled (sales + customer payments).
 /// ---------------------------------------------------------------------------
 
 void main() {
@@ -239,6 +241,152 @@ void main() {
         'sale-o',
       ]);
       expect(await other.cleanup.markerApplied('marker-1'), isFalse);
+    });
+
+    test('deferred marker holds the cursor, then cloud sales + payments are '
+        're-pulled after it applies', () async {
+      final cloud = FakeRemoteStore();
+      final b = await device(cloud, deviceId: 'B', viewerShopId: shopA);
+      const customerId = 'cust-oct';
+      const saleId = 'sale-oct';
+      const paymentId = 'pay-oct';
+      const markerId = 'marker-oct';
+      final saleTime = DateTime.utc(2026, 10, 5);
+      final paymentTime = DateTime.utc(2026, 10, 6);
+      final markerTime = DateTime.utc(2026, 10, 10);
+      final october = DateTime.utc(2026, 10);
+
+      // The cloud holds a customer, an October credit sale and a partial
+      // payment against it: the month's records are still valid upstream.
+      cloud.customers[customerId] = StoredRow(
+        SyncCustomer(
+          id: customerId,
+          shopId: shopA,
+          name: 'October Credit',
+          isActive: true,
+          membershipActive: false,
+          whatsappStatus: 'UNKNOWN',
+          createdAt: DateTime.utc(2026, 10, 1),
+        ),
+        shopA,
+        DateTime.utc(2026, 10, 1),
+      );
+      cloud.sales[saleId] = StoredRow(
+        SyncSale(
+          id: saleId,
+          shopId: shopA,
+          customerId: customerId,
+          receiptNumber: 'R-$saleId',
+          subtotalPaise: 1000,
+          totalPaise: 1000,
+          paymentStatus: 'NOT_PAID',
+          createdAt: saleTime,
+        ),
+        shopA,
+        saleTime,
+      );
+      cloud.customerPayments[paymentId] = StoredRow(
+        SyncCustomerPayment(
+          id: paymentId,
+          shopId: shopA,
+          customerId: customerId,
+          saleId: saleId,
+          amountPaise: 400,
+          paymentMethod: 'CASH',
+          paidAt: paymentTime,
+          reversed: false,
+          createdAt: paymentTime,
+        ),
+        shopA,
+        paymentTime,
+      );
+
+      // The cloud also holds an October cleanup marker created after the
+      // sale and payment.
+      cloud.clock = markerTime;
+      final gatewayCloud = FakeRemoteMasterDataGateway(
+        cloud,
+        viewerShopId: shopA,
+      );
+      await gatewayCloud.upsertMonthCleanupMarkers([
+        SyncMonthCleanupMarker(
+          id: markerId,
+          shopId: shopA,
+          month: october,
+          tables: const ['sales'],
+          deletedCounts: const {'sales': 1},
+          completedAt: markerTime,
+          createdAt: markerTime,
+        ),
+      ]);
+
+      // Device B has a pending transactional outbox entry, forcing the
+      // marker to defer. A DIFFERENT entity id keeps the pull guard from
+      // suppressing the cloud sale, and an invalid payload keeps the push
+      // failing so the entry stays PENDING across cycles.
+      await b.db
+          .into(b.db.syncOutbox)
+          .insert(
+            SyncOutboxCompanion.insert(
+              deviceId: 'B',
+              shopId: shopA,
+              entity: 'SALE',
+              entityId: 'pending-oct',
+              payload: '{}',
+            ),
+          );
+
+      // Cycle 1: the marker defers (queue busy) and the shared cursor must
+      // NOT advance past it. The cloud bill + payment pull through.
+      await cycle(b.engine, deviceId: 'B');
+      expect(
+        (await b.db.select(b.db.sales).get()).map((s) => s.id),
+        [saleId],
+        reason: 'deferred marker must not delete local rows',
+      );
+      expect(
+        (await b.db.select(b.db.customerPayments).get()).length,
+        1,
+        reason: 'deferred marker must not delete local payments',
+      );
+      expect(await b.cleanup.markerApplied(markerId), isFalse);
+      expect(
+        (await b.sync.stateFor('B'))!.lastPulledAt!.isBefore(markerTime),
+        isTrue,
+        reason: 'cursor must not advance past an unapplied marker',
+      );
+
+      // Drain the outbox so the marker can apply.
+      final pending = await (b.db.select(
+        b.db.syncOutbox,
+      )..where((t) => t.entityId.equals('pending-oct'))).getSingle();
+      await b.sync.markDone(pending.id);
+
+      // Cycle 2: the marker applies (deleting the local month mirrors) and
+      // the SAME cycle re-pulls the cloud records the delete removed — the
+      // cursor had never moved past them.
+      await cycle(b.engine, deviceId: 'B');
+      expect(await b.cleanup.markerApplied(markerId), isTrue);
+      expect(
+        (await b.db.select(b.db.sales).get()).map((s) => s.id),
+        [saleId],
+        reason: 'sale must be re-pulled after the marker applies',
+      );
+      expect(
+        (await b.db.select(b.db.customerPayments).get()).length,
+        1,
+        reason: 'payment must be re-pulled after the marker applies',
+      );
+      expect(
+        (await b.sync.stateFor('B'))!.lastPulledAt!.isBefore(markerTime),
+        isFalse,
+        reason: 'cursor only advances once the marker has applied',
+      );
+
+      // Cycle 3: stable — nothing is re-pulled or re-deleted.
+      await cycle(b.engine, deviceId: 'B');
+      expect((await b.db.select(b.db.sales).get()).map((s) => s.id), [saleId]);
+      expect((await b.db.select(b.db.customerPayments).get()).length, 1);
     });
   });
 }

@@ -28,6 +28,7 @@ import 'package:brewflow_pos/features/purchases/presentation/purchase_controller
 import 'package:brewflow_pos/features/purchases/presentation/suppliers_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/management_report_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/management_report_loader.dart';
+import 'package:brewflow_pos/features/reports/presentation/report_pdf_preview.dart';
 import 'package:brewflow_pos/features/reports/data/management_report_pdf.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
@@ -523,36 +524,13 @@ Future<void> _exportPdf(BuildContext context, WidgetRef ref) async {
     final rangeLabel =
         '${DateFormat('d MMM yyyy').format(picked.start)} – '
         '${DateFormat('d MMM yyyy').format(picked.end)}';
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(
-          Icons.picture_as_pdf_outlined,
-          color: AppColors.primary,
-        ),
-        title: const Text('Management report ready'),
-        content: Text(
-          '${info.name}\n$rangeLabel '
-          '(${data.businessLabel}).\n'
-          'Sales, expenses, staff salary details and daily closings for the '
-          'selected range. Readable report only — it cannot be restored.',
-        ),
-        actions: [
-          SecondaryButton(
-            label: 'Close',
-            minHeight: 40,
-            onPressed: () => Navigator.of(dialogContext).pop(),
-          ),
-          PrimaryButton(
-            label: 'Share report',
-            minHeight: 40,
-            onPressed: () async {
-              Navigator.of(dialogContext).pop();
-              await _shareExportFile(context, ref, info.path);
-            },
-          ),
-        ],
-      ),
+    await showReportPdfPreview(
+      context,
+      bytes: bytes,
+      fileName: info.name,
+      filePath: info.path,
+      detailLine: '$rangeLabel (${data.businessLabel})',
+      shareSubject: 'JiggarTea Bill export',
     );
   } on ManagementReportFailure catch (error) {
     messenger

@@ -177,48 +177,54 @@ void main() {
         );
   });
 
-  test('clock in paints immediately while cloud fetch is still pending',
-      () async {
-    final c = container();
-    addTearDown(c.dispose);
+  test(
+    'clock in paints immediately while cloud fetch is still pending',
+    () async {
+      final c = container();
+      addTearDown(c.dispose);
 
-    // Prime the summary; its background reconciliation blocks on the gate.
-    await c.read(payrollSummaryProvider(staffId).future);
+      // Prime the summary; its background reconciliation blocks on the gate.
+      await c.read(payrollSummaryProvider(staffId).future);
 
-    final inAt = DateTime.now().toUtc().subtract(const Duration(hours: 1));
-    await c.read(payrollSummaryProvider(staffId).notifier).clockIn(inAt: inAt);
+      final inAt = DateTime.now().toUtc().subtract(const Duration(hours: 1));
+      await c
+          .read(payrollSummaryProvider(staffId).notifier)
+          .clockIn(inAt: inAt);
 
-    // The mutation returned with the shift already visible — the summary did
-    // not wait for the still-blocked cloud fetch.
-    final summary = await c.read(payrollSummaryProvider(staffId).future);
-    expect(
-      summary.shifts.where((s) => !s.isLeave),
-      hasLength(1),
-      reason: 'the clocked-in shift paints from the local mirror at once',
-    );
-    expect(
-      cloud.fetchGate.isCompleted,
-      isFalse,
-      reason: 'the cloud fetch genuinely had not answered yet',
-    );
-  });
+      // The mutation returned with the shift already visible — the summary did
+      // not wait for the still-blocked cloud fetch.
+      final summary = await c.read(payrollSummaryProvider(staffId).future);
+      expect(
+        summary.shifts.where((s) => !s.isLeave),
+        hasLength(1),
+        reason: 'the clocked-in shift paints from the local mirror at once',
+      );
+      expect(
+        cloud.fetchGate.isCompleted,
+        isFalse,
+        reason: 'the cloud fetch genuinely had not answered yet',
+      );
+    },
+  );
 
-  test('background reconciliation still pulls once the cloud answers',
-      () async {
-    final c = container();
-    addTearDown(c.dispose);
+  test(
+    'background reconciliation still pulls once the cloud answers',
+    () async {
+      final c = container();
+      addTearDown(c.dispose);
 
-    await c.read(payrollSummaryProvider(staffId).future);
-    final callsBefore = cloud.fetchCalls;
-    cloud.fetchGate.complete();
+      await c.read(payrollSummaryProvider(staffId).future);
+      final callsBefore = cloud.fetchCalls;
+      cloud.fetchGate.complete();
 
-    // Let the pending background reconciliation run to completion.
-    for (var i = 0; i < 200 && cloud.fetchCalls == callsBefore; i++) {
-      await Future<void>.delayed(Duration.zero);
-    }
-    expect(cloud.fetchCalls, greaterThan(callsBefore));
-    // The view refreshes after reconciliation without losing local data.
-    final summary = await c.read(payrollSummaryProvider(staffId).future);
-    expect(summary.shifts, isEmpty);
-  });
+      // Let the pending background reconciliation run to completion.
+      for (var i = 0; i < 200 && cloud.fetchCalls == callsBefore; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(cloud.fetchCalls, greaterThan(callsBefore));
+      // The view refreshes after reconciliation without losing local data.
+      final summary = await c.read(payrollSummaryProvider(staffId).future);
+      expect(summary.shifts, isEmpty);
+    },
+  );
 }

@@ -261,7 +261,7 @@ void main() {
       );
       // Before the first scan settles: no fabricated zeros, just the invite.
       expect(find.text('Not scanned yet'), findsOneWidget);
-      expect(find.text('Used storage'), findsNothing);
+      expect(find.text('Cloud Storage Health'), findsNothing);
       expect(find.text('Product images'), findsNothing);
     });
 
@@ -278,7 +278,7 @@ void main() {
 
       expect(find.text('Unavailable'), findsOneWidget);
       // Never fabricate zero values for a failed scan.
-      expect(find.text('Used storage'), findsNothing);
+      expect(find.text('Cloud Storage Health'), findsNothing);
       expect(find.text('Product images'), findsNothing);
       expect(find.text('Product images 0'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -299,9 +299,14 @@ void main() {
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
       await _pumpPage(tester, width: 390, gateway: gateway, db: db);
-      // First scan succeeded: real values show.
-      expect(find.text('Used storage'), findsOneWidget);
+      // First scan succeeded: real values show under the health card.
+      expect(find.text('Cloud Storage Health'), findsOneWidget);
+      expect(find.text('Needs attention'), findsOneWidget);
+      expect(find.text('Image storage'), findsOneWidget);
       expect(find.text('4.9 KB'), findsOneWidget);
+      // The health card never shows a usage percentage. ('Configured limit'
+      // still exists page-wide — the Cloud database card shows the DB quota.)
+      expect(find.text('Usage'), findsNothing);
 
       // A later scan fails: values stay but are labelled stale.
       gateway.scanError = const StorageCleanupServiceFailure('Edge down');
@@ -309,6 +314,34 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Latest scan failed'), findsOneWidget);
       expect(find.text('4.9 KB'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a scan with no orphans reports Healthy', (tester) async {
+      final gateway = FakeStorageCleanupGateway()
+        ..scanResult = StorageUsageReport(
+          usedBytes: 2048,
+          imageCount: 4,
+          orphanCount: 0,
+          reclaimableBytes: 0,
+          orphanPaths: const [],
+          lastScanAt: DateTime.utc(2026, 9, 20),
+        );
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await _pumpPage(tester, width: 390, gateway: gateway, db: db);
+
+      expect(find.text('Cloud Storage Health'), findsOneWidget);
+      expect(find.text('Healthy'), findsOneWidget);
+      expect(find.text('Needs attention'), findsNothing);
+      expect(find.text('Product images'), findsOneWidget);
+      expect(find.text('Orphan images'), findsOneWidget);
+      expect(find.text('2.0 KB'), findsOneWidget);
+      // Nothing to clean: the primary action is disabled.
+      expect(
+        find.widgetWithText(PrimaryButton, 'Nothing to review'),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
   });

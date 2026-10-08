@@ -14,10 +14,7 @@ import 'shops.dart';
 /// ---------------------------------------------------------------------------
 
 @TableIndex(name: 'idx_month_cleanup_markers_shop', columns: {#shopId})
-@TableIndex(
-  name: 'idx_month_cleanup_markers_month',
-  columns: {#shopId, #month},
-)
+@TableIndex(name: 'idx_month_cleanup_markers_month', columns: {#shopId, #month})
 class MonthCleanupMarkers extends Table {
   /// UUID identifier. The cleaning device generates one per cleanup flow and
   /// reuses it across retries so a retry converges instead of duplicating.

@@ -463,14 +463,53 @@ final class SyncMonthCleanupMarker {
         id: json['id'] as String,
         shopId: json['shopId'] as String,
         month: DateTime.parse(json['month'] as String),
-        tables: (json['tables'] as List).map((e) => e.toString()).toList(),
-        deletedCounts: {
-          for (final e in (json['deletedCounts'] as Map).entries)
-            e.key.toString(): (e.value as num).toInt(),
-        },
+        tables: SyncMonthCleanupMarker.parseTables(json['tables']),
+        deletedCounts: SyncMonthCleanupMarker.parseDeletedCounts(
+          json['deletedCounts'],
+        ),
         completedAt: DateTime.parse(json['completedAt'] as String),
         createdAt: DateTime.parse(json['createdAt'] as String),
       );
+
+  /// Parses one `month_cleanup_markers` row exactly as PostgREST returns it
+  /// (snake_case). This is the live wire parser used by the pull path.
+  factory SyncMonthCleanupMarker.fromServerRow(Map<String, dynamic> json) =>
+      SyncMonthCleanupMarker(
+        id: json['id'] as String,
+        shopId: json['shop_id'] as String,
+        month: DateTime.parse('${json['month']}T00:00:00Z'),
+        tables: SyncMonthCleanupMarker.parseTables(json['tables']),
+        deletedCounts: SyncMonthCleanupMarker.parseDeletedCounts(
+          json['deleted_counts'],
+        ),
+        completedAt: DateTime.parse(json['completed_at'] as String).toUtc(),
+        createdAt: DateTime.parse(json['client_created_at'] as String).toUtc(),
+      );
+
+  /// Parses the marker's `tables` payload defensively.
+  ///
+  /// The server writes a JSON object (`{"sales": true, ...}` — see migration
+  /// 0043 `jsonb_object_agg`), whose KEYS are the affected tables; older or
+  /// client-pushed rows may carry a JSON array instead. Null, missing, or
+  /// unexpected shapes yield an empty list instead of throwing: a throw here
+  /// aborts the whole pull cycle before sales drain.
+  static List<String> parseTables(Object? value) {
+    if (value is List) return [for (final e in value) e.toString()];
+    if (value is Map) return [for (final key in value.keys) key.toString()];
+    return const [];
+  }
+
+  /// Parses the marker's `deleted_counts` payload defensively (audit-only:
+  /// malformed entries are dropped, never thrown).
+  static Map<String, int> parseDeletedCounts(Object? value) {
+    if (value is! Map) return const {};
+    final out = <String, int>{};
+    for (final e in value.entries) {
+      final v = e.value;
+      if (v is num) out[e.key.toString()] = v.toInt();
+    }
+    return out;
+  }
 
   final String id;
   final String shopId;

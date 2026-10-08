@@ -222,9 +222,23 @@ final class SyncEngine {
             'MONTHLY_REPORT_CONFIRMATION supports UPSERT sync only',
           );
         }
-        await _gateway.upsertMonthlyReportConfirmations([
-          SyncMonthlyReportConfirmation.fromJson(decodePayload(entry.payload)),
-        ]);
+        try {
+          await _gateway.upsertMonthlyReportConfirmations([
+            SyncMonthlyReportConfirmation.fromJson(
+              decodePayload(entry.payload),
+            ),
+          ]);
+        } catch (error) {
+          if (_isConfirmationAlreadySatisfied(error)) {
+            AppLog.info(
+              'Monthly report confirmation already exists for this shop+month — marking converged',
+              tag: tag,
+            );
+            await _sync.markDone(entry.id);
+            return;
+          }
+          rethrow;
+        }
       case MasterEntity.monthCleanup:
         // Markers are written server-side by the atomic cleanup itself; the
         // outbox never carries them. Reaching here means a future caller
@@ -326,6 +340,18 @@ final class SyncEngine {
         );
     }
     await _sync.markDone(entry.id);
+  }
+
+  /// True when [error] is the unique-violation raised because a confirmation
+  /// for the same (shop_id, month) already exists under a different id
+  /// (multi-device duplicate). The month is report-backed either way, so the
+  /// push intent is satisfied and the entry converges instead of retrying
+  /// until it parks FAILED. Any other error — including 23505 on a different
+  /// constraint — rethrows for the normal retry/failure path.
+  static bool _isConfirmationAlreadySatisfied(Object error) {
+    final msg = error.toString();
+    return msg.contains('23505') &&
+        msg.contains('monthly_report_confirmations_shop_id_month_key');
   }
 
   SyncDeletion _deletionOf(SyncOutboxEntry entry) => SyncDeletion(
@@ -435,6 +461,20 @@ final class SyncEngine {
       if (frontier.isAfter(newCursor)) newCursor = frontier;
     }
 
+    // Cursor integrity with deferred month cleanup: a marker defers only
+    // while transactional writes are still queued, and deletes a whole month
+    // of local records (sales, sale items, customer payments) the instant it
+    // applies. The per-drain frontier above already advances to every applied
+    // row's own server timestamp — exactly what the deferred month's rows
+    // carry — and re-pulls use `updated_at > cursor`, so those rows could
+    // never re-arrive after the delete. While any marker is still recorded
+    // unapplied, hold the WHOLE cursor at [since]; the next cycle re-pulls
+    // everything the marker deletes, and the cursor only advances once the
+    // marker has actually applied.
+    if (await _applier.hasUnappliedMonthCleanups()) {
+      newCursor = since;
+    }
+
     await _sync.upsertState(
       deviceId: deviceId,
       shopId: shopId,
@@ -490,12 +530,18 @@ final class SyncEngine {
     // drain below only applies non-empty pages, so without this a deferred
     // marker would strand behind its advanced cursor forever.
     await _applier.retryUnappliedMonthCleanups();
-    return _drainPage(
+    final frontier = await _drainPage(
       since,
       pull: (since, limit) =>
           _gateway.pullMonthCleanupMarkers(since: since, limit: limit),
       apply: (rows, at) => _applier.applyMonthCleanupMarkerPage(rows, at),
     );
+    // Never let this frontier advance past a still-unapplied marker; _pull's
+    // final cursor guard then holds the WHOLE shared cursor at [since] until
+    // every marker has applied (the marker deletes local rows when it applies,
+    // and a cursor already past those rows would skip them forever).
+    if (await _applier.hasUnappliedMonthCleanups()) return since;
+    return frontier;
   }
 
   Future<DateTime> _drainSuppliers(DateTime since) => _drainPage(

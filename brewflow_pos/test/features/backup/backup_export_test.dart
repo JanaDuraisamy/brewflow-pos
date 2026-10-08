@@ -415,6 +415,15 @@ void main() {
       takenByRows: const [
         ManagementTakenByRow(name: 'Ravi', daysTaken: 1, totalPaise: 30000),
       ],
+      closingCollections: [
+        for (var day = 25; day <= 31; day++)
+          ManagementClosingCollectionRow(
+            date: DateTime(2026, 8, day),
+            hasClosing: day == 30,
+            cashPaise: day == 30 ? 250000 : 0,
+            upiPaise: day == 30 ? 228500 : 0,
+          ),
+      ],
     );
 
     ManagementReportData emptyReportData() => ManagementReportData(
@@ -436,6 +445,15 @@ void main() {
       staffRows: const [],
       closings: const [],
       takenByRows: const [],
+      closingCollections: [
+        for (var day = 25; day <= 31; day++)
+          ManagementClosingCollectionRow(
+            date: DateTime(2026, 8, day),
+            hasClosing: false,
+            cashPaise: 0,
+            upiPaise: 0,
+          ),
+      ],
     );
 
     test('generates a valid PDF document', () async {

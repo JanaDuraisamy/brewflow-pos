@@ -3,13 +3,13 @@ import 'package:brewflow_pos/app/widgets/context_actions.dart';
 import 'package:brewflow_pos/app/widgets/page_header.dart';
 import 'package:brewflow_pos/app/widgets/state_views.dart';
 import 'package:brewflow_pos/core/router/app_routes.dart';
-import 'package:brewflow_pos/core/sharing/share_service.dart';
 import 'package:brewflow_pos/core/theme/app_colors.dart';
 import 'package:brewflow_pos/core/theme/app_radius.dart';
 import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/features/backup/presentation/backup_providers.dart';
 import 'package:brewflow_pos/features/reports/data/management_report_pdf.dart';
 import 'package:brewflow_pos/features/reports/presentation/management_report_loader.dart';
+import 'package:brewflow_pos/features/reports/presentation/report_pdf_preview.dart';
 import 'package:brewflow_pos/features/storage_cleanup/domain/storage_cleanup_models.dart';
 import 'package:brewflow_pos/features/storage_cleanup/presentation/storage_cleanup_controller.dart';
 import 'package:flutter/material.dart';
@@ -36,10 +36,12 @@ String formatBytes(int bytes) {
 /// Owner-only storage monitoring + monthly cleanup screen.
 ///
 /// Access is enforced by the route guard and by the controller; the screen is
-/// only ever built for owners. It shows used storage, the configured limit
-/// (and usage %), product image count, orphan count, reclaimable size and the
-/// last cleanup — then offers a "Review Files" path into the owner-confirmed
-/// cleanup flow.
+/// only ever built for owners. Its health card shows only what the scan really
+/// measured — product image count, image storage, orphan count, reclaimable
+/// size and the last cleanup — topped with a Healthy / Needs attention status
+/// derived from the orphan count. Quotas, limits and usage percentages are
+/// deliberately not shown: they would be Supabase project numbers, not shop
+/// facts. A "Review Files" path leads into the owner-confirmed cleanup flow.
 final class OwnerStorageUsagePage extends ConsumerStatefulWidget {
   const OwnerStorageUsagePage({super.key});
 
@@ -283,29 +285,20 @@ final class _StorageStatsCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final limit = report.storageLimitBytes;
-    final fraction = report.usageFraction;
+    final textTheme = Theme.of(context).textTheme;
+    // Real scan data only: no quotas or usage percentages, because the cloud
+    // quota belongs to the Supabase project, not to this shop.
+    final healthy = report.orphanCount == 0;
     final rows = <_StatRow>[
-      _StatRow(
-        label: 'Used storage',
-        value: formatBytes(report.usedBytes),
-        icon: Icons.storage_outlined,
-      ),
-      _StatRow(
-        label: 'Configured limit',
-        value: limit == null ? 'Unlimited' : formatBytes(limit),
-        icon: Icons.speed_outlined,
-      ),
-      if (fraction != null)
-        _StatRow(
-          label: 'Usage',
-          value: '${(fraction * 100).round()}%',
-          icon: Icons.percent,
-        ),
       _StatRow(
         label: 'Product images',
         value: '${report.imageCount}',
         icon: Icons.image_outlined,
+      ),
+      _StatRow(
+        label: 'Image storage',
+        value: formatBytes(report.usedBytes),
+        icon: Icons.storage_outlined,
       ),
       _StatRow(
         label: 'Orphan images',
@@ -339,6 +332,26 @@ final class _StorageStatsCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Cloud Storage Health',
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                _StatusChip(
+                  icon: healthy
+                      ? Icons.check_circle_outline
+                      : Icons.warning_amber_outlined,
+                  label: healthy ? 'Healthy' : 'Needs attention',
+                  ok: healthy,
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
             for (final row in rows) ...[
               row,
               const SizedBox(height: AppSpacing.sm),
@@ -1474,49 +1487,13 @@ final class _MonthDetailSheetState extends ConsumerState<_MonthDetailSheet> {
         bytes,
       );
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          icon: const Icon(
-            Icons.picture_as_pdf_outlined,
-            color: AppColors.primary,
-          ),
-          title: const Text('Monthly report ready'),
-          content: Text(
-            '${info.name}\n${_MonthlyUsageCard.monthLabel(month)}. '
-            'Readable report only — it cannot be restored.',
-          ),
-          actions: [
-            SecondaryButton(
-              label: 'Close',
-              minHeight: 40,
-              onPressed: () => Navigator.of(dialogContext).pop(),
-            ),
-            PrimaryButton(
-              label: 'Share report',
-              minHeight: 40,
-              onPressed: () async {
-                Navigator.of(dialogContext).pop();
-                if (!mounted) return;
-                try {
-                  await ref
-                      .read(shareServiceProvider)
-                      .shareFile(
-                        subject: 'Monthly report',
-                        filePath: info.path,
-                      );
-                } catch (_) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Could not share the file right now.'),
-                    ),
-                  );
-                }
-              },
-            ),
-          ],
-        ),
+      await showReportPdfPreview(
+        context,
+        bytes: bytes,
+        fileName: info.name,
+        filePath: info.path,
+        detailLine: _MonthlyUsageCard.monthLabel(month),
+        shareSubject: 'Monthly report',
       );
     } catch (error) {
       _fail(error);

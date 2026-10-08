@@ -81,21 +81,55 @@ interface StorageObjectRow {
   size: number | null;
 }
 
+// Structured failure details for TOP_LEVEL_FAILURE diagnostics. Never includes
+// request headers, tokens, or query payloads — only the error's own fields.
+function failureInfo(stage: string, err: unknown) {
+  const e = err as {
+    message?: string;
+    code?: string;
+    details?: string;
+    hint?: string;
+  } | null;
+  return {
+    stage,
+    message: typeof e?.message === 'string' ? e.message : String(err),
+    code: e?.code ?? null,
+    details: e?.details ?? null,
+    hint: e?.hint ?? null,
+  };
+}
+
+// Calendar-month bounds (UTC) for a YYYY-MM-DD month key. The client always
+// sends the 1st of the month; any day component is normalized away. Returns
+// ISO-8601 strings: `start` is the inclusive month start, `end` is the
+// exclusive start of the following month.
+function monthBounds(monthDate: string): { start: string; end: string } {
+  const [year, month] = monthDate
+    .split('-')
+    .map((v) => Number.parseInt(v, 10));
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 Deno.env.get('SUPABASE_URL');
 
 console.log('STORAGE_CLEANUP_BOOT');
 
 Deno.serve(async (req: Request) => {
-  console.log('STORAGE_CLEANUP_HANDLER_ENTER');
+  console.log('HANDLER_ENTER', { method: req.method });
+  let stage = 'HANDLER_ENTER';
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  const json = (status: number, body: Record<string, unknown>) =>
-    new Response(JSON.stringify(body), {
+  const json = (status: number, body: Record<string, unknown>) => {
+    console.log('RESPONSE_READY', { status });
+    return new Response(JSON.stringify(body), {
       status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  };
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -133,8 +167,13 @@ Deno.serve(async (req: Request) => {
 
     // --- 2. Parse + validate input -----------------------------------------
     const body = (await req.json().catch(() => null)) as CleanupRequest | null;
-    console.log('STORAGE_BODY_PARSED', { hasBody: body != null });
     const action = body?.action ?? null;
+    console.log('ACTION_PARSED', { action, hasBody: body != null });
+    stage = 'ACTION_PARSED';
+    if (typeof action === 'string' && action.startsWith('month-')) {
+      console.log('MONTH_ACTION_ENTER', { action });
+      stage = 'MONTH_ACTION_ENTER';
+    }
     const shopId = body?.shop_id?.trim() || null;
     const monthActions = new Set([
       'month-stats',
@@ -182,7 +221,13 @@ Deno.serve(async (req: Request) => {
       });
       return json(403, { error: 'FORBIDDEN' });
     }
-    console.log('STORAGE_MEMBERSHIP_OK', { userId: user.id, shopId });
+    console.log('SHOP_AUTH_OK', { shopId });
+    stage = 'SHOP_AUTH';
+    if (action === 'month-stats' || action === 'month-preview' ||
+      action === 'month-cleanup') {
+      console.log('MONTH_INPUT_OK', { action });
+      stage = 'MONTH_INPUT';
+    }
 
     const prefix = `${shopId}/products/`;
     console.log('STORAGE_SHOP_QUERY_START', { shopId });
@@ -395,144 +440,200 @@ Deno.serve(async (req: Request) => {
       }
 
       if (action === 'month-history') {
-        const { data, error } = await adminClient
-          .from('storage_monthly_snapshots')
-          .select('month, counts, logical_bytes_est, db_bytes_total, created_at')
-          .eq('shop_id', shopId)
-          .order('month', { ascending: false });
-        if (error) throw error;
-        return json(200, { snapshots: data ?? [] });
+        try {
+          const { data, error } = await adminClient
+            .from('storage_monthly_snapshots')
+            .select('month, counts, logical_bytes_est, db_bytes_total, created_at')
+            .eq('shop_id', shopId)
+            .order('month', { ascending: false });
+          if (error) throw error;
+          return json(200, { snapshots: data ?? [] });
+        } catch (err) {
+          console.error('TOP_LEVEL_FAILURE', failureInfo('month-history', err));
+          return json(500, { error: 'FAILED' });
+        }
       }
 
       if (action === 'month-stats' && monthDate) {
-        const { data, error } = await userClient.rpc('month_size_estimate', {
-          p_shop_id: shopId,
-          p_month: monthDate,
-        });
-        if (error) return rpcError(error);
-        const stats = data as {
-          counts: Record<string, number>;
-          logicalBytesEst: number;
-          dbBytesTotal: number;
-        };
-        // Record the server-side ledger row (service role): history survives
-        // even if the scanning device is gone.
-        const { start } = monthBounds(monthDate);
-        const monthKey = start.substring(0, 10);
-        const { error: ledgerError } = await adminClient
-          .from('storage_monthly_snapshots')
-          .upsert(
-            {
-              id: crypto.randomUUID(),
-              shop_id: shopId,
-              month: monthKey,
-              counts: stats.counts,
-              logical_bytes_est: stats.logicalBytesEst,
-              db_bytes_total: stats.dbBytesTotal,
-            },
-            { onConflict: 'shop_id,month' },
-          );
-        if (ledgerError) throw ledgerError;
-        return json(200, { ...stats, month: monthKey });
+        try {
+          console.log('RPC_START', { rpc: 'month_size_estimate' });
+          const { data, error } = await userClient.rpc('month_size_estimate', {
+            p_shop_id: shopId,
+            p_month: monthDate,
+          });
+          if (error) {
+            console.error(
+              'TOP_LEVEL_FAILURE',
+              Object.assign(failureInfo('RPC', error), {
+                rpc: 'month_size_estimate',
+              }),
+            );
+            return rpcError(error);
+          }
+          console.log('RPC_OK', { rpc: 'month_size_estimate' });
+          const stats = data as {
+            counts: Record<string, number>;
+            logicalBytesEst: number;
+            dbBytesTotal: number;
+          };
+          // Record the server-side ledger row (service role): history survives
+          // even if the scanning device is gone.
+          const { start } = monthBounds(monthDate);
+          const monthKey = start.substring(0, 10);
+          const { error: ledgerError } = await adminClient
+            .from('storage_monthly_snapshots')
+            .upsert(
+              {
+                id: crypto.randomUUID(),
+                shop_id: shopId,
+                month: monthKey,
+                counts: stats.counts,
+                logical_bytes_est: stats.logicalBytesEst,
+                db_bytes_total: stats.dbBytesTotal,
+              },
+              { onConflict: 'shop_id,month' },
+            );
+          if (ledgerError) throw ledgerError;
+          return json(200, { ...stats, month: monthKey });
+        } catch (err) {
+          console.error('TOP_LEVEL_FAILURE', failureInfo('month-stats', err));
+          return json(500, { error: 'FAILED' });
+        }
       }
 
       if (action === 'month-preview' && monthDate) {
-        const { data, error } = await userClient.rpc('month_preview_counts', {
-          p_shop_id: shopId,
-          p_month: monthDate,
-        });
-        if (error) return rpcError(error);
-        const preview = data as Record<string, unknown>;
-        // Orphan files created that month, with sizes, for the confirmation
-        // screen ("associated files that will be deleted").
-        const { start, end } = monthBounds(monthDate);
-        const prefix = `${shopId}/products/`;
-        // Storage API only — PostgREST does not expose storage.objects.
-        // list() returns at most 1000 per page; paginate with offset.
-        const all: Array<{ name: string; size: number | null; created_at: string }> = [];
-        const pageSize = 1000;
-        var offset = 0;
-        while (true) {
-          const { data: page, error: pageError } = await adminClient.storage
-            .from(STORAGE_BUCKET)
-            .list(prefix.replace(/\/$/, ''), {
-              limit: pageSize,
-              offset,
-              sortBy: { column: 'created_at', order: 'asc' },
-            });
-          if (pageError) {
-            console.error('STORAGE_MONTH_OBJECTS_QUERY_FAILED', {
-              shopId,
-              message: pageError.message,
-              code: (pageError as { code?: string }).code,
-              details: (pageError as { details?: string }).details,
-            });
-            throw pageError;
+        try {
+          console.log('RPC_START', { rpc: 'month_preview_counts' });
+          const { data, error } = await userClient.rpc('month_preview_counts', {
+            p_shop_id: shopId,
+            p_month: monthDate,
+          });
+          if (error) {
+            console.error(
+              'TOP_LEVEL_FAILURE',
+              Object.assign(failureInfo('RPC', error), {
+                rpc: 'month_preview_counts',
+              }),
+            );
+            return rpcError(error);
           }
-          const items = (page ?? []) as Array<{
+          console.log('RPC_OK', { rpc: 'month_preview_counts' });
+          const preview = data as Record<string, unknown>;
+          // Orphan files created that month, with sizes, for the confirmation
+          // screen ("associated files that will be deleted").
+          const { start, end } = monthBounds(monthDate);
+          const prefix = `${shopId}/products/`;
+          // Storage API only — PostgREST does not expose storage.objects.
+          // list() returns at most 1000 per page; paginate with offset.
+          const all: Array<{
             name: string;
+            size: number | null;
             created_at: string;
-            metadata?: { size?: number | null } | null;
-          }>;
-          for (const item of items) {
-            all.push({
-              name: prefix + item.name,
-              size: item.metadata?.size ?? null,
-              created_at: item.created_at,
-            });
+          }> = [];
+          const pageSize = 1000;
+          var offset = 0;
+          while (true) {
+            const { data: page, error: pageError } = await adminClient.storage
+              .from(STORAGE_BUCKET)
+              .list(prefix.replace(/\/$/, ''), {
+                limit: pageSize,
+                offset,
+                sortBy: { column: 'created_at', order: 'asc' },
+              });
+            if (pageError) {
+              console.error('STORAGE_MONTH_OBJECTS_QUERY_FAILED', {
+                shopId,
+                message: pageError.message,
+                code: (pageError as { code?: string }).code,
+                details: (pageError as { details?: string }).details,
+              });
+              throw pageError;
+            }
+            const items = (page ?? []) as Array<{
+              name: string;
+              created_at: string;
+              metadata?: { size?: number | null } | null;
+            }>;
+            for (const item of items) {
+              all.push({
+                name: prefix + item.name,
+                size: item.metadata?.size ?? null,
+                created_at: item.created_at,
+              });
+            }
+            if (items.length < pageSize) break;
+            offset += pageSize;
           }
-          if (items.length < pageSize) break;
-          offset += pageSize;
+          const monthObjects = all.filter(
+            (o) => o.created_at >= start && o.created_at < end,
+          );
+          console.log('STORAGE_MONTH_OBJECTS_OK', {
+            shopId,
+            total: all.length,
+            inMonth: monthObjects.length,
+          });
+          const referenced = await loadReferencedPaths();
+          const monthOrphans = monthObjects
+            .filter((o) => !referenced.has(o.name))
+            .map((o) => ({
+              path: o.name,
+              sizeBytes: o.size ?? 0,
+            }));
+          return json(200, { ...preview, monthOrphans });
+        } catch (err) {
+          console.error('TOP_LEVEL_FAILURE', failureInfo('month-preview', err));
+          return json(500, { error: 'FAILED' });
         }
-        const monthObjects = all.filter(
-          (o) => o.created_at >= start && o.created_at < end,
-        );
-        console.log('STORAGE_MONTH_OBJECTS_OK', {
-          shopId,
-          total: all.length,
-          inMonth: monthObjects.length,
-        });
-        const referenced = await loadReferencedPaths();
-        const monthOrphans = monthObjects
-          .filter((o) => !referenced.has(o.name))
-          .map((o) => ({
-            path: o.name,
-            sizeBytes: o.size ?? 0,
-          }));
-        return json(200, { ...preview, monthOrphans });
       }
 
       if (action === 'month-cleanup' && monthDate) {
-        const markerId =
-          typeof body?.marker_id === 'string' &&
-          /^[0-9a-fA-F-]{36}$/.test(body.marker_id)
-            ? body.marker_id
+        try {
+          const markerId =
+            typeof body?.marker_id === 'string' &&
+            /^[0-9a-fA-F-]{36}$/.test(body.marker_id)
+              ? body.marker_id
+              : null;
+          if (!markerId) return json(400, { error: 'INVALID_INPUT' });
+          // Optional category selection: an array of category keys
+          // (sales, purchases, expenses, stockMovements, dailyClosings,
+          // staffAttendance, staffAdvances, staffDailySalaries,
+          // staffMonthlySalaries). Absent/invalid = the full month scope.
+          const rawCategories = Array.isArray(body?.categories)
+            ? body.categories.filter((c): c is string => typeof c === 'string')
             : null;
-        if (!markerId) return json(400, { error: 'INVALID_INPUT' });
-        // Optional category selection: an array of category keys
-        // (sales, purchases, expenses, stockMovements, dailyClosings,
-        // staffAttendance, staffAdvances, staffDailySalaries,
-        // staffMonthlySalaries). Absent/invalid = the full month scope.
-        const rawCategories = Array.isArray(body?.categories)
-          ? body.categories.filter((c): c is string => typeof c === 'string')
-          : null;
-        const categories =
-          rawCategories && rawCategories.length > 0 ? rawCategories : null;
-        const { data, error } = await userClient.rpc('month_cleanup_atomic', {
-          p_shop_id: shopId,
-          p_month: monthDate,
-          p_marker_id: markerId,
-          p_categories: categories,
-        });
-        if (error) return rpcError(error);
-        return json(200, data as Record<string, unknown>);
+          const categories =
+            rawCategories && rawCategories.length > 0 ? rawCategories : null;
+          console.log('RPC_START', { rpc: 'month_cleanup_atomic' });
+          const { data, error } = await userClient.rpc('month_cleanup_atomic', {
+            p_shop_id: shopId,
+            p_month: monthDate,
+            p_marker_id: markerId,
+            p_categories: categories,
+          });
+          if (error) {
+            console.error(
+              'TOP_LEVEL_FAILURE',
+              Object.assign(failureInfo('RPC', error), {
+                rpc: 'month_cleanup_atomic',
+              }),
+            );
+            return rpcError(error);
+          }
+          console.log('RPC_OK', { rpc: 'month_cleanup_atomic' });
+          return json(200, data as Record<string, unknown>);
+        } catch (err) {
+          console.error('TOP_LEVEL_FAILURE', failureInfo('month-cleanup', err));
+          return json(500, { error: 'FAILED' });
+        }
       }
 
       return json(400, { error: 'INVALID_INPUT' });
     } catch (_error) {
+      console.error('TOP_LEVEL_FAILURE', failureInfo(stage, _error));
       return json(500, { error: 'FAILED' });
     }
   } catch (_error) {
+    console.error('TOP_LEVEL_FAILURE', failureInfo(stage, _error));
     return json(500, { error: 'FAILED' });
   }
 });

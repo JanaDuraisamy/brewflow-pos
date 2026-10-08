@@ -164,12 +164,62 @@ List<pw.Widget> _salesSection(
   ManagementReportData data,
   String Function(int) money,
 ) {
+  final collections = data.closingCollections;
   return [
     _sectionTitle('Sales Summary'),
-    if (data.salesTotalPaise == 0) _muted('No sales recorded in this range.'),
-    _summaryLine('Total Sales', money(data.salesTotalPaise), emphasize: true),
-    _summaryLine('Total Cash', money(data.salesCashPaise)),
-    _summaryLine('Total UPI', money(data.salesUpiPaise)),
+    if (data.salesTotalPaise == 0 && !data.hasAnyClosing)
+      _muted('No sales recorded in this range.'),
+    _summaryLine(
+      'Total Sales (bills)',
+      money(data.salesTotalPaise),
+      emphasize: true,
+    ),
+    if (!data.hasAnyClosing)
+      _muted(
+        'No Daily Closing recorded in this range — actual collection '
+        'unavailable.',
+      )
+    else ...[
+      ..._chunkedTable(
+        ['Date', 'Cash (Closing)', 'UPI (Closing)', 'Total'],
+        [
+          for (final row in collections)
+            if (row.hasClosing)
+              [
+                DateFormat('d MMM yyyy').format(row.date),
+                money(row.cashPaise),
+                money(row.upiPaise),
+                money(row.totalPaise),
+              ]
+            else
+              [
+                DateFormat('d MMM yyyy').format(row.date),
+                '—',
+                '—',
+                'No closing recorded',
+              ],
+        ],
+        alignments: const [
+          pw.Alignment.centerLeft,
+          pw.Alignment.centerRight,
+          pw.Alignment.centerRight,
+          pw.Alignment.centerRight,
+        ],
+      ),
+      pw.SizedBox(height: 8),
+      _summaryLine('Total Cash (Daily Closing)', money(data.closingCashPaise)),
+      _summaryLine('Total UPI (Daily Closing)', money(data.closingUpiPaise)),
+      _summaryLine(
+        'Collection Total (Daily Closing)',
+        money(data.closingCollectionTotalPaise),
+        emphasize: true,
+      ),
+      if (data.daysMissingClosing > 0)
+        _muted(
+          'No Daily Closing recorded for ${data.daysMissingClosing} '
+          'day(s) — excluded from the collection total, never substituted.',
+        ),
+    ],
     pw.SizedBox(height: 16),
   ];
 }

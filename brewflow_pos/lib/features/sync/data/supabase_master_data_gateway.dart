@@ -305,18 +305,10 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     table: 'month_cleanup_markers',
     since: since,
     limit: limit,
-    fromRow: (json) => SyncMonthCleanupMarker(
-      id: json['id'] as String,
-      shopId: json['shop_id'] as String,
-      month: DateTime.parse('${json['month']}T00:00:00Z'),
-      tables: (json['tables'] as List).map((e) => e.toString()).toList(),
-      deletedCounts: {
-        for (final e in (json['deleted_counts'] as Map).entries)
-          e.key.toString(): (e.value as num).toInt(),
-      },
-      completedAt: _utc(json['completed_at']),
-      createdAt: _utc(json['client_created_at']),
-    ),
+    // The server writes `tables` as a JSON object (migration 0043
+    // `jsonb_object_agg`); fromServerRow parses both that shape and legacy
+    // arrays defensively so one marker row can never abort the pull.
+    fromRow: SyncMonthCleanupMarker.fromServerRow,
   );
 
   Map<String, dynamic> _variantToServer(SyncProductVariant row) => {

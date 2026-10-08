@@ -9,7 +9,6 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -90,7 +89,10 @@ void main() {
     expect(find.text('Business at a Glance'), findsOneWidget);
     expect(find.text('No sales recorded in this window'), findsOneWidget);
     expect(
-      find.text('No bills recorded yet — your first sale will appear here.'),
+      find.text(
+        'No bills recorded yet — start one with New Sale in Quick '
+        'actions below.',
+      ),
       findsOneWidget,
     );
     expect(find.text('No items running low right now'), findsOneWidget);
@@ -424,15 +426,16 @@ void main() {
     await tester.tap(find.byType(AppAvatar));
     await tester.pumpAndSettle();
 
-    expect(find.text('Profile'), findsOneWidget);
-    expect(find.text('Change Account'), findsOneWidget);
-    expect(find.text('Sign out'), findsOneWidget);
+    // Identity sheet only: role, email and shop with no action rows.
+    // Sign-out lives in the shell header/sidebar, so the sheet carries
+    // no Profile/Change Account/Sign out entries.
     expect(find.text(owner.email), findsOneWidget);
-
-    // Profile reveals the signed-in identity without leaving the page.
-    await tester.tap(find.text('Profile'));
-    await tester.pumpAndSettle();
-    expect(find.text('Profile'), findsWidgets);
-    expect(find.textContaining(owner.email), findsWidgets);
+    expect(find.text('Profile'), findsNothing);
+    expect(find.text('Change Account'), findsNothing);
+    expect(find.text('Sign out'), findsNothing);
+    // The dashboard header bell was removed: stock alerts open from the
+    // global shell header bell and the Alerts section instead.
+    expect(find.byType(NotificationBell), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

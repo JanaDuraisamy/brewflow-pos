@@ -392,6 +392,124 @@ void main() {
     expect(data.anyRecords, isFalse);
   });
 
+  group('actual collection comes from Daily Closing records', () {
+    void seedClosing(
+      String id,
+      DateTime businessDate, {
+      required int cash,
+      required int upi,
+      String? shopId,
+    }) => closings.seed(
+      id,
+      businessDate: businessDate,
+      totalCashPaise: cash,
+      totalUpiPaise: upi,
+      totalSalesPaise: cash + upi,
+      totalExpensePaise: 0,
+      cashLeftInBoxPaise: cash,
+      cashTakenOutPaise: 0,
+      shopId: shopId,
+    );
+
+    Future<ManagementReportData> loadFebruary({List<String>? scope}) =>
+        makeLoader(
+          scope: scope,
+        ).load(fromLocal: DateTime(2026, 2, 1), toLocal: DateTime(2026, 2, 28));
+
+    test(
+      'closing cash/UPI feed the collection totals; bills stay separate',
+      () async {
+        seedSale(receiptNumber: 'BF-1', totalPaise: 10000, shopId: 'shop-1');
+        seedClosing('k1', DateTime.utc(2026, 2, 14), cash: 150000, upi: 200000);
+        seedClosing('k2', DateTime.utc(2026, 2, 20), cash: 100000, upi: 250000);
+
+        final data = await loadFebruary();
+
+        // Bill-derived sales are retained untouched and separate.
+        expect(data.salesTotalPaise, 10000);
+        expect(data.salesCashPaise, 10000);
+        // Collection comes from closings only: cash + UPI.
+        expect(data.closingCashPaise, 250000);
+        expect(data.closingUpiPaise, 450000);
+        expect(data.closingCollectionTotalPaise, 700000);
+        expect(data.hasAnyClosing, isTrue);
+        // One row per day in range (Feb 2026: 28 days), oldest first.
+        expect(data.closingCollections, hasLength(28));
+        expect(data.closingCollections.first.date, DateTime(2026, 2, 1));
+        final feb14 = data.closingCollections.singleWhere(
+          (row) => row.date == DateTime(2026, 2, 14),
+        );
+        expect(feb14.hasClosing, isTrue);
+        expect(feb14.cashPaise, 150000);
+        expect(feb14.upiPaise, 200000);
+        expect(feb14.totalPaise, 350000);
+        final feb15 = data.closingCollections.singleWhere(
+          (row) => row.date == DateTime(2026, 2, 15),
+        );
+        expect(feb15.hasClosing, isFalse);
+        expect(feb15.totalPaise, 0);
+        expect(data.daysMissingClosing, 26);
+      },
+    );
+
+    test(
+      'a range with no closings reports honestly, never zero-substituted',
+      () async {
+        seedSale(receiptNumber: 'BF-1', totalPaise: 10000, shopId: 'shop-1');
+
+        final data = await loadFebruary();
+
+        expect(data.hasAnyClosing, isFalse);
+        expect(data.closingCashPaise, 0);
+        expect(data.closingUpiPaise, 0);
+        expect(data.closingCollectionTotalPaise, 0);
+        expect(data.closingCollections, hasLength(28));
+        expect(data.closingCollections.every((row) => !row.hasClosing), isTrue);
+        expect(data.daysMissingClosing, 28);
+        // Bills are still reported — the missing closing never borrows them.
+        expect(data.salesTotalPaise, 10000);
+      },
+    );
+
+    test(
+      'closings outside the range do not leak into the collection',
+      () async {
+        seedClosing('old', DateTime.utc(2026, 1, 30), cash: 99990000, upi: 0);
+
+        final data = await loadFebruary();
+
+        expect(data.closingCashPaise, 0);
+        expect(data.hasAnyClosing, isFalse);
+        expect(data.closingCollections, hasLength(28));
+      },
+    );
+
+    test('closings follow the resolved shop scope', () async {
+      seedClosing(
+        'mine',
+        DateTime.utc(2026, 2, 14),
+        cash: 50000,
+        upi: 60000,
+        shopId: 'shop-1',
+      );
+      seedClosing(
+        'theirs',
+        DateTime.utc(2026, 2, 14),
+        cash: 99990000,
+        upi: 0,
+        shopId: 'shop-2',
+      );
+
+      final mine = await loadFebruary(scope: const ['shop-1']);
+      expect(mine.closingCashPaise, 50000);
+      expect(mine.closingUpiPaise, 60000);
+      expect(mine.closingCollectionTotalPaise, 110000);
+
+      final both = await loadFebruary(scope: const ['shop-1', 'shop-2']);
+      expect(both.closingCashPaise, 50000 + 99990000);
+    });
+  });
+
   test('rejects a backwards range', () async {
     await expectLater(
       load(from: DateTime(2026, 2, 10), to: DateTime(2026, 2, 5)),
@@ -727,8 +845,7 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
     String staffUserId,
     DateTime month, {
     bool localOnly = false,
-  }) async =>
-      null;
+  }) async => null;
 
   @override
   Future<void> setMonthlySalary(
@@ -757,6 +874,11 @@ final class _FakeStaffPayrollRepository implements StaffPayrollRepository {
 final class _FakeDailyClosingRepository implements DailyClosingRepository {
   final List<DailyClosingRecord> _stored = [];
 
+  /// Owning shop per record id. Records seeded without a shop behave as
+  /// in-scope for every scope (preserves the pre-existing tests); records
+  /// with a shop are filtered exactly like the real repository.
+  final Map<String, String> _shopOf = {};
+
   void seed(
     String id, {
     required DateTime businessDate,
@@ -767,7 +889,9 @@ final class _FakeDailyClosingRepository implements DailyClosingRepository {
     required int cashLeftInBoxPaise,
     required int cashTakenOutPaise,
     String? takenOutBy,
+    String? shopId,
   }) {
+    if (shopId != null) _shopOf[id] = shopId;
     _stored.add(
       DailyClosingRecord(
         id: id,
@@ -796,7 +920,11 @@ final class _FakeDailyClosingRepository implements DailyClosingRepository {
       for (final record in _stored)
         if ((startDate == null || !record.businessDate.isBefore(startDate)) &&
             (endExclusiveDate == null ||
-                record.businessDate.isBefore(endExclusiveDate)))
+                record.businessDate.isBefore(endExclusiveDate)) &&
+            (shopIds == null ||
+                shopIds.isEmpty ||
+                !_shopOf.containsKey(record.id) ||
+                shopIds.contains(_shopOf[record.id])))
           record,
     ];
   }

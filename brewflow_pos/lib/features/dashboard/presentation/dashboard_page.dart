@@ -93,9 +93,7 @@ final class _DashboardContent extends ConsumerWidget {
               _DashboardHeader(
                 isCompact: breakpoint.isCompact,
                 selected: selected,
-                alerts: snapshot.lowStockCount + snapshot.outOfStockCount,
                 onPickDate: () => _pickDate(context, ref, selected),
-                onNotifications: () => context.go(AppRoutes.inventory),
                 onAvatarTap: () => showAccountMenu(context, email: email),
                 avatarName: email,
                 shopName: shopName,
@@ -164,9 +162,7 @@ final class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader({
     required this.isCompact,
     required this.selected,
-    required this.alerts,
     required this.onPickDate,
-    required this.onNotifications,
     required this.onAvatarTap,
     required this.avatarName,
     required this.shopName,
@@ -181,9 +177,7 @@ final class _DashboardHeader extends StatelessWidget {
   final bool isCompact;
 
   final DateTime selected;
-  final int alerts;
   final VoidCallback onPickDate;
-  final VoidCallback onNotifications;
   final VoidCallback onAvatarTap;
   final String avatarName;
 
@@ -306,8 +300,6 @@ final class _DashboardHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: AppSpacing.md),
-              NotificationBell(count: alerts, onPressed: onNotifications),
-              const SizedBox(width: AppSpacing.sm),
               AppAvatar(
                 name: displayName,
                 backgroundColor: AppColors.primaryDark,
@@ -377,7 +369,6 @@ final class _DashboardHeader extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpacing.xs),
-            NotificationBell(count: alerts, onPressed: onNotifications),
             AppAvatar(
               name: displayName,
               backgroundColor: AppColors.primaryDark,
@@ -830,21 +821,12 @@ final class _RecentBillsSection extends StatelessWidget {
         title: 'Recent Bills',
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-          child: Column(
-            children: [
-              Text(
-                'No bills recorded yet — your first sale will appear here.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: context.appColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              SecondaryButton(
-                label: 'Start a Sale',
-                icon: Icons.point_of_sale_outlined,
-                onPressed: () => context.go(AppRoutes.billing),
-              ),
-            ],
+          child: Text(
+            'No bills recorded yet — start one with New Sale in Quick '
+            'actions below.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: context.appColors.textSecondary,
+            ),
           ),
         ),
       );

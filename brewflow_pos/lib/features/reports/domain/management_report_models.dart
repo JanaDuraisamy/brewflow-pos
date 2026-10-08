@@ -63,6 +63,29 @@ final class ManagementTakenByRow {
   final int totalPaise;
 }
 
+/// One business day's actual collection from its saved Daily Closing record.
+/// [cashPaise]/[upiPaise] come ONLY from the closing for the same shop scope
+/// + business date — never substituted from bills and never defaulted: days
+/// without a closing carry [hasClosing] false with zero amounts so the
+/// renderer shows "No closing recorded" instead of a misleading zero.
+final class ManagementClosingCollectionRow {
+  const ManagementClosingCollectionRow({
+    required this.date,
+    required this.hasClosing,
+    required this.cashPaise,
+    required this.upiPaise,
+  });
+
+  /// Local business day.
+  final DateTime date;
+  final bool hasClosing;
+  final int cashPaise;
+  final int upiPaise;
+
+  /// Daily Closing collection total: cash + UPI.
+  int get totalPaise => cashPaise + upiPaise;
+}
+
 /// One row of the "Customer Outstanding" section: a customer's balance as of
 /// the report's To Date. [outstandingPaise] is always > 0; [phone] renders as
 /// a dash when the profile has none.
@@ -100,6 +123,7 @@ final class ManagementReportData {
     required this.staffRows,
     required this.closings,
     required this.takenByRows,
+    required this.closingCollections,
   });
 
   /// Inclusive range endpoints as local calendar days.
@@ -141,6 +165,33 @@ final class ManagementReportData {
 
   /// Cash-taken-out grouped by who took it (alphabetical by name).
   final List<ManagementTakenByRow> takenByRows;
+
+  /// Actual Collection (Daily Closing): one row per business day in range,
+  /// oldest first. A day's cash/UPI come only from the saved Daily Closing
+  /// record for the same shop scope + business date.
+  final List<ManagementClosingCollectionRow> closingCollections;
+
+  /// Collection cash summed over days WITH a saved closing only.
+  int get closingCashPaise => closingCollections.fold(
+    0,
+    (sum, row) => sum + (row.hasClosing ? row.cashPaise : 0),
+  );
+
+  /// Collection UPI summed over days WITH a saved closing only.
+  int get closingUpiPaise => closingCollections.fold(
+    0,
+    (sum, row) => sum + (row.hasClosing ? row.upiPaise : 0),
+  );
+
+  /// Daily Closing collection total: cash + UPI.
+  int get closingCollectionTotalPaise => closingCashPaise + closingUpiPaise;
+
+  /// Whether at least one day in range has a saved closing.
+  bool get hasAnyClosing => closingCollections.any((row) => row.hasClosing);
+
+  /// Days in range without a saved closing (rendered honestly, never zeroed).
+  int get daysMissingClosing =>
+      closingCollections.where((row) => !row.hasClosing).length;
 
   /// Whether any real record exists anywhere in the report.
   bool get anyRecords =>

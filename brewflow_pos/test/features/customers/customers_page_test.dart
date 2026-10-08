@@ -18,6 +18,8 @@ import 'package:brewflow_pos/features/customers/presentation/customer_ledger_con
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
+import 'package:brewflow_pos/features/orders/presentation/order_detail_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
@@ -72,6 +74,7 @@ void main() {
   late FakeAuthRepository fakeAuth;
   late FakeCustomersRepository fakeCustomers;
   late FakeCustomerLedgerRepository fakeLedger;
+  late FakeOrdersRepository fakeOrders;
   late FakeShareService fakeShare;
 
   final now = DateTime.now().toUtc();
@@ -133,6 +136,7 @@ void main() {
     fakeAuth = FakeAuthRepository();
     fakeCustomers = FakeCustomersRepository();
     fakeLedger = FakeCustomerLedgerRepository();
+    fakeOrders = FakeOrdersRepository();
     fakeShare = FakeShareService();
   });
 
@@ -142,7 +146,7 @@ void main() {
       customersRepositoryProvider.overrideWithValue(fakeCustomers),
       customerLedgerRepositoryProvider.overrideWithValue(fakeLedger),
       inventoryRepositoryProvider.overrideWithValue(FakeInventoryRepository()),
-      ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+      ordersRepositoryProvider.overrideWithValue(fakeOrders),
       shareServiceProvider.overrideWithValue(fakeShare),
       // The customer list is shop-scoped, so declare the signed-in owner
       // session. Without it the switcher fails closed to zero customers.
@@ -176,7 +180,7 @@ void main() {
           inventoryRepositoryProvider.overrideWithValue(
             FakeInventoryRepository(),
           ),
-          ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+          ordersRepositoryProvider.overrideWithValue(fakeOrders),
           staffRepositoryProvider.overrideWithValue(staffRepo),
           connectivityServiceProvider.overrideWithValue(
             fakeConnectivityService(),
@@ -497,7 +501,7 @@ void main() {
       expect(find.text('Contact details'), findsOneWidget);
       expect(find.text('Activity'), findsOneWidget);
       expect(find.text('Financial summary'), findsOneWidget);
-      expect(find.text('Purchase history'), findsOneWidget);
+      expect(find.text('Bill history'), findsOneWidget);
       expect(find.text('Payment history'), findsOneWidget);
       expect(find.text('No purchases yet'), findsOneWidget);
       expect(find.text('No payments yet'), findsOneWidget);
@@ -1023,6 +1027,130 @@ void main() {
 
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
+    });
+  });
+
+  group('bill history navigation', () {
+    /// Seeds Priya with one unpaid bill whose ledger id matches the
+    /// [FakeOrdersRepository]'s auto-assigned id, so the pushed detail page
+    /// can reload the same sale by exact id.
+    void seedOneBill() {
+      fakeOrders.add(
+        receiptNumber: 'BF-000001',
+        createdAt: now.subtract(const Duration(days: 2)),
+        totalPaise: 15000,
+        items: const [
+          OrderItem(
+            productName: 'Filter Coffee',
+            unitPricePaise: 15000,
+            quantity: 1,
+            lineTotalPaise: 15000,
+          ),
+        ],
+      );
+      fakeLedger.bills.add(
+        bill(
+          id: 'order-1',
+          receiptNumber: 'BF-000001',
+          totalPaise: 15000,
+          createdAt: now.subtract(const Duration(days: 2)),
+        ),
+      );
+    }
+
+    Future<void> openDetail(WidgetTester tester, String name) async {
+      await openCustomers(tester);
+      await tester.tap(find.text(name));
+      await pumpAsync(tester);
+      expect(find.byType(CustomerDetailPage), findsOneWidget);
+    }
+
+    testWidgets('a bill row opens that exact bill in the canonical detail '
+        'route', (tester) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      seedOneBill();
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      // The list itself is unchanged: heading, status, due and total.
+      await scrollDetailTo(tester, find.text('Receipt BF-000001'));
+      expect(find.text('Bill history'), findsOneWidget);
+      expect(find.text('Receipt BF-000001'), findsOneWidget);
+      expect(find.text('Unpaid'), findsOneWidget);
+      expect(find.text('Due ₹150.00'), findsOneWidget);
+      expect(find.textContaining('Total ₹150.00'), findsOneWidget);
+
+      await tester.tap(find.text('Receipt BF-000001'));
+      await pumpAsync(tester);
+
+      expect(find.byType(OrderDetailPage), findsOneWidget);
+      final detail = tester.widget<OrderDetailPage>(
+        find.byType(OrderDetailPage),
+      );
+      expect(detail.order?.id, 'order-1', reason: 'exact sale id passed');
+      expect(detail.order?.receiptNumber, 'BF-000001');
+      expect(find.text('Order BF-000001'), findsOneWidget);
+      // The detail body loaded the same sale, not another one.
+      expect(find.text('Filter Coffee'), findsOneWidget);
+    });
+
+    testWidgets('back from the bill detail returns to customer details', (
+      tester,
+    ) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      seedOneBill();
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      await scrollDetailTo(tester, find.text('Receipt BF-000001'));
+      await tester.tap(find.text('Receipt BF-000001'));
+      await pumpAsync(tester);
+      expect(find.byType(OrderDetailPage), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Back'));
+      await pumpAsync(tester);
+
+      expect(find.byType(OrderDetailPage), findsNothing);
+      expect(find.byType(CustomerDetailPage), findsOneWidget);
+      // The list returns at the position it left; scroll back to the profile.
+      // (The AppBar title is always hit-testable, so it cannot be the target.)
+      final detailScrollable = find.descendant(
+        of: find.byType(CustomerDetailPage),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.text('Priya'),
+        -150,
+        scrollable: detailScrollable.first,
+      );
+      await tester.pump();
+      expect(find.text('Priya'), findsOneWidget);
+    });
+
+    testWidgets('opening-balance rows never open a bill detail', (
+      tester,
+    ) async {
+      fakeCustomers.storedCustomers.add(customer('c1', 'Priya'));
+      fakeLedger.bills.add(
+        FakeLedgerBill(
+          id: 'opening-1',
+          customerId: 'c1',
+          receiptNumber: 'BF-9001',
+          createdAt: now,
+          totalPaise: 4550,
+          isOpeningBalance: true,
+        ),
+      );
+      await pumpAuthenticated(tester);
+      await openDetail(tester, 'Priya');
+
+      await scrollDetailTo(tester, find.text('Opening Due'));
+      await tester.tap(find.text('Opening Due'));
+      await pumpAsync(tester);
+
+      expect(find.byType(OrderDetailPage), findsNothing);
+      expect(find.byType(CustomerDetailPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 

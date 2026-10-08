@@ -330,6 +330,21 @@ final class LocalMasterDataApplier {
     }
   }
 
+  /// True when any marker is recorded as not-yet-applied.
+  ///
+  /// The engine uses this to avoid advancing the shared pull cursor past a
+  /// deferred marker: a cursor that moves beyond an unapplied marker would
+  /// permanently skip the records the marker will delete when it finally
+  /// applies.
+  Future<bool> hasUnappliedMonthCleanups() async {
+    final rows =
+        await (_database.selectOnly(_database.monthCleanupMarkers)
+              ..addColumns([_database.monthCleanupMarkers.id])
+              ..where(_database.monthCleanupMarkers.applied.equals(false)))
+            .get();
+    return rows.isNotEmpty;
+  }
+
   /// Retries markers recorded while the queue was busy. Called by the engine
   /// on EVERY marker drain — including cycles whose pull returns no rows, so
   /// a deferred marker is never stranded behind an advanced cursor.

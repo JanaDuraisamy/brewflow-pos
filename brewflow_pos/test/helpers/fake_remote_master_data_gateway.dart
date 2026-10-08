@@ -70,6 +70,9 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
   /// Counters asserted by retry/idempotency tests.
   int pushAttempts = 0;
 
+  /// Test hook: when set, confirmation upserts throw it instead of writing.
+  Object? failConfirmationUpsertWith;
+
   final FakeRemoteStore _store;
   final String viewerShopId;
 
@@ -628,6 +631,8 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
     List<SyncMonthlyReportConfirmation> rows,
   ) async {
     pushAttempts++;
+    final failure = failConfirmationUpsertWith;
+    if (failure != null) throw failure;
     if (pushesFail) {
       _ensureOnline();
     }

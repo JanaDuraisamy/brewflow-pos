@@ -322,6 +322,47 @@ final class ManagementReportLoader {
           ),
       ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
+      // ---- Actual Collection (Daily Closing) --------------------------------
+      // One row per business day in range. A day's cash/UPI come ONLY from
+      // the saved Daily Closing record(s) for the same shop scope +
+      // business date (businessDate is a UTC-midnight cookie, matched via
+      // toCookie()): days without a closing are flagged, never substituted
+      // from bills and never treated as zero collection.
+      final closingCashByDay = <DateTime, int>{};
+      final closingUpiByDay = <DateTime, int>{};
+      for (final closing in ascendingClosings) {
+        final day = closing.businessDate.toCookie();
+        closingCashByDay.update(
+          day,
+          (total) => total + closing.totalCashPaise,
+          ifAbsent: () => closing.totalCashPaise,
+        );
+        closingUpiByDay.update(
+          day,
+          (total) => total + closing.totalUpiPaise,
+          ifAbsent: () => closing.totalUpiPaise,
+        );
+      }
+      final closingCollections = <ManagementClosingCollectionRow>[];
+      for (
+        var day = fromDay;
+        !day.isAfter(toDay);
+        day = day.add(const Duration(days: 1))
+      ) {
+        final key = day.toCookie();
+        final hasClosing =
+            closingCashByDay.containsKey(key) ||
+            closingUpiByDay.containsKey(key);
+        closingCollections.add(
+          ManagementClosingCollectionRow(
+            date: day,
+            hasClosing: hasClosing,
+            cashPaise: closingCashByDay[key] ?? 0,
+            upiPaise: closingUpiByDay[key] ?? 0,
+          ),
+        );
+      }
+
       return ManagementReportData(
         fromLocal: fromDay,
         toLocal: toDay,
@@ -341,6 +382,7 @@ final class ManagementReportLoader {
         staffRows: staffRows,
         closings: ascendingClosings,
         takenByRows: takenByRows,
+        closingCollections: closingCollections,
       );
     } on CustomerLedgerFailure {
       rethrow;

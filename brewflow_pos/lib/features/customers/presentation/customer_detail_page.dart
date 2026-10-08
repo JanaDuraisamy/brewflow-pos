@@ -16,6 +16,7 @@ import 'package:brewflow_pos/features/customers/domain/customers_models.dart';
 import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
+import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,8 +28,9 @@ import 'package:uuid/uuid.dart';
 /// BrewFlow POS — Customer Detail Page
 ///
 /// Full profile view: identity, contact details, activity state and the live
-/// financial ledger — outstanding dues, purchase history with derived payment
-/// status, payment history and a Record Payment flow. Every figure comes from
+/// financial ledger — outstanding dues, bill history with derived payment
+/// status (each bill opens the canonical bill detail), payment history and a
+/// Record Payment flow. Every figure comes from
 /// the customer-ledger repository aggregation; nothing is fabricated or
 /// cached client-side. Pushed from the customers page, so it carries its own
 /// scaffold.
@@ -491,7 +493,7 @@ final class _PurchasesSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SectionCard(
-      title: 'Purchase history',
+      title: 'Bill history',
       subtitle: 'Customer-linked bills and their payment status.',
       child: purchases.isEmpty
           ? const EmptyState(
@@ -520,7 +522,7 @@ final class _PurchaseRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    return Row(
+    final row = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
@@ -571,7 +573,32 @@ final class _PurchaseRow extends StatelessWidget {
         ),
       ],
     );
+    // Real bills open the canonical bill-detail route (the same page the
+    // Orders tab uses). Opening-balance rows carry no sale id, so they never
+    // navigate.
+    if (purchase.isOpeningBalance) {
+      return row;
+    }
+    return InkWell(
+      onTap: () =>
+          context.push(AppRoutes.orderDetail, extra: _billSummary(purchase)),
+      child: row,
+    );
   }
+
+  /// Header-only [OrderSummary] for the detail route: the page reloads every
+  /// figure by exact sale id, so only identity and totals travel here.
+  OrderSummary _billSummary(CustomerPurchase purchase) => OrderSummary(
+    id: purchase.saleId,
+    receiptNumber: purchase.receiptNumber,
+    // Never rendered from the summary — the detail body counts its own lines.
+    itemCount: 0,
+    totalPaise: purchase.totalPaise,
+    paymentStatus: purchase.status == SalePaymentStatus.paid
+        ? PaymentStatus.paid
+        : PaymentStatus.notPaid,
+    createdAt: purchase.createdAt,
+  );
 }
 
 /// Amounts received against this customer's bills.

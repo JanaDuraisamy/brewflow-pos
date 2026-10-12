@@ -1,5 +1,4 @@
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
-import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_alerts.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_alerts_controller.dart';
@@ -7,7 +6,6 @@ import 'package:brewflow_pos/features/inventory/presentation/stock_alerts_sheet.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/test_providers.dart';

@@ -255,4 +255,37 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'phone cart lines use large phone touch targets in the narrow layout',
+    (tester) async {
+      await _pumpPos(tester, const Size(390, 800));
+
+      const longName = 'Almond Croissant With Butter Crumb Finish';
+      final addButton = _addButtonFor(longName);
+      await tester.ensureVisible(addButton);
+      await tester.tap(addButton);
+      await tester.pumpAndSettle();
+      expect(find.text('1 in cart'), findsOneWidget);
+
+      await tester.tap(find.text('Open cart'));
+      await tester.pumpAndSettle();
+
+      // The narrow layout computes phone=true from the window width and must
+      // pass it to the cart panel: the line's quantity controls then carry
+      // the 40dp phone constraints instead of the compact desktop ones.
+      final remove = tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.delete_outline),
+      );
+      expect(
+        remove.constraints,
+        const BoxConstraints(minWidth: 40, minHeight: 40),
+      );
+      final increase = tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.add_circle_outline),
+      );
+      expect(increase.iconSize, 22);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

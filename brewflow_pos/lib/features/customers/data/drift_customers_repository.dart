@@ -55,7 +55,7 @@ final class DriftCustomersRepository implements CustomersRepository {
 
   Future<void> _requireOnline() async {
     if (_connectivity != null) {
-      await OnlineGuard(_connectivity!).requireOnline();
+      await OnlineGuard(_connectivity).requireOnline();
     }
   }
 
@@ -96,8 +96,9 @@ final class DriftCustomersRepository implements CustomersRepository {
         'shop_id': await resolveWritableShopId(_database),
       }, onConflict: 'entity,id');
     } catch (e) {
-      if (e.toString().contains('SocketException'))
+      if (e.toString().contains('SocketException')) {
         throw const OfflineException();
+      }
       rethrow;
     }
   }
@@ -220,17 +221,20 @@ final class DriftCustomersRepository implements CustomersRepository {
           final row = await _customers.byId(customer.id);
           if (row != null) await _pushCustomerToCloud(row);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         return customer;
       }
 
       final coordinator = _outbox;
+      // Awaited (not bare-returned) so an async failure inside the write is
+      // caught by the mappers below instead of escaping as a raw exception.
       return coordinator == null
-          ? doCreate()
-          : coordinator.run(
+          ? await doCreate()
+          : await coordinator.run(
               write: doCreate,
               snapshots: (customer, context) async => [
                 _customerAppend(customer, context),
@@ -267,7 +271,7 @@ final class DriftCustomersRepository implements CustomersRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('customers')
               .update({
                 'name': normalizedName,
@@ -281,8 +285,9 @@ final class DriftCustomersRepository implements CustomersRepository {
               })
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _customers.update(
@@ -335,13 +340,14 @@ final class DriftCustomersRepository implements CustomersRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('customers')
               .update({'is_active': isActive})
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _customers.updateActive(id, isActive);
@@ -381,8 +387,9 @@ final class DriftCustomersRepository implements CustomersRepository {
         try {
           await _deleteCustomerOnCloud(id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _customers.deleteById(id);

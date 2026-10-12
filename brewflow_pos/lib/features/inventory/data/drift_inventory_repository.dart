@@ -83,7 +83,7 @@ final class DriftInventoryRepository implements InventoryRepository {
 
   Future<void> _requireOnline() async {
     if (_connectivity != null) {
-      await OnlineGuard(_connectivity!).requireOnline();
+      await OnlineGuard(_connectivity).requireOnline();
     }
   }
 
@@ -410,7 +410,7 @@ final class DriftInventoryRepository implements InventoryRepository {
       // Online path: Supabase authoritative, local as cache
       if (_supabase != null) {
         try {
-          await _supabase!.from('categories').upsert({
+          await _supabase.from('categories').upsert({
             'id': id,
             'shop_id': resolvedShopId,
             'name': normalized,
@@ -507,15 +507,19 @@ final class DriftInventoryRepository implements InventoryRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         final row = await _categories.getById(id);
-        final shopId = row?.shopId ?? await resolveWritableShopId(_database);
+        // The rename itself is ownership-gated above and needs no shop value
+        // here; the resolver still runs for its shop-materializing side
+        // effect (a provided id is returned untouched, nothing is minted).
+        await resolveWritableShopId(_database, row?.shopId);
         try {
-          await _supabase!
+          await _supabase
               .from('categories')
               .update({'name': normalized})
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _categories.updateName(id, normalized);
@@ -550,13 +554,14 @@ final class DriftInventoryRepository implements InventoryRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('categories')
               .update({'is_active': isActive})
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _categories.updateActive(id, isActive);
@@ -628,8 +633,9 @@ final class DriftInventoryRepository implements InventoryRepository {
         try {
           await _deleteCategoryOnCloud(id, shopId);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _database.transaction(() async => _categories.deleteById(id));
@@ -791,8 +797,9 @@ final class DriftInventoryRepository implements InventoryRepository {
         try {
           await _pushProductToCloud(product, resolvedShopId);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         if (imagePath != null) {
@@ -1134,15 +1141,15 @@ final class DriftInventoryRepository implements InventoryRepository {
           // the `master_deletions` tombstone alone only *stops* it being
           // pushed again. `product_variants.product_id` is ON DELETE CASCADE
           // there, so the variants disappear with it.
-          await _supabase!.from('products').delete().eq('id', id);
-          await _supabase!.from('master_deletions').upsert({
+          await _supabase.from('products').delete().eq('id', id);
+          await _supabase.from('master_deletions').upsert({
             'entity': 'PRODUCT',
             'id': id,
             'shop_id': shopId,
           }, onConflict: 'entity,id');
           if (row.cloudImagePath != null) {
             try {
-              await _supabase!.storage.from('product-images').remove([
+              await _supabase.storage.from('product-images').remove([
                 row.cloudImagePath!,
               ]);
             } catch (_) {}
@@ -1182,9 +1189,12 @@ final class DriftInventoryRepository implements InventoryRepository {
       }
 
       if (coordinator == null) {
-        return _database.transaction(commit);
+        // Awaited (not bare-returned) so an async failure inside the delete
+        // is caught by the mappers below instead of escaping as a raw
+        // exception.
+        return await _database.transaction(commit);
       }
-      return coordinator.run<ProductDeleteResult>(
+      return await coordinator.run<ProductDeleteResult>(
         write: () => _database.transaction(commit),
         // A single DELETE append. Re-reading the row here would be wrong:
         // there is no row left to describe, and shipping an UPSERT snapshot
@@ -1459,7 +1469,7 @@ final class DriftInventoryRepository implements InventoryRepository {
     required String ingredientProductId,
     required String? ingredientVariantId,
   }) => _uuid.v5(
-    Uuid.NAMESPACE_URL,
+    Namespace.url.value,
     'recipe|$shopId|$productId|${variantId ?? '-'}|'
     '$ingredientProductId|${ingredientVariantId ?? '-'}',
   );

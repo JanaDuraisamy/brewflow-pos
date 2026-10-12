@@ -888,4 +888,54 @@ void main() {
     expect(find.text('No failed changes'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('blocked-only sheet hides retry actions and keeps the reason', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final repo = DriftSyncRepository(db);
+    await repo.insertOutbox(
+      SyncOutboxEntry(
+        id: 'obx-blocked',
+        deviceId: 'device-a',
+        shopId: 'shop-1',
+        entity: 'PRODUCT',
+        entityId: 'prod-1',
+        operation: 'UPSERT',
+        payload: '{"id":"prod-1"}',
+        status: 'PENDING',
+        attemptCount: 0,
+      ),
+    );
+    await repo.parkFailed('obx-blocked', 'JWT expired');
+
+    await pumpDashboard(
+      tester,
+      syncDb: db,
+      syncRepo: repo,
+      syncStatus: const SyncStatusSnapshot(
+        level: SyncStatusLevel.pending,
+        failedCount: 1,
+      ),
+    );
+
+    await tester.tap(find.text('1 failed'));
+    await tester.pumpAndSettle();
+
+    // The blocked entry stays visible with its friendly reason, but neither
+    // a per-row Retry nor a bulk Retry all is offered for it.
+    expect(find.text('Failed changes'), findsOneWidget);
+    expect(find.text('Product upload'), findsOneWidget);
+    expect(
+      find.text(
+        'The server rejected this change (permission or data problem). '
+        'Contact support if it keeps failing.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(SecondaryButton, 'Retry'), findsNothing);
+    expect(find.text('Retry all'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

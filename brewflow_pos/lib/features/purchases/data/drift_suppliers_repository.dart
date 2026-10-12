@@ -57,8 +57,9 @@ final class DriftSuppliersRepository implements SuppliersRepository {
   final SupabaseClient? _supabase;
 
   Future<void> _requireOnline() async {
-    if (_connectivity != null)
-      await OnlineGuard(_connectivity!).requireOnline();
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity).requireOnline();
+    }
   }
 
   Future<void> _pushSupplierToCloud(db.Supplier row) async {
@@ -184,8 +185,9 @@ final class DriftSuppliersRepository implements SuppliersRepository {
           try {
             await _pushSupplierToCloud(row);
           } catch (e) {
-            if (e.toString().contains('SocketException'))
+            if (e.toString().contains('SocketException')) {
               throw const OfflineException();
+            }
             rethrow;
           }
         }
@@ -193,9 +195,11 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       }
 
       final coordinator = _outbox;
+      // Awaited (not bare-returned) so an async failure inside the write is
+      // caught by the mappers below instead of escaping as a raw exception.
       return coordinator == null
-          ? doCreate()
-          : coordinator.run(
+          ? await doCreate()
+          : await coordinator.run(
               write: doCreate,
               snapshots: (supplier, context) async => [
                 _supplierAppend(supplier, context),
@@ -231,7 +235,7 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('suppliers')
               .update({
                 'name': normalizedName,
@@ -243,8 +247,9 @@ final class DriftSuppliersRepository implements SuppliersRepository {
               })
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _suppliers.update(
@@ -289,13 +294,14 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('suppliers')
               .update({'is_active': isActive})
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _suppliers.updateActive(id, isActive);
@@ -326,13 +332,14 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       if (hasPurchases) {
         if (_supabase != null) {
           try {
-            await _supabase!
+            await _supabase
                 .from('suppliers')
                 .update({'is_active': false})
                 .eq('id', id);
           } catch (e) {
-            if (e.toString().contains('SocketException'))
+            if (e.toString().contains('SocketException')) {
               throw const OfflineException();
+            }
             rethrow;
           }
           await _suppliers.updateActive(id, false);
@@ -350,15 +357,16 @@ final class DriftSuppliersRepository implements SuppliersRepository {
       }
       if (_supabase != null) {
         try {
-          await _supabase!.from('suppliers').delete().eq('id', id);
-          await _supabase!.from('master_deletions').upsert({
+          await _supabase.from('suppliers').delete().eq('id', id);
+          await _supabase.from('master_deletions').upsert({
             'entity': 'SUPPLIER',
             'id': id,
             'shop_id': existing.shopId,
           }, onConflict: 'entity,id');
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _suppliers.deleteById(id);

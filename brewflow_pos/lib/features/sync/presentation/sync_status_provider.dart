@@ -383,12 +383,23 @@ final class SyncFailuresController
     await reload();
   }
 
-  /// Requeues every FAILED entry as PENDING and kicks a sync cycle. Safe by
-  /// construction: each re-push is an idempotent upsert/recorded deletion keyed
-  /// by the change's stable id.
+  /// Requeues every RETRYABLE failed entry as PENDING and kicks a sync cycle.
+  /// Safe by construction: each re-push is an idempotent upsert/recorded
+  /// deletion keyed by the change's stable id.
+  ///
+  /// BLOCKED entries (permission/data problems the server will reject again)
+  /// are deliberately left FAILED and visible with their reason: re-pushing
+  /// them would only burn attempts and re-park them unchanged.
   Future<void> retryAll() async {
-    await ref.read(syncRepositoryProvider).retryFailedEntries();
-    await _kickSync();
+    final batch = await ref.read(syncRepositoryProvider).failedOutboxBatch();
+    final ids = [
+      for (final entry in batch)
+        if (entry.kind == SyncFailureKind.retryable) entry.id,
+    ];
+    if (ids.isNotEmpty) {
+      await ref.read(syncRepositoryProvider).retryFailedEntries(ids: ids);
+      await _kickSync();
+    }
     await reload();
   }
 

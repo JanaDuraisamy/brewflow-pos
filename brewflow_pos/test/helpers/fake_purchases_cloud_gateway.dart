@@ -20,7 +20,7 @@ class FakePurchasesCloudGateway implements PurchasesCloudGateway {
     if (shopId == 'forbidden-shop') throw Exception('FORBIDDEN');
     _purchaseCounter += 1;
     return {
-      'id': 'pur-${_purchaseCounter}',
+      'id': 'pur-$_purchaseCounter',
       'purchase_number': 'PUR-${_purchaseCounter.toString().padLeft(6, '0')}',
       'subtotal': 10000,
       'created_at': DateTime.now().toUtc().toIso8601String(),

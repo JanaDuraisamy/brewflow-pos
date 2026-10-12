@@ -86,12 +86,7 @@ final class FakeInventoryRepository implements InventoryRepository {
     // shared into this business sits in it. A hidden product's category must
     // not become a visible filter.
     final reachable = storedProducts
-        .where(
-          (p) =>
-              p.shopId == catalogOwnerShopId &&
-              p.visibleInShops &&
-              p.categoryId != null,
-        )
+        .where((p) => p.shopId == catalogOwnerShopId && p.visibleInShops)
         .map((p) => p.categoryId)
         .toSet();
     return storedCategories

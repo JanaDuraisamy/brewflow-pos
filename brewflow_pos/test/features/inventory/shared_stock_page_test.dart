@@ -290,7 +290,7 @@ void main() {
       expect(find.text('Shared Stock'), findsNothing);
     });
 
-    testWidgets('shows ingredients, consumers, unmapped and the warning', (
+    testWidgets('shows ingredients, consumers and unmapped dishes', (
       tester,
     ) async {
       fakeInventory.storedProducts.addAll([
@@ -309,7 +309,6 @@ void main() {
       expect(find.text('×2 Pieces'), findsOneWidget);
       expect(find.text('Dishes without a recipe'), findsOneWidget);
       expect(find.text('Cheese Maggi'), findsOneWidget);
-      expect(find.textContaining('migration 0044'), findsOneWidget);
     });
 
     testWidgets('shows the empty state when there is no shared stock', (

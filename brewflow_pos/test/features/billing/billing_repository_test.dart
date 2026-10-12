@@ -1719,4 +1719,209 @@ void main() {
       expect(payment.reversedAt, isA<DateTime>());
     });
   });
+
+  group('recipe consumption snapshots and void restore', () {
+    Future<void> seedRecipeSale({
+      required String shop,
+      String dish = 'dish-1',
+      String ingredient = 'ing-1',
+      int dishStock = 5,
+      int ingredientStock = 10,
+      int perUnit = 2,
+    }) async {
+      await seedProduct(
+        id: ingredient,
+        name: 'Ingredient $ingredient',
+        stock: ingredientStock,
+        shopId: shop,
+      );
+      await seedProduct(
+        id: dish,
+        name: 'Dish $dish',
+        stock: dishStock,
+        shopId: shop,
+      );
+      await database
+          .into(database.productRecipes)
+          .insert(
+            ProductRecipesCompanion.insert(
+              productId: dish,
+              ingredientProductId: ingredient,
+              quantity: perUnit,
+              shopId: Value(shop),
+            ),
+          );
+    }
+
+    Future<String?> consumedOf(String saleId) async {
+      final item = await (database.select(
+        database.saleItems,
+      )..where((t) => t.saleId.equals(saleId))).getSingle();
+      return item.consumed;
+    }
+
+    test(
+      'mapped sale deducts the ingredient, persists the snapshot, void restores exactly',
+      () async {
+        final shop = await seedShop();
+        await seedRecipeSale(shop: shop);
+
+        final completed = await repository.completeSale(
+          lines: lines([('dish-1', 3)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shop,
+        );
+        final saleId = completed.sale.id;
+
+        // 2 units x 3 sold deducted from the ingredient; the dish's own
+        // stock is never touched for a mapped line.
+        expect(await stockOf('ing-1'), 4);
+        expect(await stockOf('dish-1'), 5);
+        // The persisted snapshot is the same data that was deducted.
+        expect(await consumedOf(saleId), '[{"ip":"ing-1","iv":null,"q":2}]');
+
+        await repository.voidSale(saleId);
+
+        expect(await stockOf('ing-1'), 10);
+        expect(await stockOf('dish-1'), 5);
+      },
+    );
+
+    test(
+      'void restores original amounts after the recipe mapping changes',
+      () async {
+        final shop = await seedShop();
+        await seedRecipeSale(shop: shop);
+
+        final completed = await repository.completeSale(
+          lines: lines([('dish-1', 2)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shop,
+        );
+        expect(await stockOf('ing-1'), 6);
+
+        // Remap the dish AFTER the sale: it now consumes 5x ing-2 instead.
+        await seedProduct(
+          id: 'ing-2',
+          name: 'Ingredient ing-2',
+          stock: 7,
+          shopId: shop,
+        );
+        await (database.delete(
+          database.productRecipes,
+        )..where((t) => t.productId.equals('dish-1'))).go();
+        await database
+            .into(database.productRecipes)
+            .insert(
+              ProductRecipesCompanion.insert(
+                productId: 'dish-1',
+                ingredientProductId: 'ing-2',
+                quantity: 5,
+                shopId: Value(shop),
+              ),
+            );
+
+        await repository.voidSale(completed.sale.id);
+
+        // The void restores the sale-time snapshot (2x2 of ing-1), never the
+        // live mapping: ing-2 is untouched and the dish is untouched.
+        expect(await stockOf('ing-1'), 10);
+        expect(await stockOf('ing-2'), 7);
+        expect(await stockOf('dish-1'), 5);
+      },
+    );
+
+    test(
+      'voidSaleWithoutRestore voids the sale without touching stock',
+      () async {
+        final shop = await seedShop();
+        await seedRecipeSale(shop: shop);
+
+        final completed = await repository.completeSale(
+          lines: lines([('dish-1', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shop,
+        );
+        expect(await stockOf('ing-1'), 8);
+
+        await repository.voidSaleWithoutRestore(completed.sale.id);
+
+        expect(await stockOf('ing-1'), 8);
+        final loaded = await repository.saleById(completed.sale.id);
+        expect(loaded?.voided, isTrue);
+      },
+    );
+
+    test(
+      'two dishes sharing one ingredient aggregate deductions and restore',
+      () async {
+        final shop = await seedShop();
+        await seedProduct(
+          id: 'ing-1',
+          name: 'Ingredient ing-1',
+          stock: 10,
+          shopId: shop,
+        );
+        await seedProduct(id: 'dish-1', name: 'Dish dish-1', shopId: shop);
+        await seedProduct(id: 'dish-2', name: 'Dish dish-2', shopId: shop);
+        for (final (dish, perUnit) in [('dish-1', 2), ('dish-2', 3)]) {
+          await database
+              .into(database.productRecipes)
+              .insert(
+                ProductRecipesCompanion.insert(
+                  productId: dish,
+                  ingredientProductId: 'ing-1',
+                  quantity: perUnit,
+                  shopId: Value(shop),
+                ),
+              );
+        }
+
+        final completed = await repository.completeSale(
+          lines: lines([('dish-1', 2), ('dish-2', 1)]),
+          paymentMethod: PaymentMethod.cash,
+          shopId: shop,
+        );
+        // 2x2 + 3x1 aggregated on the shared ingredient in one sale.
+        expect(await stockOf('ing-1'), 3);
+
+        await repository.voidSale(completed.sale.id);
+
+        expect(await stockOf('ing-1'), 10);
+        expect(await stockOf('dish-1'), 10);
+        expect(await stockOf('dish-2'), 10);
+      },
+    );
+
+    test(
+      'concurrent sales sharing one ingredient both deduct exactly',
+      () async {
+        // No Postgres here, so true multi-connection locking cannot be
+        // exercised; this pins the local end of the contract instead. Drift
+        // serializes the two checkouts on the single connection while the
+        // conditional deduction guards hold, so both sales must succeed with
+        // exact, non-overlapping totals rather than racing or double-selling.
+        final shop = await seedShop();
+        await seedRecipeSale(shop: shop, ingredientStock: 10, perUnit: 2);
+
+        final results = await Future.wait([
+          repository.completeSale(
+            lines: lines([('dish-1', 3)]),
+            paymentMethod: PaymentMethod.cash,
+            shopId: shop,
+          ),
+          repository.completeSale(
+            lines: lines([('dish-1', 2)]),
+            paymentMethod: PaymentMethod.cash,
+            shopId: shop,
+          ),
+        ]);
+
+        expect(results, hasLength(2));
+        // 2x3 + 2x2 drawn from the same 10 with no lost update.
+        expect(await stockOf('ing-1'), 0);
+        expect(await stockOf('dish-1'), 5);
+      },
+    );
+  });
 }

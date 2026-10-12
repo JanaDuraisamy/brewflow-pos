@@ -435,6 +435,25 @@ void main() {
       expect(await exists(removed.id), isFalse);
       expect(await exists(kept.id), isTrue);
     });
+
+    test('an async delete failure is mapped, not leaked raw', () async {
+      // The delete is awaited inside the guarded try (not bare-returned), so
+      // a database failure surfaces as the domain failure the UI maps.
+      final product = await seedProduct();
+      await database.customStatement(
+        "CREATE TRIGGER fail_product_delete BEFORE DELETE ON products "
+        "BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
+      );
+      addTearDown(
+        () => database.customStatement('DROP TRIGGER fail_product_delete'),
+      );
+
+      await expectLater(
+        delete(product.id),
+        throwsA(isA<UnexpectedInventoryFailure>()),
+      );
+      expect(await exists(product.id), isTrue);
+    });
   });
 
   // ---- f/g: the mutation is shop-scoped --------------------------------

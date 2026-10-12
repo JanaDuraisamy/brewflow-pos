@@ -4,7 +4,6 @@ import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/database/app_database.dart';
 import 'package:brewflow_pos/features/staff/data/drift_staff_payroll_repository.dart';
 import 'package:brewflow_pos/features/staff/data/staff_payroll_cloud_gateway.dart';
-import 'package:brewflow_pos/features/staff/domain/staff_models.dart';
 import 'package:brewflow_pos/features/staff/domain/staff_payroll_models.dart';
 import 'package:brewflow_pos/features/staff/presentation/payroll_controller.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
@@ -12,7 +11,6 @@ import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../helpers/fake_staff_repository.dart';
 import '../../helpers/test_providers.dart';
 
 /// ---------------------------------------------------------------------------

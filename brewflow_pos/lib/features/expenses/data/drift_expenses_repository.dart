@@ -51,8 +51,9 @@ final class DriftExpensesRepository implements ExpensesRepository {
   final SupabaseClient? _supabase;
 
   Future<void> _requireOnline() async {
-    if (_connectivity != null)
-      await OnlineGuard(_connectivity!).requireOnline();
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity).requireOnline();
+    }
   }
 
   @override
@@ -174,7 +175,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
         final id = const Uuid().v4();
         final now = DateTime.now().toUtc();
         try {
-          await _supabase!.from('expenses').upsert({
+          await _supabase.from('expenses').upsert({
             'id': id,
             'shop_id': resolvedShopId,
             'name': normalizedName,
@@ -189,8 +190,9 @@ final class DriftExpensesRepository implements ExpensesRepository {
           }, onConflict: 'id');
         } catch (e) {
           if (e.toString().contains('SocketException') ||
-              e.toString().contains('Failed host lookup'))
+              e.toString().contains('Failed host lookup')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         final row = await _expenses.insert(
@@ -306,7 +308,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('expenses')
               .update({
                 'name': normalizedName,
@@ -320,8 +322,9 @@ final class DriftExpensesRepository implements ExpensesRepository {
               })
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _expenses.update(
@@ -406,13 +409,14 @@ final class DriftExpensesRepository implements ExpensesRepository {
       if (_connectivity != null) await _requireOnline();
       if (_supabase != null) {
         try {
-          await _supabase!
+          await _supabase
               .from('expenses')
               .update({'is_active': isActive})
               .eq('id', id);
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _expenses.updateActive(id, isActive);
@@ -583,7 +587,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
 
     if (_supabase != null) {
       try {
-        final res = await _supabase!.rpc<dynamic>(
+        final res = await _supabase.rpc<dynamic>(
           'record_expense_payment_atomic',
           params: {
             'p_shop_id': resolvedShopId,
@@ -658,7 +662,7 @@ final class DriftExpensesRepository implements ExpensesRepository {
     try {
       // Validate against the same derived balance the UI shows, then insert
       // inside the business transaction so the check and the write cannot race.
-      final write = () => _database.transaction(() async {
+      Future<db.ExpensePayment> write() => _database.transaction(() async {
         final remaining =
             (await _expenses.remainingByPayeeKey(
               shopId: resolvedShopId,
@@ -748,15 +752,16 @@ final class DriftExpensesRepository implements ExpensesRepository {
       }
       if (_supabase != null) {
         try {
-          await _supabase!.from('expenses').delete().eq('id', id);
-          await _supabase!.from('master_deletions').upsert({
+          await _supabase.from('expenses').delete().eq('id', id);
+          await _supabase.from('master_deletions').upsert({
             'entity': 'EXPENSE',
             'id': id,
             'shop_id': existing.shopId,
           }, onConflict: 'entity,id');
         } catch (e) {
-          if (e.toString().contains('SocketException'))
+          if (e.toString().contains('SocketException')) {
             throw const OfflineException();
+          }
           rethrow;
         }
         await _expenses.deleteById(id);

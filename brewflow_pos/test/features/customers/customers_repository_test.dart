@@ -84,6 +84,23 @@ void main() {
       expect(await repository.customers(), isEmpty);
     });
 
+    test('an async insert failure is mapped, not leaked raw', () async {
+      // The write is awaited inside the guarded try (not bare-returned), so
+      // a database failure surfaces as the domain failure the UI maps.
+      await database.customStatement(
+        "CREATE TRIGGER fail_customer_insert BEFORE INSERT ON customers "
+        "BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
+      );
+      addTearDown(
+        () => database.customStatement('DROP TRIGGER fail_customer_insert'),
+      );
+
+      await expectLater(
+        createCustomer(name: 'Priya'),
+        throwsA(isA<UnexpectedCustomersFailure>()),
+      );
+    });
+
     test('defaults to an active customer', () async {
       final customer = await createCustomer();
       expect(customer.isActive, isTrue);

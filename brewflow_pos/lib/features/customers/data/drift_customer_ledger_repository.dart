@@ -64,8 +64,9 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
   final SupabaseClient? _supabase;
 
   Future<void> _requireOnline() async {
-    if (_connectivity != null)
-      await OnlineGuard(_connectivity!).requireOnline();
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity).requireOnline();
+    }
   }
 
   @override
@@ -157,7 +158,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
     final resolvedShopId = await resolveWritableShopId(_database, shopId);
     if (_supabase != null) {
       try {
-        final res = await _supabase!.rpc<dynamic>(
+        final res = await _supabase.rpc<dynamic>(
           'record_customer_payment_atomic',
           params: {
             'p_shop_id': resolvedShopId,
@@ -229,19 +230,24 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
       } catch (e) {
         final msg = e.toString();
         if (msg.contains('SocketException') ||
-            msg.contains('Failed host lookup'))
+            msg.contains('Failed host lookup')) {
           throw UnexpectedLedgerFailure(
             'Internet connection required. Please check your connection and try again.',
           );
-        if (msg.contains('INVALID_AMOUNT'))
+        }
+        if (msg.contains('INVALID_AMOUNT')) {
           throw const InvalidPaymentAmountFailure();
-        if (msg.contains('CUSTOMER_NOT_FOUND'))
+        }
+        if (msg.contains('CUSTOMER_NOT_FOUND')) {
           throw const CustomerNotFoundFailure();
+        }
         if (msg.contains('SALE_NOT_FOUND')) throw const SaleNotFoundFailure();
-        if (msg.contains('PAYMENT_EXCEEDS_DUE'))
+        if (msg.contains('PAYMENT_EXCEEDS_DUE')) {
           throw const PaymentExceedsDueFailure();
-        if (msg.contains('FORBIDDEN'))
+        }
+        if (msg.contains('FORBIDDEN')) {
           throw UnexpectedLedgerFailure('Access denied for this shop.');
+        }
         rethrow;
       }
     }
@@ -423,7 +429,7 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
     final resolvedShopId = await resolveWritableShopId(_database, shopId);
     if (_supabase != null) {
       try {
-        final res = await _supabase!.rpc<dynamic>(
+        final res = await _supabase.rpc<dynamic>(
           'collect_customer_payment_atomic',
           params: {
             'p_shop_id': resolvedShopId,
@@ -505,20 +511,26 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
       } catch (e) {
         final msg = e.toString();
         if (msg.contains('SocketException') ||
-            msg.contains('Failed host lookup'))
+            msg.contains('Failed host lookup')) {
           throw UnexpectedLedgerFailure(
             'Internet connection required. Please check your connection and try again.',
           );
-        if (msg.contains('INVALID_AMOUNT'))
+        }
+        if (msg.contains('INVALID_AMOUNT')) {
           throw const InvalidPaymentAmountFailure();
-        if (msg.contains('CUSTOMER_NOT_FOUND'))
+        }
+        if (msg.contains('CUSTOMER_NOT_FOUND')) {
           throw const CustomerNotFoundFailure();
-        if (msg.contains('PAYMENT_EXCEEDS_DUE'))
+        }
+        if (msg.contains('PAYMENT_EXCEEDS_DUE')) {
           throw const PaymentExceedsDueFailure();
-        if (msg.contains('INVALID_PAYMENT_METHOD'))
+        }
+        if (msg.contains('INVALID_PAYMENT_METHOD')) {
           throw UnexpectedLedgerFailure('Invalid payment method.');
-        if (msg.contains('FORBIDDEN'))
+        }
+        if (msg.contains('FORBIDDEN')) {
           throw UnexpectedLedgerFailure('Access denied for this shop.');
+        }
         rethrow;
       }
     }

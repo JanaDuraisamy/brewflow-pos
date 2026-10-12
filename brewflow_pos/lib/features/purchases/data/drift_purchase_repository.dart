@@ -75,7 +75,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
     }
     if (_connectivity != null) {
       try {
-        await OnlineGuard(_connectivity!).requireOnline();
+        await OnlineGuard(_connectivity).requireOnline();
       } on OfflineException catch (e) {
         throw UnexpectedPurchasesFailure(e.message);
       }
@@ -94,7 +94,7 @@ final class DriftPurchaseRepository implements PurchaseRepository {
       ];
       Map<String, dynamic> res;
       try {
-        res = await _cloud!.receivePurchaseAtomic(
+        res = await _cloud.receivePurchaseAtomic(
           shopId: resolvedShopId,
           supplierId: supplierId,
           notes: notes,
@@ -108,22 +108,29 @@ final class DriftPurchaseRepository implements PurchaseRepository {
         }
         final msg = e.toString();
         if (msg.contains('EMPTY_PURCHASE')) throw const EmptyPurchaseFailure();
-        if (msg.contains('INVALID_QUANTITY'))
+        if (msg.contains('INVALID_QUANTITY')) {
           throw const InvalidPurchaseQuantityFailure();
-        if (msg.contains('INVALID_COST'))
+        }
+        if (msg.contains('INVALID_COST')) {
           throw const InvalidPurchaseCostFailure();
-        if (msg.contains('UNKNOWN_PRODUCT'))
+        }
+        if (msg.contains('UNKNOWN_PRODUCT')) {
           throw UnknownProductFailure(lines.first.productId);
-        if (msg.contains('INACTIVE_PRODUCT'))
+        }
+        if (msg.contains('INACTIVE_PRODUCT')) {
           throw InactiveProductFailure('Product is deactivated');
-        if (msg.contains('UNKNOWN_SUPPLIER'))
+        }
+        if (msg.contains('UNKNOWN_SUPPLIER')) {
           throw const UnknownSupplierFailure();
-        if (msg.contains('INACTIVE_SUPPLIER'))
+        }
+        if (msg.contains('INACTIVE_SUPPLIER')) {
           throw const InactiveSupplierFailure();
-        if (msg.contains('FORBIDDEN'))
+        }
+        if (msg.contains('FORBIDDEN')) {
           throw const UnexpectedPurchasesFailure(
             'Access denied for this shop.',
           );
+        }
         if (msg.contains('SocketException') ||
             msg.contains('Failed host lookup')) {
           throw const UnexpectedPurchasesFailure(
@@ -639,13 +646,13 @@ final class DriftPurchaseRepository implements PurchaseRepository {
       if (_cloud != null) {
         if (_connectivity != null) {
           try {
-            await OnlineGuard(_connectivity!).requireOnline();
+            await OnlineGuard(_connectivity).requireOnline();
           } on OfflineException catch (e) {
             throw UnexpectedPurchasesFailure(e.message);
           }
         }
         try {
-          await _cloud!.voidPurchaseAtomic(purchaseId: id);
+          await _cloud.voidPurchaseAtomic(purchaseId: id);
         } on TimeoutException {
           throw const UnexpectedPurchasesFailure(
             'The server is taking too long to respond. Please try again.',

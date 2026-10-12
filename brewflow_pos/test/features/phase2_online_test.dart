@@ -31,7 +31,7 @@ void main() {
       final r = await q
           .map((row) => row.read(db.syncOutbox.id.count())!)
           .getSingle();
-      return r ?? 0;
+      return r;
     }
 
     setUp(() async {
@@ -244,11 +244,6 @@ void main() {
       'product image direct upload fallback does not fail product create',
       () async {
         // Seed category
-        final catRepo = DriftInventoryRepository(
-          db,
-          connectivityService: fakeConnectivityServiceOnline()..init(),
-          supabaseClient: null,
-        );
         final cat = await DriftInventoryRepository(
           db,
         ).createCategory('Cat', shopId: 'shop-1');

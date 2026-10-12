@@ -199,7 +199,7 @@ void main() {
       addTearDown(container.dispose);
       // Hold a listener: the page is what keeps this provider subscribed, and
       // without one an external context change never reaches `build()`.
-      final subscription = container.listen(customersProvider, (_, __) {});
+      final subscription = container.listen(customersProvider, (_, _) {});
       addTearDown(subscription.close);
 
       await container.read(customersProvider.future);

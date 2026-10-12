@@ -347,7 +347,7 @@ void main() {
   });
 
   group('database detail sheet', () {
-    Future<void> _openDatabaseCard(
+    Future<void> openDatabaseCard(
       WidgetTester tester,
       FakeStorageCleanupGateway gateway,
       AppDatabase db,
@@ -372,7 +372,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openDatabaseCard(tester, gateway, db);
+      await openDatabaseCard(tester, gateway, db);
 
       expect(find.text('Total database size'), findsOneWidget);
       expect(find.text('11.4 MB'), findsWidgets);
@@ -395,7 +395,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openDatabaseCard(tester, gateway, db);
+      await openDatabaseCard(tester, gateway, db);
 
       await tester.tap(find.text('Sales / Bills'));
       await tester.pumpAndSettle();
@@ -418,7 +418,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openDatabaseCard(tester, gateway, db);
+      await openDatabaseCard(tester, gateway, db);
 
       await tester.tap(find.text('Products'));
       await tester.pumpAndSettle();
@@ -428,13 +428,13 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    Future<void> _openTable(
+    Future<void> openTable(
       WidgetTester tester,
       FakeStorageCleanupGateway gateway,
       AppDatabase db,
       String friendlyName,
     ) async {
-      await _openDatabaseCard(tester, gateway, db);
+      await openDatabaseCard(tester, gateway, db);
       await tester.tap(find.text(friendlyName));
       await tester.pumpAndSettle();
     }
@@ -466,7 +466,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openTable(tester, gateway, db, 'Purchases');
+      await openTable(tester, gateway, db, 'Purchases');
 
       // The section title and the button share the label.
       expect(find.text('Delete this month\u2019s records'), findsWidgets);
@@ -491,7 +491,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openTable(tester, gateway, db, 'Products');
+      await openTable(tester, gateway, db, 'Products');
 
       expect(find.text('Delete this month\u2019s records'), findsNothing);
       expect(find.text('Selected month'), findsNothing);
@@ -519,7 +519,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openTable(tester, gateway, db, 'Purchases');
+      await openTable(tester, gateway, db, 'Purchases');
 
       final delete = tester.widget<PrimaryButton>(
         find.widgetWithText(PrimaryButton, 'Delete this month\u2019s records'),
@@ -561,7 +561,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openTable(tester, gateway, db, 'Purchases');
+      await openTable(tester, gateway, db, 'Purchases');
 
       await tester.tap(
         find.widgetWithText(PrimaryButton, 'Delete this month\u2019s records'),
@@ -602,7 +602,7 @@ void main() {
         );
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      await _openTable(tester, gateway, db, 'Sales / Bills');
+      await openTable(tester, gateway, db, 'Sales / Bills');
 
       expect(find.textContaining('unpaid or partially-paid'), findsOneWidget);
       final delete = tester.widget<PrimaryButton>(

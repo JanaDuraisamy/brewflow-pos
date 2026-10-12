@@ -664,7 +664,7 @@ final class LocalMasterDataApplier {
                 ))
                 .getSingleOrNull();
         final hasClash = clash != null && clash.id != row.id;
-        if (hasClash && clash!.shopId != row.shopId) {
+        if (hasClash && clash.shopId != row.shopId) {
           AppLog.info(
             'Sale receipt collision skipped (cross-shop, local kept)',
             tag: 'SyncEngine',
@@ -677,7 +677,7 @@ final class LocalMasterDataApplier {
           // change. The next cycle reconciles after the push lands.
           final staleItemIds =
               await (_database.select(_database.saleItems)
-                    ..where((t) => t.saleId.equals(clash!.id)))
+                    ..where((t) => t.saleId.equals(clash.id)))
                   .get()
                   .then((rows) => rows.map((r) => r.id).toList());
           if (staleItemIds.isNotEmpty) {
@@ -698,9 +698,9 @@ final class LocalMasterDataApplier {
           // the canonical exists, so repointing its history satisfies RESTRICT.
           await (_database.update(
             _database.sales,
-          )..where((t) => t.id.equals(clash!.id))).write(
+          )..where((t) => t.id.equals(clash.id))).write(
             db.SalesCompanion(
-              receiptNumber: Value('${row.receiptNumber}__dup__${clash!.id}'),
+              receiptNumber: Value('${row.receiptNumber}__dup__${clash.id}'),
             ),
           );
         }
@@ -726,7 +726,7 @@ final class LocalMasterDataApplier {
             );
         if (hasClash) {
           await _convergeSaleCollision(
-            clashId: clash!.id,
+            clashId: clash.id,
             canonicalId: row.id,
             appliedAt: appliedAt,
           );

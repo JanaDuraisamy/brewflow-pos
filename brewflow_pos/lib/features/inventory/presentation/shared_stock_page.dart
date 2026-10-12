@@ -6,11 +6,6 @@
 /// mappings. Owners can add or edit a mapping through [RecipeEditorSheet];
 /// every write replaces only the edited dish + variant scope, so the seed
 /// guards and checkout/void deduction behaviour are untouched.
-///
-/// The banner about cloud reliability stays until migration 0044
-/// (`supabase/migrations/0044_recipe_aware_sales.sql`) is applied and
-/// verified on a safe staging database. Local sales deduct shared stock
-/// correctly; the cloud path does not yet.
 /// ---------------------------------------------------------------------------
 library;
 
@@ -147,7 +142,6 @@ final class _OverviewBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final appColors = context.appColors;
     final normalized = query.trim().toLowerCase();
     bool matches(String name) =>
         normalized.isEmpty || name.toLowerCase().contains(normalized);
@@ -172,26 +166,6 @@ final class _OverviewBody extends StatelessWidget {
               ? 'Ingredients and the dishes that consume them. Tap a dish to '
                     'add or edit its recipe.'
               : 'Ingredients and the dishes that consume them.',
-        ),
-        const SizedBox(height: AppSpacing.md),
-        AppCard(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.cloud_off_outlined, color: appColors.textSecondary),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text(
-                  'Cloud shared-stock deduction is not reliable yet: '
-                  'migration 0044 is still pending verification. Sales on '
-                  'this device deduct shared stock correctly.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: appColors.textSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
         const SizedBox(height: AppSpacing.md),
         SearchField(

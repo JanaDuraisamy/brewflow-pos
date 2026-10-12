@@ -11,7 +11,6 @@ import 'package:brewflow_pos/features/inventory/presentation/inventory_controlle
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,7 +20,6 @@ import '../../helpers/fake_customer_ledger_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_settings_repository.dart';
-import '../../helpers/fake_staff_repository.dart';
 import '../../helpers/fake_stock_movement_repository.dart';
 import '../../helpers/test_providers.dart';
 

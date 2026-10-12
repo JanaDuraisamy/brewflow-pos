@@ -27,8 +27,9 @@ final class DriftOffersRepository implements OffersRepository {
   final SupabaseClient? _supabase;
 
   Future<void> _requireOnline() async {
-    if (_connectivity != null)
-      await OnlineGuard(_connectivity!).requireOnline();
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity).requireOnline();
+    }
   }
 
   @override
@@ -89,7 +90,7 @@ final class DriftOffersRepository implements OffersRepository {
     if (_supabase != null) {
       await write();
       try {
-        await _supabase!.from('offers').upsert({
+        await _supabase.from('offers').upsert({
           'id': id,
           'shop_id': shopId,
           'name': name,
@@ -101,10 +102,11 @@ final class DriftOffersRepository implements OffersRepository {
           'client_created_at': now.toIso8601String(),
         }, onConflict: 'id');
       } catch (e) {
-        if (e.toString().contains('SocketException'))
+        if (e.toString().contains('SocketException')) {
           throw Exception(
             'Internet connection required. Please check your connection and try again.',
           );
+        }
         rethrow;
       }
     } else if (outbox == null) {
@@ -157,7 +159,7 @@ final class DriftOffersRepository implements OffersRepository {
       try {
         // Cloud-authoritative update, scoped to the offer's own business so a
         // tampered shopId can never leak to another shop.
-        await _supabase!
+        await _supabase
             .from('offers')
             .update({
               'name': offer.name,
@@ -170,10 +172,11 @@ final class DriftOffersRepository implements OffersRepository {
             .eq('id', offer.id)
             .eq('shop_id', offer.shopId);
       } catch (e) {
-        if (e.toString().contains('SocketException'))
+        if (e.toString().contains('SocketException')) {
           throw Exception(
             'Internet connection required. Please check your connection and try again.',
           );
+        }
         rethrow;
       }
     }
@@ -219,18 +222,19 @@ final class DriftOffersRepository implements OffersRepository {
 
     if (_supabase != null) {
       try {
-        await _supabase!.from('offers').delete().eq('id', id);
+        await _supabase.from('offers').delete().eq('id', id);
         // Tombstone so pulled-in peers do not resurrect the offer.
-        await _supabase!.from('master_deletions').upsert({
+        await _supabase.from('master_deletions').upsert({
           'entity': 'OFFER',
           'id': id,
           'shop_id': offerShopId,
         }, onConflict: 'entity,id');
       } catch (e) {
-        if (e.toString().contains('SocketException'))
+        if (e.toString().contains('SocketException')) {
           throw Exception(
             'Internet connection required. Please check your connection and try again.',
           );
+        }
         rethrow;
       }
     }

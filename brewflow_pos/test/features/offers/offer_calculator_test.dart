@@ -586,7 +586,7 @@ void main() {
           activeOffers: [offer],
         );
         expect(results, hasLength(1), reason: '$id should match');
-        expect(results.single.discountPaise, 6000, reason: '$id');
+        expect(results.single.discountPaise, 6000, reason: id);
       }
     });
 

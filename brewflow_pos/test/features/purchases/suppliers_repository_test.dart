@@ -271,5 +271,22 @@ void main() {
       )..where((t) => t.id.equals('p1'))).getSingle();
       expect(row.stockQuantity, 7);
     });
+
+    test('an async insert failure is mapped, not leaked raw', () async {
+      // The write is awaited inside the guarded try (not bare-returned), so
+      // a database failure surfaces as the domain failure the UI maps.
+      await database.customStatement(
+        "CREATE TRIGGER fail_supplier_insert BEFORE INSERT ON suppliers "
+        "BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
+      );
+      addTearDown(
+        () => database.customStatement('DROP TRIGGER fail_supplier_insert'),
+      );
+
+      await expectLater(
+        repository.createSupplier(name: 'Acme Supplies'),
+        throwsA(isA<UnexpectedSuppliersFailure>()),
+      );
+    });
   });
 }

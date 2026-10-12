@@ -177,5 +177,36 @@ void main() {
       final list = await container.read(syncFailuresProvider.future);
       expect(list, isEmpty);
     });
+
+    test('retryAll requeues only retryable entries in a mixed batch', () async {
+      await seedFailed('obx-retry', 'p1', 'Network is unreachable');
+      await seedFailed('obx-blocked', 'p2', 'JWT expired');
+      await container.read(syncFailuresProvider.future);
+
+      await container.read(syncFailuresProvider.notifier).retryAll();
+
+      // The transient entry is back in the outbox; the blocked entry stays
+      // FAILED with its error intact instead of being pointlessly re-pushed.
+      expect((await repo.pendingOutboxBatch()).single.id, 'obx-retry');
+      final failed = await repo.failedOutboxBatch();
+      expect(failed.single.id, 'obx-blocked');
+      expect(failed.single.lastError, 'JWT expired');
+      final list = await container.read(syncFailuresProvider.future);
+      expect(list.map((f) => f.id).toList(), ['obx-blocked']);
+    });
+
+    test('retryAll with only blocked entries requeues nothing', () async {
+      await seedFailed('obx-b1', 'p1', 'permission denied for table products');
+      await seedFailed('obx-b2', 'p2', '23505 duplicate key value');
+      await container.read(syncFailuresProvider.future);
+
+      await container.read(syncFailuresProvider.notifier).retryAll();
+
+      expect(await repo.pendingOutboxBatch(), isEmpty);
+      final failed = await repo.failedOutboxBatch();
+      expect(failed.map((f) => f.id).toSet(), {'obx-b1', 'obx-b2'});
+      final list = await container.read(syncFailuresProvider.future);
+      expect(list, hasLength(2));
+    });
   });
 }

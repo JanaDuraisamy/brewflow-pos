@@ -1,27 +1,21 @@
 import 'package:brewflow_pos/app/app.dart';
-import 'package:brewflow_pos/app/shells/app_shell.dart';
-import 'package:brewflow_pos/app/widgets/app_navigation.dart';
 import 'package:brewflow_pos/core/router/app_router.dart';
 import 'package:brewflow_pos/features/auth/domain/auth_repository.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/presentation/billing_controller.dart';
 import 'package:brewflow_pos/features/billing/presentation/pos_page.dart';
 import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
-import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:go_router/go_router.dart';
 
 import '../helpers/fake_auth_repository.dart';
 import '../helpers/fake_billing_repository.dart';
 import '../helpers/fake_customer_ledger_repository.dart';
-import '../helpers/fake_customers_repository.dart';
 import '../helpers/fake_inventory_repository.dart';
 import '../helpers/fake_orders_repository.dart';
 import '../helpers/fake_settings_repository.dart';

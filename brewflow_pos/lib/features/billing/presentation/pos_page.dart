@@ -976,6 +976,7 @@ final class _NarrowLayoutState extends State<_NarrowLayout> {
                       heldCount: widget.heldCount,
                       onHold: widget.onHold,
                       onOpenHeldBills: widget.onOpenHeldBills,
+                      phone: phone,
                       splitMode: widget.splitMode,
                       splitReady: widget.splitReady,
                       onSplitTapped: widget.onSplitTapped,

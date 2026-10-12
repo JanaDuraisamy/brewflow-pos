@@ -140,7 +140,7 @@ final class DriftBillingRepository implements BillingRepository {
     // Online-only guard: reject when internet is unavailable before any mutation.
     if (_connectivity != null) {
       try {
-        await OnlineGuard(_connectivity!).requireOnline();
+        await OnlineGuard(_connectivity).requireOnline();
       } on OfflineException catch (e) {
         // Billing is online-only, so a "sale not completed" on a flaky Wi-Fi
         // is the single most common report; recorded before it is translated
@@ -481,8 +481,9 @@ final class DriftBillingRepository implements BillingRepository {
             : 'Product';
         throw UnavailableProductFailure(name);
       }
-      if (msg.contains('MISSING_CUSTOMER'))
+      if (msg.contains('MISSING_CUSTOMER')) {
         throw const MissingCustomerForCreditSaleFailure();
+      }
       if (msg.contains('INVALID_PAYMENT')) throw const InvalidPaymentFailure();
       if (msg.contains('SPLIT_PAYMENT_MISMATCH')) {
         // The server re-checks the leg sum, so a mismatch here means the local
@@ -493,12 +494,15 @@ final class DriftBillingRepository implements BillingRepository {
         );
       }
       if (msg.contains('EMPTY_CART')) throw const EmptyCartFailure();
-      if (msg.contains('CUSTOMER_NOT_FOUND'))
+      if (msg.contains('CUSTOMER_NOT_FOUND')) {
         throw const CustomerNotFoundFailure();
-      if (msg.contains('INACTIVE_CUSTOMER'))
+      }
+      if (msg.contains('INACTIVE_CUSTOMER')) {
         throw const InactiveCustomerFailure();
-      if (msg.contains('FORBIDDEN'))
+      }
+      if (msg.contains('FORBIDDEN')) {
         throw const UnexpectedBillingFailure('Access denied for this shop.');
+      }
       if (msg.contains('SocketException') ||
           msg.contains('Failed host lookup') ||
           msg.contains('Network is unreachable')) {
@@ -1722,7 +1726,7 @@ final class DriftBillingRepository implements BillingRepository {
   Future<void> voidSale(String saleId) async {
     if (_connectivity != null) {
       try {
-        await OnlineGuard(_connectivity!).requireOnline();
+        await OnlineGuard(_connectivity).requireOnline();
       } on OfflineException catch (e) {
         throw UnexpectedBillingFailure(e.message);
       }
@@ -1845,7 +1849,7 @@ final class DriftBillingRepository implements BillingRepository {
       // Cloud-authoritative void when gateway wired
       if (_cloud != null) {
         try {
-          final result = await _cloud!.voidSaleAtomic(saleId);
+          final result = await _cloud.voidSaleAtomic(saleId);
           // Surface whether the server actually restored stock, so a void
           // that only reversed the header is visible in logs.
           AppLog.info(
@@ -1866,13 +1870,15 @@ final class DriftBillingRepository implements BillingRepository {
             final row = await _sales.byId(saleId);
             throw VoidHistoryPrunedFailure(row?.receiptNumber ?? saleId);
           }
-          if (msg.contains('ALREADY_VOIDED'))
+          if (msg.contains('ALREADY_VOIDED')) {
             throw const SaleAlreadyVoidedFailure();
+          }
           if (msg.contains('SALE_NOT_FOUND')) throw const SaleNotFoundFailure();
-          if (msg.contains('FORBIDDEN'))
+          if (msg.contains('FORBIDDEN')) {
             throw const UnexpectedBillingFailure(
               'Access denied for this shop.',
             );
+          }
           if (msg.contains('SocketException') ||
               msg.contains('Failed host lookup')) {
             throw const UnexpectedBillingFailure(
@@ -2153,7 +2159,7 @@ final class DriftBillingRepository implements BillingRepository {
   Future<void> voidSaleWithoutRestore(String saleId) async {
     if (_connectivity != null) {
       try {
-        await OnlineGuard(_connectivity!).requireOnline();
+        await OnlineGuard(_connectivity).requireOnline();
       } on OfflineException catch (e) {
         throw UnexpectedBillingFailure(e.message);
       }
@@ -2198,7 +2204,7 @@ final class DriftBillingRepository implements BillingRepository {
       // Cloud-authoritative void when gateway wired
       if (_cloud != null) {
         try {
-          await _cloud!.voidSaleWithoutRestoreAtomic(saleId);
+          await _cloud.voidSaleWithoutRestoreAtomic(saleId);
         } catch (e) {
           if (e is TimeoutException) {
             throw const UnexpectedBillingFailure(
@@ -2206,13 +2212,15 @@ final class DriftBillingRepository implements BillingRepository {
             );
           }
           final msg = e.toString();
-          if (msg.contains('ALREADY_VOIDED'))
+          if (msg.contains('ALREADY_VOIDED')) {
             throw const SaleAlreadyVoidedFailure();
+          }
           if (msg.contains('SALE_NOT_FOUND')) throw const SaleNotFoundFailure();
-          if (msg.contains('FORBIDDEN'))
+          if (msg.contains('FORBIDDEN')) {
             throw const UnexpectedBillingFailure(
               'Access denied for this shop.',
             );
+          }
           if (msg.contains('SocketException') ||
               msg.contains('Failed host lookup')) {
             throw const UnexpectedBillingFailure(

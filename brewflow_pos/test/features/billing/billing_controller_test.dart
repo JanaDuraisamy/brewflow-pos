@@ -1158,7 +1158,7 @@ void main() {
     });
 
     group('split payment', () {
-      Future<void> _seed(ProviderContainer c) async {
+      Future<void> seedSplitCart(ProviderContainer c) async {
         final product = Product(
           id: 'split-p1',
           categoryId: 'c1',
@@ -1178,7 +1178,7 @@ void main() {
       test('split 200+78=278 is allowed', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         final sale = await c
             .read(cartProvider.notifier)
             .checkout(
@@ -1201,7 +1201,7 @@ void main() {
       test('split below total is rejected', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         await expectLater(
           c
               .read(cartProvider.notifier)
@@ -1225,7 +1225,7 @@ void main() {
       test('split above total is rejected', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         await expectLater(
           c
               .read(cartProvider.notifier)
@@ -1249,7 +1249,7 @@ void main() {
       test('cash-only still works', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         final sale = await c
             .read(cartProvider.notifier)
             .checkout(PaymentMethod.cash);
@@ -1260,7 +1260,7 @@ void main() {
       test('upi-only still works', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         final sale = await c
             .read(cartProvider.notifier)
             .checkout(PaymentMethod.upi);
@@ -1271,7 +1271,7 @@ void main() {
       test('split works for Cafe', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         final sale = await c
             .read(cartProvider.notifier)
             .checkout(
@@ -1296,7 +1296,7 @@ void main() {
       test('split works for Food Truck', () async {
         final c = scopedContainer(session: truckAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         final sale = await c
             .read(cartProvider.notifier)
             .checkout(
@@ -1318,7 +1318,7 @@ void main() {
       test('no Bank payment is created by split', () async {
         final c = scopedContainer(session: cafeAuth);
         await c.read(userProfileProvider.future);
-        await _seed(c);
+        await seedSplitCart(c);
         final sale = await c
             .read(cartProvider.notifier)
             .checkout(

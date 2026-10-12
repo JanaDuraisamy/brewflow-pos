@@ -38,6 +38,12 @@ final class SyncFailuresSheet extends ConsumerWidget {
     final textTheme = Theme.of(context).textTheme;
     final appColors = context.appColors;
     final entries = failures.value ?? const <SyncFailureEntry>[];
+    // Retry-all only acts on transient failures; when every visible entry
+    // is blocked there is nothing a bulk retry could do, so the footer is
+    // hidden and the blocked rows (with their reasons) stay on screen.
+    final hasRetryable = entries.any(
+      (entry) => entry.kind == SyncFailureKind.retryable,
+    );
 
     return SafeArea(
       child: Padding(
@@ -78,7 +84,7 @@ final class SyncFailuresSheet extends ConsumerWidget {
               ),
               const Divider(height: 1),
               Expanded(child: _body(context, ref, failures)),
-              if (entries.isNotEmpty)
+              if (entries.isNotEmpty && hasRetryable)
                 Padding(
                   padding: AppInsets.screen,
                   child: PrimaryButton(

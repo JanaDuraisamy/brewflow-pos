@@ -287,8 +287,8 @@ void main() {
       await tester.pump();
 
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Combo price (paise) *'),
-        '19900',
+        find.widgetWithText(TextFormField, 'Combo price (₹) *'),
+        '199',
       );
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -325,24 +325,24 @@ void main() {
       // The seeded row is qty 1; fill in the prices and add the two higher
       // tiers.
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
-        '4500',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(0),
+        '45',
       );
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Quantity').at(1),
         '2',
       );
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(1),
-        '8500',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(1),
+        '85',
       );
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Quantity').at(2),
         '3',
       );
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(2),
-        '12000',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(2),
+        '120',
       );
       await tester.pumpAndSettle();
 
@@ -377,8 +377,8 @@ void main() {
       await _addTierRow(tester);
 
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
-        '4500',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(0),
+        '45',
       );
       // Same quantity as the seeded row, which must be rejected.
       await tester.enterText(
@@ -386,8 +386,8 @@ void main() {
         '1',
       );
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(1),
-        '8500',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(1),
+        '85',
       );
       await tester.pumpAndSettle();
 
@@ -413,8 +413,8 @@ void main() {
       await tester.tap(find.text('Latte'));
       await tester.pump();
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
-        '4500',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(0),
+        '45',
       );
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Quantity').at(0),
@@ -440,8 +440,8 @@ void main() {
       );
       await _selectType(tester, 'Quantity Tier');
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
-        '4500',
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(0),
+        '45',
       );
       await tester.pumpAndSettle();
 
@@ -478,8 +478,8 @@ void main() {
 
       expect(find.widgetWithText(TextFormField, 'Quantity'), findsNWidgets(3));
       expect(
-        find.widgetWithText(TextFormField, 'Total price (paise)').at(0),
-        findsOneWidget,
+        find.widgetWithText(TextFormField, 'Total price (₹)'),
+        findsNWidgets(3),
       );
       expect(
         tester
@@ -489,6 +489,43 @@ void main() {
             .initialValue,
         '2',
       );
+      // Stored paise prefills as rupee entry text.
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.widgetWithText(TextFormField, 'Total price (₹)').at(1),
+            )
+            .initialValue,
+        '85.00',
+      );
+    });
+
+    testWidgets('a decimal rupee tier price saves exact paise', (tester) async {
+      final container = await _openNewOfferDialog(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name *'),
+        'Decimal Tier',
+      );
+      await _selectType(tester, 'Quantity Tier');
+      await tester.tap(find.text('Latte'));
+      await tester.pump();
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Total price (₹)').at(0),
+        '70.50',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      final offers = await container.read(offersProvider.future);
+      final offer = offers.single;
+      final cfg = jsonDecode(offer.configJson) as Map<String, dynamic>;
+      expect(cfg['tiers'], [
+        {'quantity': 1, 'pricePaise': 7050},
+      ]);
     });
   });
 }

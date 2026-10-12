@@ -39,8 +39,9 @@ final class DriftShopNameRepository implements ShopNameRepository {
   final SupabaseClient? _supabase;
 
   Future<void> _requireOnline() async {
-    if (_connectivity != null)
-      await OnlineGuard(_connectivity!).requireOnline();
+    if (_connectivity != null) {
+      await OnlineGuard(_connectivity).requireOnline();
+    }
   }
 
   @override
@@ -116,15 +117,16 @@ final class DriftShopNameRepository implements ShopNameRepository {
 
     if (_supabase != null) {
       try {
-        await _supabase!.from('shops').upsert({
+        await _supabase.from('shops').upsert({
           'id': shopRowId,
           'name': trimmed,
         }, onConflict: 'id');
       } catch (e) {
-        if (e.toString().contains('SocketException'))
+        if (e.toString().contains('SocketException')) {
           throw Exception(
             'Internet connection required. Please check your connection and try again.',
           );
+        }
         rethrow;
       }
       await write();

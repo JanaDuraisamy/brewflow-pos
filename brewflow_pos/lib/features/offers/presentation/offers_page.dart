@@ -325,7 +325,10 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
           _percent.text = (m['percent'] ?? '').toString();
         }
         if (_type == OfferType.combo) {
-          _comboPrice.text = (m['comboPricePaise'] ?? '').toString();
+          final comboPaise = m['comboPricePaise'];
+          _comboPrice.text = comboPaise is int
+              ? Money.paiseToRupeesInput(comboPaise)
+              : '';
           _selectedProductIds = ((m['productIds'] as List?) ?? [])
               .cast<String>()
               .toSet();
@@ -363,7 +366,8 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
       _tiers.add(
         _TierRow(
           quantity: qty is int ? '$qty' : '',
-          price: price is int ? '$price' : '',
+          // Stored paise back to rupee entry text ('8500' -> '85.00').
+          price: price is int ? Money.paiseToRupeesInput(price) : '',
         ),
       );
     }
@@ -394,13 +398,15 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
     final parsed = <QuantityTier>[];
     for (final row in _tiers) {
       final quantity = int.tryParse(row.quantity.text.trim());
-      final pricePaise = int.tryParse(row.price.text.trim());
+      // Rupee entry, paise storage: the owner types what the board shows
+      // ('140', '70.50'); only exact paise lands in the saved tier.
+      final pricePaise = Money.parseRupeesToPaise(row.price.text);
       if (quantity == null || quantity < 1) {
         _tierError = 'Tier quantity must be 1 or more.';
         return null;
       }
       if (pricePaise == null || pricePaise < 0) {
-        _tierError = 'Tier price (paise) must be 0 or more.';
+        _tierError = 'Tier price (₹) must be 0 or more.';
         return null;
       }
       parsed.add(QuantityTier(quantity: quantity, pricePaise: pricePaise));
@@ -503,13 +509,16 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                 if (_type == OfferType.combo) ...[
                   TextFormField(
                     controller: _comboPrice,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
-                      labelText: 'Combo price (paise) *',
+                      labelText: 'Combo price (₹) *',
                       border: OutlineInputBorder(),
                     ),
-                    validator: (v) =>
-                        int.tryParse(v ?? '') == null ? 'Required' : null,
+                    validator: (v) => Money.parseRupeesToPaise(v ?? '') == null
+                        ? 'Required'
+                        : null,
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   _ProductSelector(
@@ -610,9 +619,11 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                         Expanded(
                           child: TextFormField(
                             controller: _tiers[i].price,
-                            keyboardType: TextInputType.number,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
                             decoration: const InputDecoration(
-                              labelText: 'Total price (paise)',
+                              labelText: 'Total price (₹)',
                               border: OutlineInputBorder(),
                             ),
                           ),
@@ -644,8 +655,8 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                     ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    'Total price covers the whole quantity, e.g. 1 = 4500, '
-                    '2 = 8500, 3 = 12000 paise. The best tier that fits is '
+                    'Total price covers the whole quantity in rupees, e.g. '
+                    '1 = ₹45, 2 = ₹85, 3 = ₹120. The best tier that fits is '
                     'applied automatically at billing.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -706,9 +717,12 @@ class _OfferDialogState extends ConsumerState<_OfferDialog> {
                 ).toJson();
                 break;
               case OfferType.combo:
+                // The form validator above guarantees parseable rupees.
                 cfg = {
                   'productIds': _selectedProductIds.toList(),
-                  'comboPricePaise': int.parse(_comboPrice.text),
+                  'comboPricePaise': Money.parseRupeesToPaise(
+                    _comboPrice.text,
+                  )!,
                 };
                 break;
               case OfferType.buyXGetY:

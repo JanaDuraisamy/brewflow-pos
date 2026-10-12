@@ -226,18 +226,26 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         }
       }
 
-      final topProducts = [
+      // Full item-wise breakdown for the Items drill-down; the Top Products
+      // card keeps its top-5 display list derived from the same order.
+      final itemBreakdown = [
         for (final entry in byProduct.entries)
-          ProductPerformanceRow(
+          ItemSalesRow(
             productName: entry.key.$1,
             variantName: entry.key.$2,
             unitsSold: entry.value[0],
             revenuePaise: entry.value[1],
           ),
       ]..sort((a, b) => b.revenuePaise.compareTo(a.revenuePaise));
-      if (topProducts.length > _topProductsLimit) {
-        topProducts.removeRange(_topProductsLimit, topProducts.length);
-      }
+      final topProducts = [
+        for (final entry in itemBreakdown.take(_topProductsLimit))
+          ProductPerformanceRow(
+            productName: entry.productName,
+            variantName: entry.variantName,
+            unitsSold: entry.unitsSold,
+            revenuePaise: entry.revenuePaise,
+          ),
+      ];
 
       final categoryPerformance = [
         for (final entry in byCategory.entries)
@@ -340,6 +348,9 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         businessBreakdown: showBreakdown
             ? _businessBreakdown(window, labelsById)
             : const [],
+        rangeOrders: window,
+        itemBreakdown: itemBreakdown,
+        shopLabels: showBreakdown ? labelsById : const {},
       );
     } on OrdersFailure {
       rethrow;

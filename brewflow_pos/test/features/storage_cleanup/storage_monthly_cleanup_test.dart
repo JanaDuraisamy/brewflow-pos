@@ -9,6 +9,8 @@ import 'package:brewflow_pos/features/storage_cleanup/data/drift_storage_cleanup
 import 'package:brewflow_pos/features/storage_cleanup/domain/storage_cleanup_models.dart';
 import 'package:brewflow_pos/features/storage_cleanup/presentation/storage_cleanup_controller.dart';
 import 'package:brewflow_pos/features/sync/data/drift_sync_repository.dart';
+import 'package:brewflow_pos/features/sync/data/local_master_data_applier.dart';
+import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
@@ -130,6 +132,29 @@ Future<void> _seedProduct(AppDatabase db, {required String id}) async {
           categoryId: 'cat-1',
           name: 'Product $id',
           sellingPricePaise: 100,
+        ),
+      );
+}
+
+Future<void> _seedMovement(
+  AppDatabase db, {
+  required String id,
+  required DateTime createdAt,
+}) async {
+  await _seedShop(db);
+  await db
+      .into(db.stockMovements)
+      .insert(
+        StockMovementsCompanion.insert(
+          id: Value(id),
+          shopId: const Value(_shopId),
+          productId: 'prod-1',
+          movementType: 'SALE',
+          quantity: -1,
+          stockBefore: 6,
+          stockAfter: 5,
+          createdAt: Value(createdAt),
+          updatedAt: Value(createdAt),
         ),
       );
 }
@@ -578,6 +603,221 @@ void main() {
       final confirmation = await repo.confirmationFor(_shopId, _september);
       expect(confirmation, isNotNull);
       expect(confirmation!.month, _september);
+    });
+  });
+
+  group('month cleanup category scope', () {
+    test(
+      'owner cleanup of only Expenses preserves sales and stock movements',
+      () async {
+        final (c, gateway, db) = await _build();
+        await _awaitProfile(c);
+        await _seedSale(
+          db,
+          id: 'sale-sep',
+          createdAt: DateTime.utc(2026, 9, 10),
+        );
+        await _seedExpense(db, id: 'e-sep', date: DateTime.utc(2026, 9, 5));
+        await _seedMovement(
+          db,
+          id: 'mv-sep',
+          createdAt: DateTime.utc(2026, 9, 5),
+        );
+        gateway.previewResult = _preview(
+          counts: const {'sales': 1, 'expenses': 1, 'stockMovements': 1},
+        );
+        gateway.cleanupResult = MonthCleanupResult(
+          month: _september,
+          deleted: const {'expenses': 1},
+          alreadyCleaned: false,
+          markerId: 'marker-exp',
+        );
+        gateway.metricsResult = DatabaseMetrics(
+          dbBytesTotal: 9000000,
+          tables: const [],
+          measuredAt: DateTime.utc(2026, 10, 1),
+        );
+        await c
+            .read(storageCleanupControllerProvider.notifier)
+            .previewMonth(_september);
+
+        await c
+            .read(storageCleanupControllerProvider.notifier)
+            .cleanupMonth(_september, categories: const ['expenses']);
+
+        // Only the selected category is cleared locally.
+        expect(await db.select(db.expenses).get(), isEmpty);
+        expect((await db.select(db.sales).get()).map((s) => s.id), [
+          'sale-sep',
+        ]);
+        expect((await db.select(db.stockMovements).get()).map((m) => m.id), [
+          'mv-sep',
+        ]);
+      },
+    );
+
+    test(
+      'owner cleanup of Sales removes sales but preserves unselected categories',
+      () async {
+        final (c, gateway, db) = await _build();
+        await _awaitProfile(c);
+        await _seedSale(
+          db,
+          id: 'sale-sep',
+          createdAt: DateTime.utc(2026, 9, 10),
+        );
+        await _seedExpense(db, id: 'e-sep', date: DateTime.utc(2026, 9, 5));
+        await _seedMovement(
+          db,
+          id: 'mv-sep',
+          createdAt: DateTime.utc(2026, 9, 5),
+        );
+        gateway.previewResult = _preview(
+          counts: const {'sales': 1, 'expenses': 1, 'stockMovements': 1},
+        );
+        // The server reports the EXPANDED keys for a 'sales' selection.
+        gateway.cleanupResult = MonthCleanupResult(
+          month: _september,
+          deleted: const {
+            'salePayments': 0,
+            'saleItems': 0,
+            'customerPayments': 0,
+            'sales': 1,
+          },
+          alreadyCleaned: false,
+          markerId: 'marker-sales',
+        );
+        gateway.metricsResult = DatabaseMetrics(
+          dbBytesTotal: 9000000,
+          tables: const [],
+          measuredAt: DateTime.utc(2026, 10, 1),
+        );
+        await c
+            .read(storageCleanupControllerProvider.notifier)
+            .previewMonth(_september);
+
+        await c
+            .read(storageCleanupControllerProvider.notifier)
+            .cleanupMonth(_september, categories: const ['sales']);
+
+        expect(await db.select(db.sales).get(), isEmpty);
+        expect((await db.select(db.expenses).get()).map((e) => e.name), [
+          'Supply e-sep',
+        ]);
+        expect((await db.select(db.stockMovements).get()).map((m) => m.id), [
+          'mv-sep',
+        ]);
+      },
+    );
+
+    test(
+      'full cleanup without an explicit scope still clears the whole month',
+      () async {
+        final db = AppDatabase(NativeDatabase.memory());
+        addTearDown(db.close);
+        await _seedShop(db);
+        await _seedSale(
+          db,
+          id: 'sale-sep',
+          createdAt: DateTime.utc(2026, 9, 10),
+        );
+        await _seedExpense(db, id: 'e-sep', date: DateTime.utc(2026, 9, 5));
+        await _seedMovement(
+          db,
+          id: 'mv-sep',
+          createdAt: DateTime.utc(2026, 9, 5),
+        );
+
+        await deleteShopMonth(db, _shopId, _september);
+
+        expect(await db.select(db.sales).get(), isEmpty);
+        expect(await db.select(db.expenses).get(), isEmpty);
+        expect(await db.select(db.stockMovements).get(), isEmpty);
+      },
+    );
+
+    test('peer cleanup marker honors the same category scope', () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await _seedShop(db);
+      await _seedSale(db, id: 'sale-sep', createdAt: DateTime.utc(2026, 9, 10));
+      await _seedExpense(db, id: 'e-sep', date: DateTime.utc(2026, 9, 5));
+      await _seedMovement(
+        db,
+        id: 'mv-sep',
+        createdAt: DateTime.utc(2026, 9, 5),
+      );
+
+      final applier = LocalMasterDataApplier(db);
+      await applier.applyMonthCleanupMarkerPage([
+        SyncMonthCleanupMarker(
+          id: 'peer-marker-exp',
+          shopId: _shopId,
+          month: _september,
+          tables: const ['expenses'],
+          deletedCounts: const {'expenses': 1},
+          completedAt: DateTime.utc(2026, 10, 1),
+          createdAt: DateTime.utc(2026, 10, 1),
+        ),
+      ], DateTime.utc(2026, 10, 1));
+
+      expect(await db.select(db.expenses).get(), isEmpty);
+      expect((await db.select(db.sales).get()).map((s) => s.id), ['sale-sep']);
+      expect((await db.select(db.stockMovements).get()).map((m) => m.id), [
+        'mv-sep',
+      ]);
+    });
+
+    test('deferred peer marker keeps its scope when retried', () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await _seedShop(db);
+      await _seedSale(db, id: 'sale-sep', createdAt: DateTime.utc(2026, 9, 10));
+      await _seedExpense(db, id: 'e-sep', date: DateTime.utc(2026, 9, 5));
+      await _seedMovement(
+        db,
+        id: 'mv-sep',
+        createdAt: DateTime.utc(2026, 9, 5),
+      );
+      // A queued transactional write defers the marker on first arrival.
+      await db
+          .into(db.syncOutbox)
+          .insert(
+            SyncOutboxCompanion.insert(
+              deviceId: 'device-1',
+              shopId: _shopId,
+              entity: MasterEntity.expense.wire,
+              entityId: 'outbox-exp',
+              payload: '{}',
+            ),
+          );
+
+      final applier = LocalMasterDataApplier(db);
+      await applier.applyMonthCleanupMarkerPage([
+        SyncMonthCleanupMarker(
+          id: 'peer-marker-deferred',
+          shopId: _shopId,
+          month: _september,
+          tables: const ['expenses'],
+          deletedCounts: const {'expenses': 1},
+          completedAt: DateTime.utc(2026, 10, 1),
+          createdAt: DateTime.utc(2026, 10, 1),
+        ),
+      ], DateTime.utc(2026, 10, 1));
+
+      // Deferred: nothing deleted yet, marker recorded unapplied.
+      expect(await db.select(db.expenses).get(), hasLength(1));
+      expect(await applier.hasUnappliedMonthCleanups(), isTrue);
+
+      // Queue drains, then the marker is retried: only its scope is deleted.
+      await db.delete(db.syncOutbox).go();
+      await applier.retryUnappliedMonthCleanups();
+
+      expect(await db.select(db.expenses).get(), isEmpty);
+      expect((await db.select(db.sales).get()).map((s) => s.id), ['sale-sep']);
+      expect((await db.select(db.stockMovements).get()).map((m) => m.id), [
+        'mv-sep',
+      ]);
     });
   });
 }

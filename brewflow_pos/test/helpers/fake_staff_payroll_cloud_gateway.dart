@@ -111,6 +111,8 @@ final class FakeStaffPayrollCloudGateway implements StaffPayrollCloudGateway {
       // Re-stamped with the CALLER's local id, exactly like the real gateway:
       // the row was written by another device under its own local id, and the
       // local mirror is keyed by (and FK-constrained to) this device's users.
+      // Leave state + reason ride along, exactly like the real
+      // `fetchAttendance` mapping.
       result.add(
         StaffAttendanceRecord(
           id: shift.id,
@@ -119,6 +121,8 @@ final class FakeStaffPayrollCloudGateway implements StaffPayrollCloudGateway {
           outAt: shift.outAt,
           attendanceDate: shift.attendanceDate,
           workedMinutes: shift.workedMinutes,
+          isLeave: shift.isLeave,
+          leaveReason: shift.leaveReason,
         ),
       );
     }

@@ -66,6 +66,9 @@ final class FakeCustomerLedgerRepository implements CustomerLedgerRepository {
   /// When set, [dueCustomersSummary] throws this error.
   Object? dueSummaryError;
 
+  /// When set, [dueCollections] throws this error before touching state.
+  Object? dueCollectionsError;
+
   /// When set, [outstandingAsOf] throws this error.
   Object? outstandingAsOfError;
 
@@ -410,6 +413,85 @@ final class FakeCustomerLedgerRepository implements CustomerLedgerRepository {
       dueCustomerCount: count,
       totalOutstandingPaise: total,
     );
+  }
+
+  /// Seeds one ledger payment directly, with full control over the
+  /// collection instant, method and reversal flag (the [recordPayment] /
+  /// [collectCustomerPayment] paths always stamp `paidAt` with now, which
+  /// cannot express past-day or boundary cases). The payment's shop scope
+  /// resolves through its bill, mirroring the real rows where the payment
+  /// shop matches the sale shop.
+  CustomerPayment seedPayment({
+    required String customerId,
+    required String saleId,
+    required int amountPaise,
+    required PaymentMethod paymentMethod,
+    required DateTime paidAt,
+    bool reversed = false,
+    String? note,
+    String? paymentGroupId,
+  }) {
+    final now = DateTime.now().toUtc();
+    final payment = CustomerPayment(
+      id: 'payment-seed-${++_paymentSequence}',
+      customerId: customerId,
+      saleId: saleId,
+      amountPaise: amountPaise,
+      paymentMethod: paymentMethod,
+      note: note,
+      paidAt: paidAt,
+      reversed: reversed,
+      reversedAt: reversed ? now : null,
+      paymentGroupId: paymentGroupId,
+      createdAt: now,
+      updatedAt: now,
+    );
+    storedPayments.add(payment);
+    return payment;
+  }
+
+  @override
+  Future<List<DueCollection>> dueCollections({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) async {
+    final error = dueCollectionsError;
+    if (error != null) {
+      throw error;
+    }
+    // Mirror the real repository's fail-closed scope.
+    if (shopIds != null && shopIds.isEmpty) return const [];
+    final scoped = shopIds != null && shopIds.isNotEmpty;
+    final shopBySaleId = {for (final bill in bills) bill.id: bill.shopId};
+    final result = <DueCollection>[];
+    for (final payment in storedPayments) {
+      if (payment.reversed) continue;
+      if (fromUtc != null && payment.paidAt.isBefore(fromUtc)) continue;
+      if (toUtc != null && payment.paidAt.isAfter(toUtc)) continue;
+      final billShop = shopBySaleId[payment.saleId];
+      // A null bill shop is excluded under a scope exactly like SQL NULL
+      // inside an IN list.
+      if (scoped && !shopIds.contains(billShop)) continue;
+      result.add(
+        DueCollection(
+          id: payment.id,
+          customerId: payment.customerId,
+          customerName: _nameFor(payment.customerId),
+          saleId: payment.saleId,
+          amountPaise: payment.amountPaise,
+          paymentMethod: payment.paymentMethod,
+          note: payment.note,
+          paidAt: payment.paidAt,
+          shopId: billShop,
+        ),
+      );
+    }
+    result.sort((a, b) {
+      final byPaidAt = b.paidAt.compareTo(a.paidAt);
+      return byPaidAt != 0 ? byPaidAt : b.id.compareTo(a.id);
+    });
+    return result;
   }
 
   @override

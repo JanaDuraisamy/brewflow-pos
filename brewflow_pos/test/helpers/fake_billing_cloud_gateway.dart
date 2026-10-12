@@ -29,6 +29,12 @@ class FakeBillingCloudGateway implements BillingCloudGateway {
   int _receiptCounter = 0;
   final List<Map<String, dynamic>> calls = [];
 
+  /// Sale ids passed to `voidSaleAtomic` (restoring void).
+  final List<String> voidRestoreCalls = [];
+
+  /// Sale ids passed to `voidSaleWithoutRestoreAtomic` (no-restore void).
+  final List<String> voidWithoutRestoreCalls = [];
+
   /// Every `createSaleAtomic` argument set, so split-payment tests can assert
   /// the legs actually reached the RPC rather than only that it was called.
   final List<CreateSaleArgs> createSaleArgs = [];
@@ -97,9 +103,35 @@ class FakeBillingCloudGateway implements BillingCloudGateway {
     if (saleId == 'already-voided') throw Exception('ALREADY_VOIDED');
     if (saleId == 'not-found') throw Exception('SALE_NOT_FOUND');
     if (saleId == 'forbidden-shop') throw Exception('FORBIDDEN');
+    if (saleId == 'pruned-history') throw Exception('VOID_HISTORY_PRUNED');
+    if (saleId == 'mixed-history') throw Exception('VOID_SNAPSHOT_MIXED');
+    voidRestoreCalls.add(saleId);
     return {
       'id': saleId,
       'voided_at': DateTime.now().toUtc().toIso8601String(),
+      'restored': true,
+      'restored_rows': const [],
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> voidSaleWithoutRestoreAtomic(
+    String saleId,
+  ) async {
+    if (nextError != null) {
+      final e = nextError;
+      nextError = null;
+      throw e!;
+    }
+    if (saleId == 'already-voided') throw Exception('ALREADY_VOIDED');
+    if (saleId == 'not-found') throw Exception('SALE_NOT_FOUND');
+    if (saleId == 'forbidden-shop') throw Exception('FORBIDDEN');
+    voidWithoutRestoreCalls.add(saleId);
+    return {
+      'id': saleId,
+      'voided_at': DateTime.now().toUtc().toIso8601String(),
+      'restored': false,
+      'restored_rows': const [],
     };
   }
 }

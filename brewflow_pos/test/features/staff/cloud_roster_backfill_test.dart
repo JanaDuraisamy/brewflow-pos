@@ -174,11 +174,9 @@ void main() {
       );
 
       expect(updated!.role, UserRole.staff);
-      expect(
-        updated.permissions,
-        {Permission.billing},
-        reason: 'an empty cloud grant set must not wipe local grants',
-      );
+      expect(updated.permissions, {
+        Permission.billing,
+      }, reason: 'an empty cloud grant set must not wipe local grants');
       expect(updated.displayName, 'Ava Stone');
     });
 
@@ -299,11 +297,10 @@ void main() {
       final byEmail = {for (final m in await staff.staffMembers()) m.email: m};
       expect(byEmail['ava@brewflow.example']!.shopId, cafeId);
       expect(byEmail['leo@brewflow.example']!.shopId, truckId);
-      expect(
-        resolver.rosterQueries,
-        [cafeId, truckId],
-        reason: 'the primary is mirrored first so shared members bind stably',
-      );
+      expect(resolver.rosterQueries, [
+        cafeId,
+        truckId,
+      ], reason: 'the primary is mirrored first so shared members bind stably');
     });
 
     test('a secondary business gets a local shop row to attach to', () async {
@@ -383,11 +380,9 @@ void main() {
       final profile = await container.read(userProfileProvider.future);
 
       expect(profile!.isOwner, isTrue);
-      expect(
-        (await staff.staffMembers()).map((m) => m.email),
-        ['ava@brewflow.example'],
-        reason: 'the Cafe roster still mirrors despite the truck outage',
-      );
+      expect((await staff.staffMembers()).map((m) => m.email), [
+        'ava@brewflow.example',
+      ], reason: 'the Cafe roster still mirrors despite the truck outage');
       expect(resolver.rosterQueries, [cafeId, truckId]);
     });
 
@@ -402,11 +397,9 @@ void main() {
 
         await container.read(userProfileProvider.future);
 
-        expect(
-          (await staff.staffMembers()).map((m) => m.email),
-          ['ava@brewflow.example'],
-          reason: 'offline-first: the primary must not go dark',
-        );
+        expect((await staff.staffMembers()).map((m) => m.email), [
+          'ava@brewflow.example',
+        ], reason: 'offline-first: the primary must not go dark');
         expect(resolver.rosterQueries, [cafeId]);
       },
     );

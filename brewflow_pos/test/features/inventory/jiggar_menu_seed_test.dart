@@ -1,10 +1,12 @@
-import 'package:brewflow_pos/core/database/app_database.dart';
+import 'package:brewflow_pos/core/database/app_database.dart' hide Product;
 import 'package:brewflow_pos/features/billing/data/drift_billing_repository.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_repository.dart';
 import 'package:brewflow_pos/features/inventory/data/drift_inventory_repository.dart';
+import 'package:brewflow_pos/features/inventory/data/drift_stock_movement_repository.dart';
 import 'package:brewflow_pos/features/inventory/data/jiggar_menu_seed.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
+import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
 import 'package:brewflow_pos/features/sync/data/drift_sync_repository.dart';
 import 'package:brewflow_pos/features/sync/data/local_master_data_applier.dart';
 import 'package:brewflow_pos/features/sync/data/sync_engine.dart';
@@ -18,10 +20,12 @@ import '../../helpers/fake_remote_master_data_gateway.dart';
 /// ---------------------------------------------------------------------------
 /// P0 master data — JIGGAR Tea House menu seed.
 ///
-/// Verifies: exact catalog shape (8 categories / 43 products / 5 variants),
-/// idempotent re-runs, reconciliation of drifted rows, made-to-order stock
-/// semantics (NONE + zero stock, sellable), and full A→cloud→B propagation
-/// through the REAL outbox/engine path against the in-memory cloud mirror.
+/// Verifies: exact catalog shape (8 categories / 43 menu products + the
+/// shared Maggi Packet ingredient / 5 variants), idempotent re-runs,
+/// reconciliation of drifted rows, made-to-order stock semantics (NONE +
+/// zero stock, sellable), shared-stock wiring of the Maggie dishes, and full
+/// A→cloud→B propagation through the REAL outbox/engine path against the
+/// in-memory cloud mirror.
 /// ---------------------------------------------------------------------------
 
 void main() {
@@ -36,20 +40,25 @@ void main() {
   DriftInventoryRepository plainRepo() => DriftInventoryRepository(db);
 
   group('catalog shape', () {
-    test('creates 8 categories, 43 products, 5 variants', () async {
-      final result = await JiggarMenuSeeder(plainRepo()).run();
+    test(
+      'creates 8 categories, 43 menu products + packet, 5 variants',
+      () async {
+        final result = await JiggarMenuSeeder(plainRepo()).run();
 
-      expect(result.categoriesCreated, 8);
-      expect(result.productsCreated, 43);
-      expect(result.variantsCreated, 5);
-      expect(result.productsUpdated, 0);
-      expect(result.productsSkipped, 0);
+        expect(result.categoriesCreated, 8);
+        expect(result.productsCreated, 43);
+        expect(result.variantsCreated, 5);
+        expect(result.productsUpdated, 0);
+        expect(result.productsSkipped, 0);
+        // The shared-stock packet is ensured outside the menu counters.
+        expect(result.ingredientsEnsured, 1);
 
-      final products = await plainRepo().products();
-      expect(products.length, 43);
-      final variantProducts = products.where((p) => p.variants.isNotEmpty);
-      expect(variantProducts.length, 2);
-    });
+        final products = await plainRepo().products();
+        expect(products.length, 44);
+        final variantProducts = products.where((p) => p.variants.isNotEmpty);
+        expect(variantProducts.length, 2);
+      },
+    );
 
     test('prices land as integer paise', () async {
       await JiggarMenuSeeder(plainRepo()).run();
@@ -74,6 +83,9 @@ void main() {
         await JiggarMenuSeeder(plainRepo()).run();
         final products = await plainRepo().products();
         for (final product in products) {
+          // The shared Maggi Packet is the one tracked exception: a counted,
+          // alert-eligible stock source hidden from the shelf.
+          if (product.isIngredient) continue;
           expect(
             product.stockUnit,
             StockUnit.none,
@@ -104,7 +116,8 @@ void main() {
       expect(second.productsCreated, 0);
       expect(second.productsUpdated, 0);
       expect(second.productsSkipped, 43);
-      expect((await plainRepo().products()).length, 43);
+      expect(second.ingredientsEnsured, 0);
+      expect((await plainRepo().products()).length, 44);
       expect((await plainRepo().categories()).length, 8);
     });
 
@@ -185,7 +198,7 @@ void main() {
       await engineA.runCycle(deviceId: 'A', shopId: 'shop');
 
       expect(cloud.categories.length, 8);
-      expect(cloud.products.length, 43);
+      expect(cloud.products.length, 44);
       expect(cloud.productVariants.length, 5);
       expect(await syncA.pendingOutboxCount(), 0);
 
@@ -211,7 +224,7 @@ void main() {
       final bCategories = await repoB.categories();
       final bProducts = await repoB.products();
       expect(bCategories.map((c) => c.name).toSet().length, 8);
-      expect(bProducts.length, 43);
+      expect(bProducts.length, 44);
 
       final bByName = {for (final p in bProducts) p.name: p};
       final bChai = bByName['SPL Milk Chai']!;
@@ -270,6 +283,179 @@ void main() {
       ).runCycle(deviceId: 'EVIL', shopId: 'other-shop');
 
       expect(await DriftInventoryRepository(intruderDb).categories(), isEmpty);
+    });
+  });
+
+  group('shared stock wiring (Maggi Packet + dish mappings)', () {
+    Future<Product> packetOf(DriftInventoryRepository repo) async =>
+        (await repo.products()).firstWhere((p) => p.name == 'Maggi Packet');
+
+    Future<void> stockPacket(
+      DriftInventoryRepository repo,
+      int quantity,
+    ) async {
+      final packet = await packetOf(repo);
+      await DriftStockMovementRepository(db).adjustStock(
+        productId: packet.id,
+        delta: quantity,
+        reason: StockAdjustmentReason.purchase,
+      );
+    }
+
+    test('ensures a tracked hidden packet with zero stock, once', () async {
+      final repo = plainRepo();
+      final result = await JiggarMenuSeeder(repo).run();
+
+      expect(result.ingredientsEnsured, 1);
+      final packet = await packetOf(repo);
+      expect(packet.isIngredient, isTrue);
+      expect(packet.stockUnit, StockUnit.count);
+      expect(packet.stockQuantity, 0);
+      expect(packet.isActive, isTrue);
+      // Alert-eligible through the normal low-stock rules.
+      expect(packet.lowStockMode, LowStockMode.useDefault);
+
+      // Hidden from the sale shelf like every other ingredient.
+      final shelf = (await repo.products()).where((p) => !p.isIngredient);
+      expect(shelf.map((p) => p.id), isNot(contains(packet.id)));
+
+      final second = await JiggarMenuSeeder(repo).run();
+      expect(second.ingredientsEnsured, 0);
+      expect(
+        (await repo.products()).where((p) => p.name == 'Maggi Packet'),
+        hasLength(1),
+      );
+    });
+
+    test('defers dish mappings while the packet is empty', () async {
+      final repo = plainRepo();
+      final result = await JiggarMenuSeeder(repo).run();
+
+      // The three board dishes exist but stay unwired: mapping them to an
+      // empty source would reject every Maggi sale.
+      expect(result.recipesMapped, 0);
+      expect(result.recipesSkipped, 3);
+      for (final name in ['Classic Maggie', 'Egg Maggie', 'Cheese Maggie']) {
+        final dish = (await repo.products()).firstWhere((p) => p.name == name);
+        expect(await repo.recipesForProduct(dish.id), isEmpty);
+      }
+    });
+
+    test(
+      'wires the board dishes on re-run after stocking, then sells shared',
+      () async {
+        final repo = plainRepo();
+        await JiggarMenuSeeder(repo).run();
+        await stockPacket(repo, 60);
+
+        final second = await JiggarMenuSeeder(repo).run();
+        expect(second.recipesMapped, 3);
+        expect(second.recipesSkipped, 0);
+
+        final packet = await packetOf(repo);
+        for (final name in ['Classic Maggie', 'Egg Maggie', 'Cheese Maggie']) {
+          final dish = (await repo.products()).firstWhere(
+            (p) => p.name == name,
+          );
+          final rows = await repo.recipesForProduct(dish.id);
+          expect(rows, hasLength(1));
+          expect(rows.single.ingredientProductId, packet.id);
+          expect(rows.single.quantity, 1);
+          expect(rows.single.variantId, isNull);
+        }
+
+        final classic = (await repo.products()).firstWhere(
+          (p) => p.name == 'Classic Maggie',
+        );
+        await DriftBillingRepository(db).completeSale(
+          lines: [
+            CartLine(
+              productId: classic.id,
+              productName: classic.name,
+              unitPricePaise: classic.sellingPricePaise,
+              quantity: 2,
+              maxQuantity: 2,
+            ),
+          ],
+          paymentStatus: PaymentStatus.paid,
+          paymentMethod: PaymentMethod.cash,
+        );
+        expect((await packetOf(repo)).stockQuantity, 58);
+        expect(
+          (await repo.products())
+              .firstWhere((p) => p.name == 'Classic Maggie')
+              .stockQuantity,
+          0,
+        );
+      },
+    );
+
+    test(
+      'maps live-menu spellings (Plain/Cheese/Veg/Egg/Masala Maggi) when present',
+      () async {
+        final repo = plainRepo();
+        await JiggarMenuSeeder(repo).run();
+        final maggie = (await repo.categories()).firstWhere(
+          (c) => c.name == 'MAGGIE',
+        );
+        for (final name in ['Plain Maggi', 'Masala Maggi']) {
+          await repo.createProduct(
+            categoryId: maggie.id,
+            name: name,
+            sellingPricePaise: 6000,
+            stockQuantity: 0,
+            stockUnit: StockUnit.none,
+            isActive: true,
+          );
+        }
+        await stockPacket(repo, 10);
+
+        final second = await JiggarMenuSeeder(repo).run();
+        // 3 board dishes + 2 live spellings; the other three live names are
+        // simply absent in this shop and skipped silently.
+        expect(second.recipesMapped, 5);
+        for (final name in ['Plain Maggi', 'Masala Maggi']) {
+          final dish = (await repo.products()).firstWhere(
+            (p) => p.name == name,
+          );
+          expect(await repo.recipesForProduct(dish.id), hasLength(1));
+        }
+      },
+    );
+
+    test('never reinterprets live rows or overwrites mappings', () async {
+      final repo = plainRepo();
+      final category = await repo.createCategory('MAGGIE');
+      await repo.createProduct(
+        categoryId: category.id,
+        name: 'Maggi Packet',
+        sellingPricePaise: 2000,
+        stockQuantity: 10,
+        isActive: true,
+      );
+
+      final result = await JiggarMenuSeeder(repo).run();
+      expect(result.ingredientsEnsured, 0);
+      expect(result.recipesMapped, 0);
+      expect(result.recipesSkipped, 3);
+      final packet = await packetOf(repo);
+      expect(packet.isIngredient, isFalse);
+      expect(packet.stockQuantity, 10);
+
+      // An owner mapping survives later imports untouched.
+      final classic = (await repo.products()).firstWhere(
+        (p) => p.name == 'Classic Maggie',
+      );
+      await repo.setRecipe(
+        productId: classic.id,
+        ingredients: [
+          RecipeIngredientInput(ingredientProductId: packet.id, quantity: 2),
+        ],
+      );
+      final second = await JiggarMenuSeeder(repo).run();
+      expect(second.recipesMapped, 0);
+      final rows = await repo.recipesForProduct(classic.id);
+      expect(rows.single.quantity, 2);
     });
   });
 

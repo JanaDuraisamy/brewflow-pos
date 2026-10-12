@@ -74,7 +74,6 @@ final class BusinessSalesSummary {
 final class DashboardSnapshot {
   const DashboardSnapshot({
     required this.daySalesPaise,
-    required this.dayProfitPaise,
     required this.totalBills,
     required this.dayOrderCount,
     required this.dayItemCount,
@@ -89,16 +88,14 @@ final class DashboardSnapshot {
     required this.categoryCount,
     required this.dueCustomers,
     this.businessBreakdown = const [],
+    this.dayDueCollectedPaise = 0,
+    this.dayDueCollections = const [],
+    this.dayBills = const [],
+    this.shopLabels = const {},
   });
 
   /// Total counter receipts on the selected day.
   final int daySalesPaise;
-
-  /// Estimated profit on the selected day (sales minus recorded cost
-  /// prices). Null when no sold line resolves to a product cost price, so
-  /// the UI can invite the owner to add cost prices instead of inventing a
-  /// number.
-  final int? dayProfitPaise;
 
   /// All-time bill count. Paged fetch, capped for safety; never negative.
   final int totalBills;
@@ -156,7 +153,40 @@ final class DashboardSnapshot {
   /// the Combined view. Shops are never aggregated together; each entry
   /// keeps its own identity so the UI can label it.
   final List<BusinessSalesSummary> businessBreakdown;
+
+  /// Money collected from customer dues on the selected day: the sum of
+  /// every valid (non-reversed) ledger payment whose `paidAt` falls inside
+  /// the selected local day. New-sale receipts are never included — they
+  /// live in [daySalesPaise].
+  final int dayDueCollectedPaise;
+
+  /// The day's due-collection payments, newest first, backing the Due
+  /// Collected card's drill-down. Each row carries its customer, amount,
+  /// method, timestamp and (in the Combined view) business label.
+  final List<DueCollection> dayDueCollections;
+
+  /// Completed sales on the selected day, newest first, backing the Bills
+  /// card's drill-down. Already loaded for the day KPIs — tapping the card
+  /// adds no database reads.
+  final List<OrderSummary> dayBills;
+
+  /// Business labels by shop id, non-empty only in the Combined view. The
+  /// Bills drill-down tags each row through this map; single-shop reads
+  /// render no shop text.
+  final Map<String, String> shopLabels;
 }
+
+/// Item-wise sales for the dashboard's selected day and shop scope, loaded
+/// lazily when the Items drill-down opens — never on the dashboard build
+/// itself, so the day's N+1 detail reads happen only on an explicit tap.
+/// Auto-disposed with the sheet; rebuilds when the selected date or the
+/// business context changes.
+final dashboardDayItemsProvider =
+    FutureProvider.autoDispose<List<ItemSalesRow>>((ref) async {
+      ref.watch(dashboardDateProvider);
+      ref.watch(businessSwitcherProvider);
+      return ref.read(dashboardControllerProvider.notifier).dayItemBreakdown();
+    });
 
 /// Holds the dashboard's selected local date; defaults to today.
 final dashboardDateProvider =
@@ -282,10 +312,14 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         ),
       );
 
-      final dayProfit = await _dayProfit(
-        orders,
-        products: products,
-        selectedDayOrders: selectedDayOrders,
+      // Due collections follow the SELECTED local day (not hard-coded
+      // today), using the same UTC-bounds convention as the sales window:
+      // the collection instant (`paidAt`) decides the day, never the bill's
+      // `createdAt`.
+      final dueCollections = await ledger.dueCollections(
+        shopIds: shopIds,
+        fromUtc: selected.toUtc(),
+        toUtc: _endOfDayUtc(selected),
       );
 
       final recentBills = await orders.orders(
@@ -347,7 +381,6 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
           0,
           (sum, order) => sum + order.totalPaise,
         ),
-        dayProfitPaise: dayProfit,
         totalBills: await _fetchTotalBills(orders, shopIds: shopIds),
         dayOrderCount: selectedDayOrders.length,
         dayItemCount: selectedDayOrders.fold(
@@ -372,6 +405,20 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
         businessBreakdown: showBreakdown
             ? _businessBreakdown(selectedDayOrders, labelsById)
             : const [],
+        dayDueCollectedPaise: dueCollections.fold(
+          0,
+          (sum, collection) => sum + collection.amountPaise,
+        ),
+        dayDueCollections: showBreakdown
+            ? [
+                for (final collection in dueCollections)
+                  collection.copyWith(
+                    shopLabel: _shopLabel(collection.shopId, labelsById),
+                  ),
+              ]
+            : dueCollections,
+        dayBills: selectedDayOrders,
+        shopLabels: showBreakdown ? labelsById : const {},
       );
     } on OrdersFailure {
       rethrow;
@@ -440,42 +487,71 @@ final class DashboardController extends AsyncNotifier<DashboardSnapshot> {
     return total;
   }
 
-  /// Profit for the selected day: sales minus the cost prices recorded on
-  /// the products the lines were sold from. Variant lines use the variant's
-  /// own cost price. Null when no sold line resolves to a cost price (the
-  /// page then invites adding cost prices instead of showing an invented
-  /// figure).
-  Future<int?> _dayProfit(
-    OrdersRepository orders, {
-    required List<Product> products,
-    required List<OrderSummary> selectedDayOrders,
-  }) async {
-    if (selectedDayOrders.isEmpty) return null;
-    final costById = <String, int?>{
-      for (final product in products) product.id: product.costPricePaise,
-    };
-    final variantCostById = <String, int?>{
-      for (final product in products)
-        for (final variant in product.variants)
-          variant.id: variant.costPricePaise,
-    };
-    var profit = 0;
-    var resolved = false;
-    for (final order in selectedDayOrders) {
-      final detail = await orders.orderById(order.id);
-      for (final item in detail.items) {
-        final cost = item.variantId != null
-            ? variantCostById[item.variantId]
-            : item.productId == null
-            ? null
-            : costById[item.productId!];
-        if (cost == null) continue;
-        resolved = true;
-        profit += (item.unitPricePaise - cost) * item.quantity;
+  /// Item-wise sales for the currently selected day and shop scope.
+  ///
+  /// Aggregates the persisted line snapshots of the day's bills by
+  /// (product, variant) — variants of one product stay distinguishable from
+  /// each other and from the plain product row, mirroring the Reports
+  /// aggregation. Opening-balance entries never appear (the orders window
+  /// excludes them). Rows sort by revenue, highest first.
+  ///
+  /// Runs only when the Items drill-down opens ([dashboardDayItemsProvider]),
+  /// so a day with many bills costs one batched detail pass on tap instead
+  /// of on every dashboard build.
+  Future<List<ItemSalesRow>> dayItemBreakdown() async {
+    final selected = ref.read(dashboardDateProvider);
+    final orders = ref.read(ordersRepositoryProvider);
+    final businessContext = ref.read(businessSwitcherProvider);
+    final shopIds = await ref
+        .read(businessSwitcherProvider.notifier)
+        .shopIdsForRead(businessContext);
+    try {
+      final dayOrders = await _fetchWindow(
+        orders,
+        selected,
+        selected,
+        shopIds: shopIds,
+      );
+      final byProduct = <(String, String?), List<int>>{};
+      for (final order in dayOrders) {
+        final detail = await orders.orderById(order.id);
+        for (final item in detail.items) {
+          final aggregation = byProduct.putIfAbsent((
+            item.productName,
+            item.variantName,
+          ), () => [0, 0]);
+          aggregation[0] += item.quantity;
+          aggregation[1] += item.lineTotalPaise;
+        }
       }
+      final rows = [
+        for (final entry in byProduct.entries)
+          ItemSalesRow(
+            productName: entry.key.$1,
+            variantName: entry.key.$2,
+            unitsSold: entry.value[0],
+            revenuePaise: entry.value[1],
+          ),
+      ]..sort((a, b) => b.revenuePaise.compareTo(a.revenuePaise));
+      return rows;
+    } on OrdersFailure {
+      rethrow;
+    } catch (error, stackTrace) {
+      AppLog.error(
+        'Failed to load day item breakdown',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      throw const UnexpectedOrdersFailure();
     }
-    return resolved ? profit : null;
   }
+
+  /// Resolves one payment row's shop to its user-facing business label.
+  /// Unknown or legacy (null-shop) rows read as a plain 'Business', mirroring
+  /// [_businessBreakdown].
+  static String _shopLabel(String? shopId, Map<String, String> labelsById) =>
+      shopId == null ? 'Business' : (labelsById[shopId] ?? 'Business');
 
   /// Maps shop ids to user-facing business labels for the Combined breakdown.
   /// CAFE is the primary (legacy) shop; FOOD TRUCK the second business.

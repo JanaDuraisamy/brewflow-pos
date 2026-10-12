@@ -181,6 +181,13 @@ final class _CountingLedgerRepository implements CustomerLedgerRepository {
     required DateTime toUtc,
     List<String>? shopIds,
   }) => inner.outstandingAsOf(toUtc: toUtc, shopIds: shopIds);
+
+  @override
+  Future<List<DueCollection>> dueCollections({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) => inner.dueCollections(shopIds: shopIds, fromUtc: fromUtc, toUtc: toUtc);
 }
 
 void main() {

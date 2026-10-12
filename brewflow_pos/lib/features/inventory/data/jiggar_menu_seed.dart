@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/core/services/app_log.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 
@@ -58,15 +59,51 @@ final class MenuSeedResult {
   int productsUpdated = 0;
   int productsSkipped = 0;
 
+  /// Shared-stock ingredient products ensured by this run.
+  int ingredientsEnsured = 0;
+
+  /// Maggie dish → packet recipe mappings written by this run.
+  int recipesMapped = 0;
+
+  /// Dishes left unwired (missing dish/packet, non-ingredient packet, empty
+  /// packet stock or an existing mapping the seed never overwrites).
+  int recipesSkipped = 0;
+
   @override
   String toString() =>
       '$categoriesCreated categories & $productsCreated products created '
       '($variantsCreated variants), $productsUpdated updated, '
-      '$productsSkipped already up to date.';
+      '$productsSkipped already up to date. '
+      '$ingredientsEnsured shared-stock ingredients ensured, '
+      '$recipesMapped recipes mapped ($recipesSkipped skipped).';
 }
 
 final class JiggarMenuSeeder {
   JiggarMenuSeeder(this._repository);
+
+  static const String tag = 'MenuSeed';
+
+  /// The shared physical stock behind every Maggie dish: one packet consumed
+  /// per dish sold. An ordinary tracked product (purchased through Purchases,
+  /// alerted through the low-stock rules, synced like any other); the
+  /// ingredient flag only hides it from the sale shelf.
+  static const String sharedStockPacketName = 'Maggi Packet';
+
+  /// Maggie dishes wired to the shared packet, one product-level recipe each
+  /// (variantId null). Board spellings first, then the live-menu spellings a
+  /// shop may already use — whatever exists gets mapped, the rest is skipped
+  /// and reported. Separate products can never double-deduct: a recipe row
+  /// matches only its own product id.
+  static const List<String> sharedStockDishNames = [
+    'Classic Maggie',
+    'Egg Maggie',
+    'Cheese Maggie',
+    'Plain Maggi',
+    'Cheese Maggi',
+    'Veg Maggi',
+    'Egg Maggi',
+    'Masala Maggi',
+  ];
 
   static const List<SeedCategory> menu = [
     SeedCategory('MILK & CHAI', [
@@ -199,7 +236,109 @@ final class JiggarMenuSeeder {
         }
       }
     }
+    await _ensureSharedStock(result);
     return result;
+  }
+
+  /// Wires the Maggie dishes to the shared Maggi Packet through the normal
+  /// recipe repository (one product-level row per dish, quantity 1).
+  ///
+  /// Additive and never destructive: products are only created, never edited
+  /// or restocked, and a dish that already carries ANY recipe rows keeps them
+  /// untouched. A dish is skipped — never force-mapped — when the packet is
+  /// missing, is not a tracked ingredient, or holds no stock: mapping a dish
+  /// to an empty source would turn every Maggi sale into an
+  /// INSUFFICIENT_STOCK failure. The owner stocks the packet through
+  /// Purchases and re-runs the import to complete the wiring; every skip is
+  /// logged with its reason.
+  ///
+  /// Like the rest of this seeder the step resolves in the active shop, so a
+  /// second business wires its own packet and mappings on its own import run.
+  Future<void> _ensureSharedStock(MenuSeedResult result) async {
+    final categories = await _repository.categories();
+    Category? maggie;
+    for (final category in categories) {
+      if (category.name.toLowerCase() == 'maggie') {
+        maggie = category;
+        break;
+      }
+    }
+    if (maggie == null) {
+      AppLog.info(
+        'Shared stock skipped: no MAGGIE category (owner removed it)',
+        tag: tag,
+      );
+      return;
+    }
+
+    final products = await _repository.products();
+    Product? packet;
+    for (final product in products) {
+      if (product.categoryId == maggie.id &&
+          product.name.toLowerCase() == sharedStockPacketName.toLowerCase()) {
+        packet = product;
+        break;
+      }
+    }
+    if (packet == null) {
+      packet = await _repository.createProduct(
+        categoryId: maggie.id,
+        name: sharedStockPacketName,
+        // Never sold at the counter (hidden by the ingredient flag); the
+        // price is meaningless and stays an honest zero.
+        sellingPricePaise: 0,
+        // Never invent an opening balance: the owner stocks the packet
+        // through Purchases, which is also what restocks it later.
+        stockQuantity: 0,
+        stockUnit: StockUnit.count,
+        isIngredient: true,
+        isActive: true,
+      );
+      result.ingredientsEnsured += 1;
+    }
+    final source = packet;
+
+    // Someone's live configuration (a same-named normal product, or an
+    // untracked row) is never reinterpreted as our stock source, and a dish
+    // is never mapped to an empty source (every Maggi sale would fail).
+    final packetUsable =
+        source.isIngredient &&
+        source.stockUnit != StockUnit.none &&
+        source.stockQuantity > 0;
+    if (!packetUsable) {
+      AppLog.info(
+        'Shared stock wiring deferred for ${source.name}: stock it through '
+        'Purchases as a tracked ingredient, then re-run the import',
+        tag: tag,
+      );
+    }
+
+    final dishByName = {
+      for (final product in products)
+        if (product.categoryId == maggie.id)
+          product.name.toLowerCase(): product,
+    };
+    for (final dishName in sharedStockDishNames) {
+      final dish = dishByName[dishName.toLowerCase()];
+      if (dish == null) continue;
+      if ((await _repository.recipesForProduct(dish.id)).isNotEmpty) {
+        AppLog.info(
+          'Shared stock kept: ${dish.name} already has a recipe mapping',
+          tag: tag,
+        );
+        result.recipesSkipped += 1;
+        continue;
+      }
+      if (!packetUsable) {
+        result.recipesSkipped += 1;
+        continue;
+      }
+      await _repository.setRecipe(
+        productId: dish.id,
+        ingredients: [RecipeIngredientInput(ingredientProductId: source.id)],
+      );
+      result.recipesMapped += 1;
+    }
   }
 
   Future<void> _createProduct(String categoryId, SeedProduct seed) async {

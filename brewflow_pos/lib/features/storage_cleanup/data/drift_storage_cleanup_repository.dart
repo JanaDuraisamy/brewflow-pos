@@ -321,6 +321,13 @@ class DriftStorageCleanupRepository {
   /// only after the atomic server cleanup succeeded (or returns
   /// already-cleaned) — cloud first, mirror second, like every other
   /// destructive path in the codebase.
+  ///
+  /// Deletion is scoped to [tables] — the cleanup's actual affected keys from
+  /// [MonthCleanupResult.deleted] — so categories the owner did not select are
+  /// preserved locally, exactly matching the server. When [tables] is empty
+  /// (an already-cleaned race, or a legacy marker with no selection recorded)
+  /// there is no selection to honor, so the full month scope is cleared as
+  /// before.
   Future<void> applyLocalMonthCleanup({
     required String shopId,
     required DateTime month,
@@ -331,7 +338,12 @@ class DriftStorageCleanupRepository {
     final cookie = DateTime.utc(month.year, month.month);
     final now = DateTime.now().toUtc();
     await _db.transaction(() async {
-      await deleteShopMonth(_db, shopId, cookie);
+      await deleteShopMonth(
+        _db,
+        shopId,
+        cookie,
+        scope: tables.isEmpty ? null : tables.toSet(),
+      );
       await _db
           .into(_db.monthCleanupMarkers)
           .insertOnConflictUpdate(
@@ -393,6 +405,35 @@ class DriftStorageCleanupRepository {
   }
 }
 
+/// Normalizes a cleanup selection to the domain category keys used by
+/// [deleteShopMonth].
+///
+/// Callers pass the cleanup's actual affected keys — the server
+/// `month_cleanup_atomic` `deleted` keys, and the marker `tables` keys derived
+/// from them — which are the EXPANDED per-table keys (`salePayments`,
+/// `saleItems`, `customerPayments`, `sales`, `purchases`, ...). Both a category
+/// key and its count keys map to the same category, so the owner and the peer
+/// device scope their deletions identically.
+const Map<String, String> _cleanupKeyToCategory = {
+  'sales': 'sales',
+  'saleItems': 'sales',
+  'salePayments': 'sales',
+  'customerPayments': 'sales',
+  'purchases': 'purchases',
+  'purchaseItems': 'purchases',
+  'expenses': 'expenses',
+  'stockMovements': 'stockMovements',
+  'dailyClosings': 'dailyClosings',
+  'staffAttendance': 'staffAttendance',
+  'staffAdvances': 'staffAdvances',
+  'staffDailySalaries': 'staffDailySalaries',
+  'staffMonthlySalaries': 'staffMonthlySalaries',
+};
+
+Set<String> _categoriesInScope(Set<String> scope) => {
+  for (final key in scope) _cleanupKeyToCategory[key] ?? key,
+};
+
 /// Deletes one shop's transactional rows for a UTC month, children before
 /// parents (RESTRICT FKs).
 ///
@@ -402,13 +443,25 @@ class DriftStorageCleanupRepository {
 /// customers, suppliers, offers, recipes), payee-keyed expense payments, the
 /// sync outbox and bookkeeping are NEVER touched. Runs inside the caller's
 /// transaction.
+///
+/// [scope] selects which categories to delete, using the cleanup's affected
+/// keys (see [_cleanupKeyToCategory]). When `null` the whole month scope is
+/// deleted (the original full-cleanup behavior, kept for callers and tests
+/// that do not pass a selection). When provided, only the categories it maps
+/// to are touched, so unselected categories (e.g. stock movements when the
+/// owner cleaned only Expenses) are preserved.
 Future<void> deleteShopMonth(
   AppDatabase db,
   String shopId,
-  DateTime month,
-) async {
+  DateTime month, {
+  Set<String>? scope,
+}) async {
   final start = DateTime.utc(month.year, month.month);
   final end = DateTime.utc(month.year, month.month + 1);
+
+  final selected = scope == null ? null : _categoriesInScope(scope);
+  bool inScope(String category) =>
+      selected == null || selected.contains(category);
 
   Future<List<String>> saleIds() async {
     final rows =
@@ -434,79 +487,99 @@ Future<void> deleteShopMonth(
     return [for (final row in rows) row.id];
   }
 
-  final sales = await saleIds();
-  if (sales.isNotEmpty) {
-    await (db.delete(db.salePayments)..where((t) => t.saleId.isIn(sales))).go();
-    await (db.delete(db.saleItems)..where((t) => t.saleId.isIn(sales))).go();
-    await (db.delete(
-      db.customerPayments,
-    )..where((t) => t.saleId.isIn(sales))).go();
+  if (inScope('sales')) {
+    final sales = await saleIds();
+    if (sales.isNotEmpty) {
+      await (db.delete(
+        db.salePayments,
+      )..where((t) => t.saleId.isIn(sales))).go();
+      await (db.delete(db.saleItems)..where((t) => t.saleId.isIn(sales))).go();
+      await (db.delete(
+        db.customerPayments,
+      )..where((t) => t.saleId.isIn(sales))).go();
+    }
+    await (db.delete(db.sales)..where(
+          (s) =>
+              s.shopId.equals(shopId) &
+              s.createdAt.isBiggerOrEqualValue(start) &
+              s.createdAt.isSmallerThanValue(end),
+        ))
+        .go();
   }
-  await (db.delete(db.sales)..where(
-        (s) =>
-            s.shopId.equals(shopId) &
-            s.createdAt.isBiggerOrEqualValue(start) &
-            s.createdAt.isSmallerThanValue(end),
-      ))
-      .go();
 
-  final purchases = await purchaseIds();
-  if (purchases.isNotEmpty) {
-    await (db.delete(
-      db.purchaseItems,
-    )..where((t) => t.purchaseId.isIn(purchases))).go();
+  if (inScope('purchases')) {
+    final purchases = await purchaseIds();
+    if (purchases.isNotEmpty) {
+      await (db.delete(
+        db.purchaseItems,
+      )..where((t) => t.purchaseId.isIn(purchases))).go();
+    }
+    await (db.delete(db.purchases)..where(
+          (p) =>
+              p.shopId.equals(shopId) &
+              p.createdAt.isBiggerOrEqualValue(start) &
+              p.createdAt.isSmallerThanValue(end),
+        ))
+        .go();
   }
-  await (db.delete(db.purchases)..where(
-        (p) =>
-            p.shopId.equals(shopId) &
-            p.createdAt.isBiggerOrEqualValue(start) &
-            p.createdAt.isSmallerThanValue(end),
-      ))
-      .go();
 
-  await (db.delete(db.expenses)..where(
-        (t) =>
-            t.shopId.equals(shopId) &
-            t.expenseDate.isBiggerOrEqualValue(start) &
-            t.expenseDate.isSmallerThanValue(end),
-      ))
-      .go();
-  await (db.delete(db.stockMovements)..where(
-        (t) =>
-            t.shopId.equals(shopId) &
-            t.createdAt.isBiggerOrEqualValue(start) &
-            t.createdAt.isSmallerThanValue(end),
-      ))
-      .go();
-  await (db.delete(db.dailyClosings)..where(
-        (t) =>
-            t.shopId.equals(shopId) &
-            t.businessDate.isBiggerOrEqualValue(start) &
-            t.businessDate.isSmallerThanValue(end),
-      ))
-      .go();
-  await (db.delete(db.staffAttendance)..where(
-        (t) =>
-            t.shopId.equals(shopId) &
-            t.attendanceDate.isBiggerOrEqualValue(start) &
-            t.attendanceDate.isSmallerThanValue(end),
-      ))
-      .go();
-  await (db.delete(db.staffAdvances)..where(
-        (t) =>
-            t.shopId.equals(shopId) &
-            t.advanceDate.isBiggerOrEqualValue(start) &
-            t.advanceDate.isSmallerThanValue(end),
-      ))
-      .go();
-  await (db.delete(db.staffDailySalary)..where(
-        (t) =>
-            t.shopId.equals(shopId) &
-            t.attendanceDate.isBiggerOrEqualValue(start) &
-            t.attendanceDate.isSmallerThanValue(end),
-      ))
-      .go();
-  await (db.delete(
-    db.staffMonthlySalaries,
-  )..where((t) => t.shopId.equals(shopId) & t.monthDate.equals(start))).go();
+  if (inScope('expenses')) {
+    await (db.delete(db.expenses)..where(
+          (t) =>
+              t.shopId.equals(shopId) &
+              t.expenseDate.isBiggerOrEqualValue(start) &
+              t.expenseDate.isSmallerThanValue(end),
+        ))
+        .go();
+  }
+  if (inScope('stockMovements')) {
+    await (db.delete(db.stockMovements)..where(
+          (t) =>
+              t.shopId.equals(shopId) &
+              t.createdAt.isBiggerOrEqualValue(start) &
+              t.createdAt.isSmallerThanValue(end),
+        ))
+        .go();
+  }
+  if (inScope('dailyClosings')) {
+    await (db.delete(db.dailyClosings)..where(
+          (t) =>
+              t.shopId.equals(shopId) &
+              t.businessDate.isBiggerOrEqualValue(start) &
+              t.businessDate.isSmallerThanValue(end),
+        ))
+        .go();
+  }
+  if (inScope('staffAttendance')) {
+    await (db.delete(db.staffAttendance)..where(
+          (t) =>
+              t.shopId.equals(shopId) &
+              t.attendanceDate.isBiggerOrEqualValue(start) &
+              t.attendanceDate.isSmallerThanValue(end),
+        ))
+        .go();
+  }
+  if (inScope('staffAdvances')) {
+    await (db.delete(db.staffAdvances)..where(
+          (t) =>
+              t.shopId.equals(shopId) &
+              t.advanceDate.isBiggerOrEqualValue(start) &
+              t.advanceDate.isSmallerThanValue(end),
+        ))
+        .go();
+  }
+  if (inScope('staffDailySalaries')) {
+    await (db.delete(db.staffDailySalary)..where(
+          (t) =>
+              t.shopId.equals(shopId) &
+              t.attendanceDate.isBiggerOrEqualValue(start) &
+              t.attendanceDate.isSmallerThanValue(end),
+        ))
+        .go();
+  }
+  if (inScope('staffMonthlySalaries')) {
+    await (db.delete(
+      db.staffMonthlySalaries,
+    )..where((t) => t.shopId.equals(shopId) & t.monthDate.equals(start))).go();
+  }
 }

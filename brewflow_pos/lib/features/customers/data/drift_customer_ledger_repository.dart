@@ -914,6 +914,28 @@ final class DriftCustomerLedgerRepository implements CustomerLedgerRepository {
   }
 
   @override
+  Future<List<DueCollection>> dueCollections({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) async {
+    try {
+      // A non-null [shopIds] is a hard scope, so an empty list must yield no
+      // rows rather than every business's collections.
+      if (shopIds != null && shopIds.isEmpty) return const [];
+      return await _dao.dueCollections(
+        shopIds: shopIds,
+        fromUtc: fromUtc,
+        toUtc: toUtc,
+      );
+    } on CustomerLedgerFailure {
+      rethrow;
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to load due collections', error, stackTrace);
+    }
+  }
+
+  @override
   Future<List<String>> customerIdsWithDue() async {
     try {
       final sales = await _dao.salesTotalsByCustomer();

@@ -173,6 +173,25 @@ abstract interface class CustomerLedgerRepository {
   /// (dashboard Due Reminders surface).
   Future<DueCustomersSummary> dueCustomersSummary({List<String>? shopIds});
 
+  /// Valid due-collection payments recorded inside one window, newest first.
+  ///
+  /// Reads the `customer_payments` ledger only, so new-sale money (`sales` /
+  /// `sale_payments`) can never appear here. Only non-reversed rows count —
+  /// the void flow reverses a voided bill's payments, which is what keeps
+  /// them out. Payments on opening-balance entries count: they are real
+  /// money received against real debt.
+  ///
+  /// [fromUtc]/[toUtc] bound the payments by their own `paidAt` (both
+  /// inclusive, UTC) — the collection instant, deliberately not the bill's
+  /// `createdAt`. [shopIds] restricts the read to the given businesses; a
+  /// non-null (and especially empty) scope is fail-closed and yields no rows
+  /// rather than every business's collections.
+  Future<List<DueCollection>> dueCollections({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  });
+
   /// Customer-wise outstanding balances exactly as of [toUtc] (read-only,
   /// the management report's Customer Outstanding snapshot).
   ///

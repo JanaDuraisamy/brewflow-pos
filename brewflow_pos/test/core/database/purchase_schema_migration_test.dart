@@ -335,7 +335,8 @@ void main() {
         final delta = switch (type) {
           StockMovementType.opening ||
           StockMovementType.purchase ||
-          StockMovementType.adjustmentIn => 5,
+          StockMovementType.adjustmentIn ||
+          StockMovementType.void_ => 5,
           StockMovementType.sale || StockMovementType.adjustmentOut => -1,
         };
         await database

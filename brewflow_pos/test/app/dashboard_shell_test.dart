@@ -159,7 +159,7 @@ void main() {
     expect(inPage('Manage Inventory'), findsOneWidget);
     expect(inPage('Review Orders'), findsOneWidget);
     expect(inPage('Sales'), findsOneWidget);
-    expect(inPage('Profit'), findsOneWidget);
+    expect(inPage('Due Collected'), findsOneWidget);
     expect(inPage('Bills'), findsOneWidget);
     expect(inPage('Items'), findsOneWidget);
     expect(inPage('Sales Overview'), findsOneWidget);

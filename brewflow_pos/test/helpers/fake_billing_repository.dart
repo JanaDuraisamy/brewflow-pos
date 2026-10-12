@@ -251,4 +251,16 @@ final class FakeBillingRepository implements BillingRepository {
       );
     }
   }
+
+  @override
+  Future<void> voidSaleWithoutRestore(String saleId) async {
+    storedSales.firstWhere(
+      (s) => s.id == saleId,
+      orElse: () => throw const SaleNotFoundFailure(),
+    );
+    if (voidedIds.contains(saleId)) {
+      throw const SaleAlreadyVoidedFailure();
+    }
+    voidedIds.add(saleId);
+  }
 }

@@ -206,11 +206,9 @@ void main() {
       await pushMarker(gatewayA, 'marker-1');
 
       await cycle(b.engine, deviceId: 'B');
-      expect(
-        (await b.db.select(b.db.sales).get()).map((s) => s.id),
-        ['sale-sep'],
-        reason: 'queued rows must not be deleted under',
-      );
+      expect((await b.db.select(b.db.sales).get()).map((s) => s.id), [
+        'sale-sep',
+      ], reason: 'queued rows must not be deleted under');
       expect(await b.cleanup.markerApplied('marker-1'), isFalse);
 
       // Once the queue drains, the next cycle applies the marker.
@@ -339,11 +337,9 @@ void main() {
       // Cycle 1: the marker defers (queue busy) and the shared cursor must
       // NOT advance past it. The cloud bill + payment pull through.
       await cycle(b.engine, deviceId: 'B');
-      expect(
-        (await b.db.select(b.db.sales).get()).map((s) => s.id),
-        [saleId],
-        reason: 'deferred marker must not delete local rows',
-      );
+      expect((await b.db.select(b.db.sales).get()).map((s) => s.id), [
+        saleId,
+      ], reason: 'deferred marker must not delete local rows');
       expect(
         (await b.db.select(b.db.customerPayments).get()).length,
         1,
@@ -367,11 +363,9 @@ void main() {
       // cursor had never moved past them.
       await cycle(b.engine, deviceId: 'B');
       expect(await b.cleanup.markerApplied(markerId), isTrue);
-      expect(
-        (await b.db.select(b.db.sales).get()).map((s) => s.id),
-        [saleId],
-        reason: 'sale must be re-pulled after the marker applies',
-      );
+      expect((await b.db.select(b.db.sales).get()).map((s) => s.id), [
+        saleId,
+      ], reason: 'sale must be re-pulled after the marker applies');
       expect(
         (await b.db.select(b.db.customerPayments).get()).length,
         1,

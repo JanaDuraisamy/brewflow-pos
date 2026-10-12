@@ -171,6 +171,85 @@ void main() {
     });
   });
 
+  group('failed outbox (failures sheet)', () {
+    SyncOutboxEntry entry(String entityId, {String? status}) => SyncOutboxEntry(
+      id: 'obx-$entityId',
+      deviceId: 'device-a',
+      shopId: 'shop-1',
+      entity: 'PRODUCT',
+      entityId: entityId,
+      operation: 'UPSERT',
+      payload: '{"id":"$entityId"}',
+      status: status ?? 'PENDING',
+      attemptCount: 0,
+    );
+
+    test('failedOutboxBatch returns FAILED entries newest attempt first and '
+        'ignores PENDING/DONE', () async {
+      await repo.insertOutbox(entry('a'));
+      await repo.parkFailed('obx-a', 'Network is unreachable');
+      // Distinct timestamps so the desc ordering is deterministic.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await repo.insertOutbox(entry('b'));
+      await repo.parkFailed('obx-b', 'JWT expired');
+      await repo.insertOutbox(entry('c')); // stays PENDING
+
+      final failures = await repo.failedOutboxBatch();
+      expect(failures.map((f) => f.id).toList(), ['obx-b', 'obx-a']);
+      final first = failures.first;
+      expect(first.entity, 'PRODUCT');
+      expect(first.operation, 'UPSERT');
+      expect(first.entityId, 'b');
+      expect(first.lastError, 'JWT expired');
+      expect(first.lastAttemptAt, isNotNull);
+    });
+
+    test(
+      'retryFailedEntries requeues every FAILED entry as fresh PENDING',
+      () async {
+        await repo.insertOutbox(entry('a'));
+        await repo.parkFailed('obx-a', 'Network is unreachable');
+        await repo.insertOutbox(entry('d'));
+        await repo.parkFailed('obx-d', 'Network is unreachable');
+
+        final count = await repo.retryFailedEntries();
+        expect(count, 2);
+
+        final pending = await repo.pendingOutboxBatch();
+        expect(pending.map((e) => e.entityId).toSet(), {'a', 'd'});
+        expect(pending.every((e) => e.status == 'PENDING'), isTrue);
+        expect(pending.every((e) => e.attemptCount == 0), isTrue);
+
+        final rows = await db.select(db.syncOutbox).get();
+        for (final row in rows) {
+          expect(row.status, 'PENDING', reason: row.id);
+          expect(row.lastError, isNull, reason: row.id);
+          expect(row.lastAttemptAt, isNull, reason: row.id);
+        }
+        expect(await repo.failedOutboxBatch(), isEmpty);
+      },
+    );
+
+    test(
+      'retryFailedEntries(ids: [...]) requeues only the selected FAILED entries',
+      () async {
+        await repo.insertOutbox(entry('a'));
+        await repo.parkFailed('obx-a', 'nope');
+        await repo.insertOutbox(entry('b'));
+        await repo.parkFailed('obx-b', 'nope');
+
+        final count = await repo.retryFailedEntries(ids: ['obx-b']);
+        expect(count, 1);
+        expect((await repo.pendingOutboxBatch()).single.id, 'obx-b');
+        expect((await repo.failedOutboxBatch()).single.id, 'obx-a');
+      },
+    );
+
+    test('retryFailedEntries with nothing failed returns zero', () async {
+      expect(await repo.retryFailedEntries(), 0);
+    });
+  });
+
   group('sync state', () {
     test('cursors upsert per device', () async {
       final now = DateTime.now().toUtc();

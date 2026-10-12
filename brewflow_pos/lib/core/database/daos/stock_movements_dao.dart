@@ -65,6 +65,31 @@ final class StockMovementsDao {
     return query.get().then((rows) => rows.isNotEmpty);
   }
 
+  /// All SALE movements recorded against one sale, in a deterministic
+  /// (product_id, variant_id) order. Used by the void to reverse a legacy
+  /// sale's recorded consumption once for the whole sale — the movements are
+  /// the sale's own audit and cover its mapped ingredient deductions too.
+  Future<List<StockMovement>> saleMovementsFor(
+    String saleId, {
+    String? shopId,
+  }) {
+    final query = _db.select(_db.stockMovements)
+      ..where(
+        (t) =>
+            t.referenceType.equals('SALE') &
+            t.referenceId.equals(saleId) &
+            t.movementType.equals('SALE'),
+      )
+      ..orderBy([
+        (t) => OrderingTerm.asc(t.productId),
+        (t) => OrderingTerm.asc(t.variantId),
+      ]);
+    if (shopId != null) {
+      query.where((t) => t.shopId.equals(shopId));
+    }
+    return query.get();
+  }
+
   /// Inserts one movement and returns the persisted row (including the
   /// generated id).
   Future<StockMovement> insert(StockMovementsCompanion companion) {

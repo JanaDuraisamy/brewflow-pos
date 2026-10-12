@@ -10,6 +10,7 @@ import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.da
 import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/orders/presentation/sales_breakdown_sheets.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_status_provider.dart';
@@ -188,6 +189,8 @@ final class _PhoneSummaryKpis extends StatelessWidget {
     final sales = snapshot.sales;
     final hasSales = sales.orderCount > 0;
     final average = sales.averageSalePaise;
+    final rangeLabel = _rangeLabel(snapshot.range);
+    final shopLabels = snapshot.shopLabels.isEmpty ? null : snapshot.shopLabels;
     return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -210,6 +213,19 @@ final class _PhoneSummaryKpis extends StatelessWidget {
           icon: Icons.receipt_long_outlined,
           accent: AppColors.secondary,
           caption: 'Completed sales',
+          onTap: () => showBillsBreakdownSheet(
+            context: context,
+            title: 'Orders',
+            subtitle: snapshot.rangeOrders.isEmpty
+                ? 'Nothing billed in $rangeLabel'
+                : '${sales.orderCount} '
+                      '${sales.orderCount == 1 ? 'order' : 'orders'} · '
+                      '${Money.formatPaise(sales.totalPaise)} · '
+                      '$rangeLabel',
+            bills: snapshot.rangeOrders,
+            shopLabels: shopLabels,
+            emptyMessage: 'No bills recorded in this range.',
+          ),
         ),
         KpiCard(
           label: 'Items',
@@ -217,6 +233,18 @@ final class _PhoneSummaryKpis extends StatelessWidget {
           icon: Icons.shopping_basket_outlined,
           accent: AppColors.info,
           caption: 'Pieces sold',
+          onTap: () => showItemsBreakdownSheet(
+            context: context,
+            title: 'Items',
+            subtitle: snapshot.itemBreakdown.isEmpty
+                ? 'Nothing sold in $rangeLabel'
+                : '${sales.itemCount} '
+                      '${sales.itemCount == 1 ? 'item' : 'items'} · '
+                      '${Money.formatPaise(sales.totalPaise)} · '
+                      '$rangeLabel',
+            rows: snapshot.itemBreakdown,
+            emptyMessage: 'No items sold in this range.',
+          ),
         ),
         KpiCard(
           label: 'Avg. Sale',
@@ -470,6 +498,8 @@ final class _SummaryKpis extends StatelessWidget {
     final sales = snapshot.sales;
     final hasSales = sales.orderCount > 0;
     final average = sales.averageSalePaise;
+    final rangeLabel = _rangeLabel(snapshot.range);
+    final shopLabels = snapshot.shopLabels.isEmpty ? null : snapshot.shopLabels;
     return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -492,6 +522,19 @@ final class _SummaryKpis extends StatelessWidget {
           icon: Icons.receipt_long_outlined,
           accent: AppColors.secondary,
           caption: 'Completed sales',
+          onTap: () => showBillsBreakdownSheet(
+            context: context,
+            title: 'Orders',
+            subtitle: snapshot.rangeOrders.isEmpty
+                ? 'Nothing billed in $rangeLabel'
+                : '${sales.orderCount} '
+                      '${sales.orderCount == 1 ? 'order' : 'orders'} · '
+                      '${Money.formatPaise(sales.totalPaise)} · '
+                      '$rangeLabel',
+            bills: snapshot.rangeOrders,
+            shopLabels: shopLabels,
+            emptyMessage: 'No bills recorded in this range.',
+          ),
         ),
         KpiCard(
           label: 'Items',
@@ -499,6 +542,18 @@ final class _SummaryKpis extends StatelessWidget {
           icon: Icons.shopping_basket_outlined,
           accent: AppColors.info,
           caption: 'Pieces sold',
+          onTap: () => showItemsBreakdownSheet(
+            context: context,
+            title: 'Items',
+            subtitle: snapshot.itemBreakdown.isEmpty
+                ? 'Nothing sold in $rangeLabel'
+                : '${sales.itemCount} '
+                      '${sales.itemCount == 1 ? 'item' : 'items'} · '
+                      '${Money.formatPaise(sales.totalPaise)} · '
+                      '$rangeLabel',
+            rows: snapshot.itemBreakdown,
+            emptyMessage: 'No items sold in this range.',
+          ),
         ),
         KpiCard(
           label: 'Avg. Sale',

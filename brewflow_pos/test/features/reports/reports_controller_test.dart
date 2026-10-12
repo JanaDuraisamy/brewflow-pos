@@ -9,6 +9,7 @@ import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/reports/domain/reports_models.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -730,6 +731,173 @@ void main() {
       expect(snapshot.categoryPerformance[0].revenuePaise, 3000);
       expect(snapshot.categoryPerformance[1].categoryName, 'Snacks');
       expect(snapshot.categoryPerformance[1].revenuePaise, 2000);
+    });
+  });
+
+  group('range orders and item breakdown', () {
+    test('rangeOrders lists the window bills newest first', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'R-old',
+        createdAt: DateTime.now().toUtc().subtract(const Duration(days: 9)),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 70000,
+        items: [_item('Old', price: 70000)],
+      );
+      orders.add(
+        receiptNumber: 'R-1',
+        createdAt: DateTime.now().toUtc().subtract(const Duration(hours: 2)),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 30000,
+        items: [_item('Chai', price: 30000)],
+      );
+      orders.add(
+        receiptNumber: 'R-2',
+        createdAt: DateTime.now().toUtc(),
+        paymentMethod: PaymentMethod.upi,
+        totalPaise: 10000,
+        items: [_item('Cookie', price: 10000)],
+      );
+
+      // Default Today window: the 9-day-old bill stays out.
+      var snapshot = await _load(_container(orders: orders));
+      expect(snapshot.rangeOrders.map((o) => o.receiptNumber).toList(), [
+        'R-2',
+        'R-1',
+      ]);
+      expect(snapshot.rangeOrders.first.paymentMethod, PaymentMethod.upi);
+
+      // A wider range pulls the old bill back in.
+      final container = _container(orders: orders);
+      container
+          .read(reportsRangeProvider.notifier)
+          .setPreset(OrdersDatePreset.last30);
+      snapshot = await _load(container);
+      expect(snapshot.rangeOrders.map((o) => o.receiptNumber).toList(), [
+        'R-2',
+        'R-1',
+        'R-old',
+      ]);
+    });
+
+    test('rangeOrders are scoped to the signed-in shop', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'R-cafe',
+        createdAt: DateTime.now().toUtc(),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 30000,
+        items: [_item('Chai', price: 30000)],
+        shopId: 'shop-1',
+      );
+      orders.add(
+        receiptNumber: 'R-truck',
+        createdAt: DateTime.now().toUtc(),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 80000,
+        items: [_item('Burger', price: 80000)],
+        shopId: 'shop-2',
+      );
+
+      final snapshot = await _load(_container(orders: orders));
+      expect(snapshot.rangeOrders.map((o) => o.receiptNumber).toList(), [
+        'R-cafe',
+      ]);
+      expect(snapshot.itemBreakdown.map((r) => r.productName).toList(), [
+        'Chai',
+      ]);
+    });
+
+    test(
+      'itemBreakdown covers every product while top products stay capped',
+      () async {
+        final orders = FakeOrdersRepository();
+        for (var i = 1; i <= 6; i++) {
+          orders.add(
+            receiptNumber: 'R-$i',
+            createdAt: DateTime.now().toUtc(),
+            paymentMethod: PaymentMethod.cash,
+            totalPaise: i * 1000,
+            items: [
+              _item(
+                'Snapshot Name $i',
+                price: i * 1000,
+                productId: 'product-$i',
+              ),
+            ],
+          );
+        }
+
+        final snapshot = await _load(_container(orders: orders));
+        expect(snapshot.topProducts.length, 5);
+        expect(snapshot.itemBreakdown.length, 6);
+        expect(snapshot.itemBreakdown.first.productName, 'Snapshot Name 6');
+        expect(snapshot.itemBreakdown.first.revenuePaise, 6000);
+        expect(snapshot.itemBreakdown.last.revenuePaise, 1000);
+      },
+    );
+
+    test('itemBreakdown keeps variants distinguishable', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'R-1',
+        createdAt: DateTime.now().toUtc(),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 15000,
+        items: const [
+          OrderItem(
+            productName: 'Maggi',
+            variantName: 'Cheese',
+            variantId: 'v-cheese',
+            unitPricePaise: 5000,
+            quantity: 2,
+            lineTotalPaise: 10000,
+            productId: 'product-1',
+          ),
+          OrderItem(
+            productName: 'Maggi',
+            unitPricePaise: 5000,
+            quantity: 1,
+            lineTotalPaise: 5000,
+            productId: 'product-1',
+          ),
+        ],
+      );
+
+      final snapshot = await _load(_container(orders: orders));
+      expect(snapshot.itemBreakdown.map((r) => r.displayName).toList(), [
+        'Maggi — Cheese',
+        'Maggi',
+      ]);
+      expect(snapshot.itemBreakdown.first.unitsSold, 2);
+      expect(snapshot.itemBreakdown.first.revenuePaise, 10000);
+    });
+
+    test('shopLabels stay empty in single-shop reads', () async {
+      final snapshot = await _load(_container());
+      expect(snapshot.shopLabels, isEmpty);
+    });
+
+    test('combined view labels each bill shop', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'R-1',
+        createdAt: DateTime.now().toUtc(),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 30000,
+        items: [_item('Chai', price: 30000)],
+        shopId: 'shop-1',
+      );
+      final container = _container(orders: orders);
+      await container
+          .read(businessSwitcherProvider.notifier)
+          .select(BusinessContext.all);
+
+      final snapshot = await _load(container);
+      expect(snapshot.shopLabels['shop-1'], 'Cafe');
+      expect(snapshot.rangeOrders.map((o) => o.receiptNumber).toList(), [
+        'R-1',
+      ]);
     });
   });
 

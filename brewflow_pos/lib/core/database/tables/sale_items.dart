@@ -84,4 +84,12 @@ class SaleItems extends Table {
   TextColumn get appliedOfferType => text().nullable().customConstraint(
     "CHECK (applied_offer_type IS NULL OR applied_offer_type IN ('PERCENTAGE','COMBO','BUY_X_GET_Y','QUANTITY_TIER'))",
   )();
+
+  /// What this line consumed, as a JSON array snapshot written at sale time:
+  /// `[{"ip": ingredient product id, "iv": ingredient variant id or null,
+  /// "q": units consumed per ONE unit sold}]`. NULL for unmapped lines and
+  /// for sales that predate snapshots. A void restores exactly this (times
+  /// the line quantity) instead of re-reading the live recipe mapping, so
+  /// later edits, clears and remaps can never corrupt the restore.
+  TextColumn get consumed => text().nullable()();
 }

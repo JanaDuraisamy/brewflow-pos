@@ -618,6 +618,7 @@ final class SaleItem {
     this.appliedOfferId,
     this.appliedOfferName,
     this.appliedOfferType,
+    this.consumed,
   });
 
   final String id;
@@ -642,6 +643,14 @@ final class SaleItem {
   final String? appliedOfferId;
   final String? appliedOfferName;
   final OfferType? appliedOfferType;
+
+  /// JSON snapshot of what this line consumed, written at sale time:
+  /// `[{"ip": ingredient product id, "iv": ingredient variant id or null,
+  /// "q": units consumed per ONE unit sold}]`. NULL for unmapped lines and
+  /// for sales that predate snapshots. A void restores exactly this (× line
+  /// quantity) instead of re-reading the live recipe mapping, so later edits,
+  /// clears and remaps can never corrupt the restore.
+  final String? consumed;
 }
 
 /// Result of a successfully completed checkout.

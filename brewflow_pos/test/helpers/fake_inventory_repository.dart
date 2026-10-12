@@ -554,6 +554,7 @@ final class FakeInventoryRepository implements InventoryRepository {
   }) async {
     _throwIfLoadError();
     final menu = _requireProduct(productId);
+    final resolvedShop = shopId ?? menu.shopId ?? unscopedShopIdFallback;
     if (variantId != null && !menu.variants.any((v) => v.id == variantId)) {
       throw const UnexpectedInventoryFailure(
         'This variant is not part of the product.',
@@ -576,6 +577,11 @@ final class FakeInventoryRepository implements InventoryRepository {
           'Recipe ingredients must track stock.',
         );
       }
+      // Mirrors the Drift repository: only same-shop or shared-catalog
+      // (null-owner) ingredients may feed a recipe in this scope. Our
+      // resolved scope is always non-null in practice (the fallback defaults
+      // to a concrete shop), but the exotic null config skips the gate.
+      if (resolvedShop != null) _requireOwnedBy(ingredient, [resolvedShop]);
       if (input.ingredientVariantId != null &&
           !ingredient.variants.any((v) => v.id == input.ingredientVariantId)) {
         throw const UnexpectedInventoryFailure(
@@ -583,16 +589,34 @@ final class FakeInventoryRepository implements InventoryRepository {
         );
       }
     }
+    // Overlap rejection mirroring the Drift repository (the controller also
+    // validates first): product-level and variant-specific scopes cannot
+    // coexist. Clearing this scope (empty list) is exempt.
+    final conflicting = storedRecipes
+        .where(
+          (row) =>
+              row.productId == productId &&
+              row.variantId != variantId &&
+              (row.shopId ?? unscopedShopIdFallback) == resolvedShop,
+        )
+        .toList();
+    if (ingredients.isNotEmpty && conflicting.isNotEmpty) {
+      throw RecipeOverlapFailure(
+        variantId == null
+            ? '$productId already has a recipe for a variant. Clear the '
+                  'variant recipe first, or edit that variant.'
+            : '$productId already has a recipe for every variant. Clear it '
+                  'first, or edit every variant.',
+      );
+    }
     // Replace semantics mirroring the Drift repository: the scope's rows go
     // first, then the new mapping — an empty list clears it.
     storedRecipes.removeWhere(
       (row) =>
           row.productId == productId &&
           row.variantId == variantId &&
-          (row.shopId ?? unscopedShopIdFallback) ==
-              (shopId ?? unscopedShopIdFallback),
+          (row.shopId ?? unscopedShopIdFallback) == resolvedShop,
     );
-    final resolvedShop = shopId ?? menu.shopId ?? unscopedShopIdFallback;
     final now = DateTime.now().toUtc();
     for (final input in ingredients) {
       storedRecipes.add(

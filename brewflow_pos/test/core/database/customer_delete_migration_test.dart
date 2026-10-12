@@ -160,6 +160,28 @@ Future<List<Map<String, Object?>>> _snapshot(
   return [for (final row in rows) row.data];
 }
 
+/// Asserts every column the fixture captured survives unchanged, matching the
+/// snapshot by identity of content rather than by an exact column set. The
+/// migrator runs the whole remaining chain to the live schema, so a later
+/// *additive* step (e.g. `sale_items.consumed` at v35) may append a column to a
+/// ledger table; that is not the customer migration's doing and is ignored.
+void _expectPreserved(
+  List<Map<String, Object?>> before,
+  List<Map<String, Object?>> after, {
+  required String reason,
+}) {
+  expect(after, hasLength(before.length), reason: reason);
+  for (var i = 0; i < before.length; i++) {
+    for (final entry in before[i].entries) {
+      expect(
+        after[i][entry.key],
+        entry.value,
+        reason: '$reason (column ${entry.key})',
+      );
+    }
+  }
+}
+
 Future<String> _ddl(GeneratedDatabase db, String table) async {
   final row = await db
       .customSelect(
@@ -435,9 +457,9 @@ void main() {
     );
 
     for (final table in _ledgerTables) {
-      expect(
+      _expectPreserved(
+        fixture.before[table]!,
         await _snapshot(db, table),
-        fixture.before[table],
         reason: '$table changed during the wired migration',
       );
     }

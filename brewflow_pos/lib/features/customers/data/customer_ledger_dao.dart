@@ -1,4 +1,6 @@
 import 'package:brewflow_pos/core/database/app_database.dart';
+import 'package:brewflow_pos/features/billing/domain/billing_models.dart'
+    hide Sale;
 import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart'
     hide CustomerPayment;
 import 'package:drift/drift.dart';
@@ -250,6 +252,63 @@ final class CustomerLedgerDao {
       )
       ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
     return query.get();
+  }
+
+  /// Valid due-collection payments recorded inside one window, newest first.
+  ///
+  /// Reads the `customer_payments` ledger only: new-sale money (`sales` /
+  /// `sale_payments`) never appears here by construction. Only non-reversed
+  /// rows count (voided bills carry reversed payments, so they drop out).
+  /// Payments on opening-balance entries count — they settle real debt.
+  ///
+  /// [fromUtc]/[toUtc] (both inclusive, UTC) bound the rows by their own
+  /// `paidAt` collection instant, not the bill's `createdAt`. [shopIds]
+  /// restricts the scan to the given businesses on the payment row's own
+  /// `shopId`; null scans everything locally, while a non-null (notably
+  /// empty) scope is fail-closed and yields no rows.
+  Future<List<DueCollection>> dueCollections({
+    List<String>? shopIds,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+  }) async {
+    if (shopIds != null && shopIds.isEmpty) return const [];
+    final query = _db.select(_db.customerPayments)
+      ..where(
+        (t) =>
+            t.reversed.equals(false) &
+            (fromUtc != null
+                ? t.paidAt.isBiggerOrEqualValue(fromUtc)
+                : const Constant(true)) &
+            (toUtc != null
+                ? t.paidAt.isSmallerOrEqualValue(toUtc)
+                : const Constant(true)) &
+            (shopIds != null ? t.shopId.isIn(shopIds) : const Constant(true)),
+      )
+      ..orderBy([
+        (t) => OrderingTerm.desc(t.paidAt),
+        (t) => OrderingTerm.desc(t.createdAt),
+      ]);
+    final rows = await query.get();
+    if (rows.isEmpty) return const [];
+    final customerIds = rows.map((row) => row.customerId).toSet().toList();
+    final customers = await (_db.select(
+      _db.customers,
+    )..where((t) => t.id.isIn(customerIds))).get();
+    final nameById = {for (final c in customers) c.id: c.name};
+    return [
+      for (final row in rows)
+        DueCollection(
+          id: row.id,
+          customerId: row.customerId,
+          customerName: nameById[row.customerId] ?? 'Deleted customer',
+          saleId: row.saleId!,
+          amountPaise: row.amountPaise,
+          paymentMethod: PaymentMethod.fromDbValue(row.paymentMethod)!,
+          note: row.note,
+          paidAt: row.paidAt,
+          shopId: row.shopId,
+        ),
+    ];
   }
 
   /// Every payment row sharing one [paymentGroupId] (in creation order).

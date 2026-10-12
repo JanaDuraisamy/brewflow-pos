@@ -9,14 +9,12 @@ import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
-import 'package:brewflow_pos/features/inventory/presentation/food_truck_stock_sheet.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/product_thumbnail.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_adjustment_dialog.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_history_page.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
-import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -131,16 +129,26 @@ final class InventoryPage extends ConsumerWidget {
   }
 }
 
-final class _HeaderActions extends StatelessWidget {
+final class _HeaderActions extends ConsumerWidget {
   const _HeaderActions();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // The shared-stock overview is owner-only: recipe mappings reveal costing
+    // structure, so staff never see the entry point (the route itself stays
+    // behind the inventory permission guard).
+    final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
     return Wrap(
       spacing: AppSpacing.md,
       runSpacing: AppSpacing.sm,
       alignment: WrapAlignment.end,
       children: [
+        if (isOwner)
+          OutlinedButton.icon(
+            onPressed: () => context.push(AppRoutes.inventoryRecipes),
+            icon: const Icon(Icons.link_outlined),
+            label: const Text('Shared Stock'),
+          ),
         OutlinedButton.icon(
           onPressed: () => context.push(AppRoutes.inventoryCategories),
           icon: const Icon(Icons.category_outlined),
@@ -367,14 +375,19 @@ final class _BatchActionBar extends StatelessWidget {
 
 /// Phone header: title first with a compact "Select" entry for bulk mode,
 /// then a prominent full-width add action paired with the category management
-/// action as the secondary control.
-final class _MobileHeader extends StatelessWidget {
+/// action as the secondary control. Owners also get the Shared Stock entry
+/// below, mirroring [_HeaderActions]; staff never see it.
+final class _MobileHeader extends ConsumerWidget {
   const _MobileHeader({required this.onSelect});
 
   final VoidCallback onSelect;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Same owner gate as [_HeaderActions]: recipe mappings reveal costing
+    // structure, so staff never see the entry point. Defaults to false
+    // while the profile is still loading.
+    final isOwner = ref.watch(userProfileProvider).value?.isOwner ?? false;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -413,6 +426,15 @@ final class _MobileHeader extends StatelessWidget {
             ),
           ],
         ),
+        if (isOwner) ...[
+          const SizedBox(height: AppSpacing.sm),
+          SecondaryButton(
+            label: 'Shared Stock',
+            icon: Icons.link_outlined,
+            expanded: true,
+            onPressed: () => context.push(AppRoutes.inventoryRecipes),
+          ),
+        ],
       ],
     );
   }
@@ -861,7 +883,7 @@ final class _ProductTable extends ConsumerWidget {
                   icon: const Icon(Icons.swap_vert),
                   color: context.appColors.textSecondary,
                   onPressed: () =>
-                      _showAdjustStockDialog(context, ref, product),
+                      showStockAdjustmentDialog(context, ref, product),
                 ),
               ),
             ],
@@ -978,7 +1000,7 @@ final class _ProductCard extends ConsumerWidget {
                   ),
                   color: context.appColors.textSecondary,
                   onPressed: () =>
-                      _showAdjustStockDialog(context, ref, product),
+                      showStockAdjustmentDialog(context, ref, product),
                 ),
                 IconButton(
                   tooltip: 'Edit product',
@@ -1194,7 +1216,7 @@ final class _MobileProductCard extends ConsumerWidget {
                   visualDensity: VisualDensity.compact,
                   color: appColors.textSecondary,
                   onPressed: () =>
-                      _showAdjustStockDialog(context, ref, product),
+                      showStockAdjustmentDialog(context, ref, product),
                 ),
             ],
           ),
@@ -1358,7 +1380,7 @@ final class _VariantsTile extends ConsumerWidget {
                       icon: const Icon(Icons.swap_vert, size: 18),
                       visualDensity: VisualDensity.compact,
                       color: context.appColors.textSecondary,
-                      onPressed: () => _showAdjustStockDialog(
+                      onPressed: () => showStockAdjustmentDialog(
                         context,
                         ref,
                         product,
@@ -1498,89 +1520,6 @@ String _stockCellText(Product product) {
       : '${product.stockQuantity} $unit';
 }
 
-/// Opens the stock editor for [product] in the active business.
-///
-/// The two businesses keep separate stock, so the editor has to route: a Cafe
-/// product adjust writes `products.stock_quantity`, while a product the Cafe
-/// shares into the Food Truck has no truck stock of its own and must be edited
-/// through the `shop_product_stock` overlay instead. Sending a shared product
-/// down the Cafe path is how a truck adjustment would silently move the Cafe's
-/// shelf, so the routing is explicit rather than inferred from the UI.
-///
-/// Fails closed whenever no single concrete shop can be named, because a stock
-/// write is a movement row plus a quantity update and both are irreversible
-/// from the user's point of view:
-///
-///  * `BusinessContext.all` is a read-only view spanning two independent
-///    shelves. There is no correct shelf to write, so guessing Cafe would move
-///    the Cafe's stock on a tap the user made while looking at both.
-///  * Food Truck with no persisted truck id has no shelf to move. Falling
-///    through to the Cafe path would let a truck action edit Cafe stock.
-Future<void> _showAdjustStockDialog(
-  BuildContext context,
-  WidgetRef ref,
-  Product product, {
-  ProductVariant? variant,
-}) async {
-  final switcher = ref.read(businessSwitcherProvider.notifier);
-  final business = ref.watch(businessSwitcherProvider);
-  if (business == BusinessContext.all) {
-    _showAmbiguousScopeNotice(context);
-    return;
-  }
-  if (business == BusinessContext.foodTruck) {
-    final truckShopId = await switcher.existingFoodTruckShopId();
-    if (truckShopId == null) {
-      // No persisted truck: there is no Food Truck shelf to move, and the Cafe
-      // path would write the wrong business. Refuse rather than guess.
-      _showAmbiguousScopeNotice(context);
-      return;
-    }
-    // A product the truck owns outright edits its own stock row, exactly like
-    // the Cafe. Only a shared product needs the overlay editor.
-    if (product.shopId == truckShopId) {
-      if (!context.mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (_) =>
-            StockAdjustmentDialog(product: product, variant: variant),
-      );
-      return;
-    }
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (_) => FoodTruckStockDialog(
-        shopId: truckShopId,
-        product: product,
-        variant: variant,
-      ),
-    );
-    return;
-  }
-  if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (_) => StockAdjustmentDialog(product: product, variant: variant),
-  );
-}
-
-/// Explains, in the user's own terms, why stock cannot be edited right now.
-///
-/// Deliberately not an error dialog: nothing failed, and the fix is on screen
-/// already (pick the single business, or let the Food Truck finish setting up).
-void _showAmbiguousScopeNotice(BuildContext context) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text(
-        'Pick a single business to adjust stock. The All businesses view is '
-        'read-only, and stock is kept separately for the Cafe and the '
-        'Food Truck.',
-      ),
-    ),
-  );
-}
-
 /// Long-press context menu for a product card: quick, safe access to editing,
 /// stock adjustment and activate/deactivate without hunting through the page.
 void _showProductActions(BuildContext context, WidgetRef ref, Product product) {
@@ -1597,7 +1536,7 @@ void _showProductActions(BuildContext context, WidgetRef ref, Product product) {
       ContextMenuItem(
         icon: Icons.swap_vert,
         label: 'Adjust Stock',
-        onTap: () => _showAdjustStockDialog(context, ref, product),
+        onTap: () => showStockAdjustmentDialog(context, ref, product),
       ),
       ContextMenuItem(
         icon: product.isActive

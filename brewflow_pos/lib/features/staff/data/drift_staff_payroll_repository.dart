@@ -1205,17 +1205,27 @@ final class DriftStaffPayrollRepository implements StaffPayrollRepository {
               outAt: Value(shift.outAt),
               attendanceDate: Value(shift.attendanceDate),
               workedMinutes: Value(shift.workedMinutes),
+              // A Leave row is a day-level state: the cross-device pull must
+              // carry the flag over, or a peer that has not yet applied the
+              // sync-engine page would render the day as a 0-hour worked
+              // shift instead of "On Leave".
+              isLeave: Value(shift.isLeave),
+              leaveReason: Value(shift.leaveReason),
             ),
           );
       return;
     }
-    // Cloud wins on conflicts (authoritative): refresh mutable columns.
+    // Cloud wins on conflicts (authoritative): refresh mutable columns,
+    // including Leave state and reason — a leave added or cleared on another
+    // device must appear here on the next read.
     await (_db.update(
       _db.staffAttendance,
     )..where((t) => t.id.equals(shift.id))).write(
       StaffAttendanceCompanion(
         outAt: Value(shift.outAt),
         workedMinutes: Value(shift.workedMinutes),
+        isLeave: Value(shift.isLeave),
+        leaveReason: Value(shift.leaveReason),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );

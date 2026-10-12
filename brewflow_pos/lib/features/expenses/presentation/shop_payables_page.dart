@@ -6,6 +6,7 @@ import 'package:brewflow_pos/core/theme/app_theme_colors.dart';
 import 'package:brewflow_pos/core/utils/dates.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/expenses/data/upi_app_launcher.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
 import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.dart';
@@ -14,7 +15,6 @@ import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 /// ---------------------------------------------------------------------------
@@ -225,12 +225,57 @@ final class _PayPayableSheet extends ConsumerStatefulWidget {
   ConsumerState<_PayPayableSheet> createState() => _PayPayableSheetState();
 }
 
-final class _PayPayableSheetState extends ConsumerState<_PayPayableSheet> {
+final class _PayPayableSheetState extends ConsumerState<_PayPayableSheet>
+    with WidgetsBindingObserver {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _amount;
   final _note = TextEditingController();
   PaymentMethod _method = PaymentMethod.cash;
   bool _saving = false;
+
+  /// Installed UPI apps; null until discovery finishes for the current UPI
+  /// selection. The cache survives amount edits (the device set cannot
+  /// change with the amount), but any edit resets the handoff below.
+  List<UpiAppInfo>? _upiApps;
+  bool _upiAppsLoading = false;
+  String? _upiAppsError;
+  String? _selectedUpiPackage;
+  bool _launching = false;
+  String? _upiLaunchError;
+
+  /// Launch → return → confirm lifecycle. In-memory only: a killed process
+  /// loses all of it, so a stale confirmation can never be restored.
+  bool _upiLaunched = false;
+  bool _upiReturned = false;
+  bool _upiConfirmed = false;
+
+  /// A failed launch falls back to the existing manual record workflow
+  /// instead of blocking the payment.
+  bool _upiManualFallback = false;
+
+  /// Whether recording a UPI payment needs the manual checkbox: only when
+  /// real apps were discovered and no fallback is active. An empty app list
+  /// (or a failed launch) keeps the existing direct record flow.
+  bool get _upiNeedsConfirmation =>
+      _method == PaymentMethod.upi &&
+      !_upiManualFallback &&
+      _upiApps != null &&
+      _upiApps!.isNotEmpty;
+
+  /// The checkbox appears only after a launch followed by a resume — never
+  /// on UPI selection alone, and never as proof of payment.
+  bool get _upiShowCheckbox =>
+      _upiNeedsConfirmation && _upiLaunched && _upiReturned;
+
+  String? get _selectedUpiName {
+    final apps = _upiApps;
+    final package = _selectedUpiPackage;
+    if (apps == null || package == null) return null;
+    for (final app in apps) {
+      if (app.packageName == package) return app.displayName;
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -240,13 +285,280 @@ final class _PayPayableSheetState extends ConsumerState<_PayPayableSheet> {
     _amount = TextEditingController(
       text: Money.paiseToRupeesInput(widget.payable.remainingPaise),
     );
+    _amount.addListener(_onAmountChanged);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _amount.removeListener(_onAmountChanged);
     _amount.dispose();
     _note.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The ONLY thing a resume proves is that the owner came back. It never
+    // implies the payment succeeded — it merely reveals the checkbox so the
+    // owner can attest manually. Repeated resumes change nothing further.
+    if (state == AppLifecycleState.resumed &&
+        _upiLaunched &&
+        !_upiReturned &&
+        mounted) {
+      setState(() => _upiReturned = true);
+    }
+  }
+
+  void _onAmountChanged() {
+    // A new amount invalidates any in-flight UPI handoff (the launched app
+    // saw the old amount): confirmation starts over. The discovered app
+    // list is device state and stays cached.
+    if (_upiLaunched ||
+        _upiReturned ||
+        _upiConfirmed ||
+        _upiManualFallback ||
+        _upiLaunchError != null) {
+      setState(() {
+        _upiLaunched = false;
+        _upiReturned = false;
+        _upiConfirmed = false;
+        _upiManualFallback = false;
+        _upiLaunchError = null;
+      });
+    }
+  }
+
+  void _onMethodChanged(PaymentMethod? value) {
+    if (value == null || value == _method) return;
+    setState(() {
+      _method = value;
+      _upiApps = null;
+      _upiAppsLoading = false;
+      _upiAppsError = null;
+      _selectedUpiPackage = null;
+      _launching = false;
+      _upiLaunchError = null;
+      _upiLaunched = false;
+      _upiReturned = false;
+      _upiConfirmed = false;
+      _upiManualFallback = false;
+    });
+    if (value == PaymentMethod.upi) _loadUpiApps();
+  }
+
+  Future<void> _loadUpiApps() async {
+    setState(() {
+      _upiAppsLoading = true;
+      _upiAppsError = null;
+    });
+    try {
+      final apps = await ref.read(upiAppLauncherProvider).installedUpiApps();
+      if (!mounted || _method != PaymentMethod.upi) return;
+      setState(() {
+        _upiAppsLoading = false;
+        _upiApps = apps;
+      });
+    } on UpiLauncherException catch (error) {
+      if (!mounted || _method != PaymentMethod.upi) return;
+      setState(() {
+        _upiAppsLoading = false;
+        _upiAppsError = error.message;
+        _upiApps = const [];
+      });
+    }
+  }
+
+  Future<void> _launchUpiApp() async {
+    if (!_formKey.currentState!.validate()) return;
+    final package = _selectedUpiPackage;
+    if (package == null || _launching || _saving) return;
+    setState(() {
+      _launching = true;
+      _upiLaunchError = null;
+    });
+    try {
+      final note = _note.text.trim();
+      await ref
+          .read(upiAppLauncherProvider)
+          .launchUpiApp(
+            packageName: package,
+            amountRupees: _amount.text.trim(),
+            note: note.isEmpty ? widget.payable.payeeName : note,
+          );
+      if (!mounted) return;
+      setState(() {
+        _launching = false;
+        // A fresh launch supersedes any earlier return or fallback: the
+        // owner must come back again and confirm again.
+        _upiLaunched = true;
+        _upiReturned = false;
+        _upiConfirmed = false;
+        _upiManualFallback = false;
+      });
+    } on UpiLauncherException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _launching = false;
+        _upiLaunchError = error.message;
+        // The app could not be opened, so no return can follow: keep the
+        // existing manual record workflow instead of blocking.
+        _upiManualFallback = true;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _launching = false;
+        _upiLaunchError = 'Could not open the selected UPI app.';
+        _upiManualFallback = true;
+      });
+    }
+  }
+
+  void _onUpiAppChanged(String? package) {
+    setState(() {
+      _selectedUpiPackage = package;
+      // A different app means a different handoff: start over.
+      _upiLaunched = false;
+      _upiReturned = false;
+      _upiConfirmed = false;
+      _upiManualFallback = false;
+      _upiLaunchError = null;
+    });
+  }
+
+  bool get _canLaunch => _selectedUpiPackage != null && !_launching && !_saving;
+
+  /// Record is available immediately for Cash (and for the UPI manual
+  /// fallback); a launched UPI handoff additionally requires the owner's
+  /// manual confirmation.
+  bool get _recordEnabled {
+    if (_saving) return false;
+    if (_upiNeedsConfirmation && !_upiConfirmed) return false;
+    return true;
+  }
+
+  Widget _buildUpiSection() {
+    final textTheme = Theme.of(context).textTheme;
+    if (_upiAppsLoading) {
+      return Row(
+        children: [
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              'Finding UPI apps…',
+              style: textTheme.bodySmall?.copyWith(
+                color: context.appColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    if (_upiAppsError != null) {
+      return Text(
+        '${_upiAppsError!} Pay in your UPI app, then record the payment '
+        'here manually.',
+        style: textTheme.bodySmall?.copyWith(color: AppColors.error),
+      );
+    }
+    final apps = _upiApps ?? const <UpiAppInfo>[];
+    if (apps.isEmpty) {
+      return Text(
+        'No UPI apps found on this device. Pay in your UPI app, then record '
+        'the payment here manually.',
+        style: textTheme.bodySmall?.copyWith(
+          color: context.appColors.textSecondary,
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: _selectedUpiPackage,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'UPI app *',
+            border: OutlineInputBorder(),
+          ),
+          hint: const Text('Select a UPI app'),
+          items: [
+            for (final app in apps)
+              DropdownMenuItem(
+                value: app.packageName,
+                child: Text(app.displayName),
+              ),
+          ],
+          onChanged: _saving ? null : _onUpiAppChanged,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _canLaunch ? _launchUpiApp : null,
+            icon: const Icon(Icons.open_in_new, size: 18),
+            label: Text(_launching ? 'Opening…' : 'Open UPI app'),
+          ),
+        ),
+        if (_upiLaunchError != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            '${_upiLaunchError!} You can still record the payment manually '
+            'after paying.',
+            style: textTheme.bodySmall?.copyWith(color: AppColors.error),
+          ),
+        ],
+        if (_upiLaunched && !_upiReturned) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 18,
+                color: context.appColors.textSecondary,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  'Opened ${_selectedUpiName ?? 'the UPI app'}. Complete the '
+                  'payment there, then return to BrewFlow to confirm and '
+                  'record it here.',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (_upiShowCheckbox) ...[
+          const SizedBox(height: AppSpacing.sm),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(
+              'I confirm I completed this payment in the UPI app. BrewFlow '
+              'has not verified the payment.',
+              style: textTheme.bodySmall?.copyWith(
+                color: context.appColors.textPrimary,
+              ),
+            ),
+            value: _upiConfirmed,
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _upiConfirmed = value ?? false),
+          ),
+        ],
+      ],
+    );
   }
 
   Future<void> _submit() async {
@@ -361,10 +673,12 @@ final class _PayPayableSheetState extends ConsumerState<_PayPayableSheet> {
                       child: Text(paymentMethodLabel(method)),
                     ),
                 ],
-                onChanged: (value) {
-                  if (value != null) setState(() => _method = value);
-                },
+                onChanged: _saving ? null : _onMethodChanged,
               ),
+              if (_method == PaymentMethod.upi) ...[
+                const SizedBox(height: AppSpacing.lg),
+                _buildUpiSection(),
+              ],
               const SizedBox(height: AppSpacing.lg),
               TextFormField(
                 controller: _note,
@@ -380,15 +694,19 @@ final class _PayPayableSheetState extends ConsumerState<_PayPayableSheet> {
               Row(
                 children: [
                   Expanded(
+                    // Navigator pop (not the router): this sheet is a plain
+                    // modal route and must close without a GoRouter ancestor.
                     child: OutlinedButton(
-                      onPressed: _saving ? null : () => context.pop(),
+                      onPressed: _saving
+                          ? null
+                          : () => Navigator.of(context).pop(),
                       child: const Text('Cancel'),
                     ),
                   ),
                   const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: FilledButton(
-                      onPressed: _saving ? null : _submit,
+                      onPressed: _recordEnabled ? _submit : null,
                       child: _saving
                           ? const SizedBox(
                               width: 18,

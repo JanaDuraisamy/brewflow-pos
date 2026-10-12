@@ -779,6 +779,7 @@ final class SyncSaleItem {
     this.appliedOfferId,
     this.appliedOfferName,
     this.appliedOfferType,
+    this.consumed,
   });
 
   factory SyncSaleItem.fromJson(Map<String, dynamic> json) => SyncSaleItem(
@@ -798,6 +799,8 @@ final class SyncSaleItem {
     appliedOfferId: json['appliedOfferId'] as String?,
     appliedOfferName: json['appliedOfferName'] as String?,
     appliedOfferType: json['appliedOfferType'] as String?,
+    // Tolerant: rows written before the consumption snapshot carry null.
+    consumed: json['consumed'] as String?,
   );
 
   final String id;
@@ -821,6 +824,11 @@ final class SyncSaleItem {
   final String? appliedOfferName;
   final String? appliedOfferType;
 
+  /// Per-line consumption snapshot written at sale time: a JSON array
+  /// (possibly `[]`) of `{ip, iv?, q}`, or null when unknown/legacy. Drives a
+  /// faithful void restore on every device.
+  final String? consumed;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'shopId': shopId,
@@ -837,6 +845,7 @@ final class SyncSaleItem {
     'appliedOfferId': appliedOfferId,
     'appliedOfferName': appliedOfferName,
     'appliedOfferType': appliedOfferType,
+    'consumed': consumed,
   };
 }
 

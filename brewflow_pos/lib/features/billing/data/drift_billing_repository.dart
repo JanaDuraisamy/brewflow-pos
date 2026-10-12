@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:brewflow_pos/config/constants.dart';
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
@@ -387,24 +388,47 @@ final class DriftBillingRepository implements BillingRepository {
       );
     }
 
+    // Capture each line's consumption snapshot BEFORE the RPC, from the live
+    // recipe mapping, and send it with the sale so the server stores exactly
+    // what was consumed. A void can then restore it even if the mapping is
+    // later edited/cleared/remapped. `[]` = known no ingredients (own stock
+    // may still be tracked); NULL can only be a failed read (see
+    // [_consumptionSnapshots] — the try always encodes a value).
+    final consumedSnapshots = await _consumptionSnapshots(lines, shopId);
+    // A failed snapshot read would persist this line as consumed = NULL, so a
+    // later void could not prove what to restore (the server sees NULL as
+    // "legacy/unknown"). If any line's snapshot did not load, reject the whole
+    // sale BEFORE the RPC — never commit a sale with incomplete history. The
+    // cart is preserved by the controller so the cashier can retry. A valid
+    // empty snapshot (`[]`) is non-null and passes this guard untouched.
+    if (consumedSnapshots.any((snapshot) => snapshot == null)) {
+      throw const UnexpectedBillingFailure(
+        'Could not read the sale history. Please try again.',
+      );
+    }
     final rpcLines = [
-      for (final line in lines)
+      for (var i = 0; i < lines.length; i++)
         {
-          'product_id': line.productId,
-          'variant_id': line.variantId,
-          'product_name': line.productName,
-          'variant_name': line.variantName,
-          'sku': line.sku,
-          'unit_price_paise': line.unitPricePaise,
-          'quantity': line.quantity,
+          'product_id': lines[i].productId,
+          'variant_id': lines[i].variantId,
+          'product_name': lines[i].productName,
+          'variant_name': lines[i].variantName,
+          'sku': lines[i].sku,
+          'unit_price_paise': lines[i].unitPricePaise,
+          'quantity': lines[i].quantity,
           'line_total_paise': Money.multiplyPaise(
-            line.unitPricePaise,
-            line.quantity,
+            lines[i].unitPricePaise,
+            lines[i].quantity,
           )!,
-          'offer_discount_paise': line.appliedOffer?.discountPaise ?? 0,
-          'applied_offer_id': line.appliedOffer?.offerId,
-          'applied_offer_name': line.appliedOffer?.offerName,
-          'applied_offer_type': line.appliedOffer?.offerType.wire,
+          'offer_discount_paise': lines[i].appliedOffer?.discountPaise ?? 0,
+          'applied_offer_id': lines[i].appliedOffer?.offerId,
+          'applied_offer_name': lines[i].appliedOffer?.offerName,
+          'applied_offer_type': lines[i].appliedOffer?.offerType.wire,
+          // Server column is jsonb, so send the decoded array (or null), not
+          // the JSON-encoded text the local TEXT column stores.
+          'consumed': consumedSnapshots[i] == null
+              ? null
+              : jsonDecode(consumedSnapshots[i]!),
         },
     ];
 
@@ -518,13 +542,35 @@ final class DriftBillingRepository implements BillingRepository {
 
     try {
       await _database.transaction(() async {
-        // Update stock locally to match server deduction (tracked only).
+        // Update stock locally to match server deduction. The server (0044)
+        // deducts recipe ingredients for mapped lines and own stock
+        // otherwise, so the mirror routes the same way: a mapped line
+        // accumulates its ingredients (aggregated across lines, like
+        // _checkoutCore) and never touches its own row — including NONE
+        // (made-to-order) dishes, whose packet the server now moves too.
         // Each line is best-effort: a missing local row (product not yet
         // synced) or a stock-unit mismatch never blocks the sale or the
         // remaining lines. The server RPC is authoritative for stock; local
         // reconciliation happens via sync pull.
+        final recipeNeeds = <(String, String?), int>{};
         for (final line in lines) {
           try {
+            final recipes = await _recipesForSaleLine(
+              productId: line.productId,
+              variantId: line.variantId,
+              shopId: shopId,
+            );
+            if (recipes.isNotEmpty) {
+              for (final recipe in recipes) {
+                final key = (
+                  recipe.ingredientProductId,
+                  recipe.ingredientVariantId,
+                );
+                recipeNeeds[key] =
+                    (recipeNeeds[key] ?? 0) + recipe.quantity * line.quantity;
+              }
+              continue;
+            }
             final isTracked = await _isTracked(line.productId);
             if (!isTracked) continue;
             int updated = 0;
@@ -588,6 +634,73 @@ final class DriftBillingRepository implements BillingRepository {
           }
         }
 
+        // Mirror the aggregated ingredient deductions the server committed,
+        // in the same unconditional best-effort style as the own-stock
+        // mirror above (the server already guarded atomically).
+        for (final entry in recipeNeeds.entries) {
+          try {
+            final (ingredientProductId, ingredientVariantId) = entry.key;
+            final need = entry.value;
+            final int updated;
+            if (ingredientVariantId != null) {
+              updated = await _database.customUpdate(
+                'UPDATE product_variants SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+                variables: [
+                  Variable.withInt(need),
+                  Variable.withString(createdAt.toIso8601String()),
+                  Variable.withString(ingredientVariantId),
+                ],
+                updateKind: UpdateKind.update,
+              );
+            } else {
+              updated = await _database.customUpdate(
+                'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+                variables: [
+                  Variable.withInt(need),
+                  Variable.withString(createdAt.toIso8601String()),
+                  Variable.withString(ingredientProductId),
+                ],
+                updateKind: UpdateKind.update,
+              );
+            }
+            if (updated == 0) {
+              // Ingredient row not found locally — skip movement; sync pull
+              // will bring the server-decremented stock on the next cycle.
+              AppLog.info(
+                'Local stock mirror skipped (ingredient not found locally): $ingredientProductId',
+                tag: tag,
+              );
+              continue;
+            }
+            final after = await _ingredientStockAfter(
+              ingredientProductId,
+              ingredientVariantId,
+            );
+            movementsToInsert.add(
+              db.StockMovementsCompanion.insert(
+                shopId: Value(shopId),
+                productId: ingredientProductId,
+                variantId: Value(ingredientVariantId),
+                movementType: StockMovementType.sale.dbValue,
+                quantity: -need,
+                stockBefore: after + need,
+                stockAfter: after,
+                referenceType: Value(StockMovementType.sale.dbValue),
+                referenceId: Value(saleId),
+                createdAt: Value(createdAt),
+                updatedAt: Value(createdAt),
+              ),
+            );
+          } catch (error, stackTrace) {
+            AppLog.warning(
+              'Local stock mirror failed for ingredient ${entry.key.$1}',
+              tag: tag,
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
+        }
+
         await _database
             .into(_database.sales)
             .insert(
@@ -611,6 +724,11 @@ final class DriftBillingRepository implements BillingRepository {
                 updatedAt: Value(createdAt),
               ),
             );
+
+        // The snapshot was captured before the RPC (consumedSnapshots) and sent
+        // to the server; mirror the exact same values locally so a local void
+        // restores identically.
+        final consumedByItem = consumedSnapshots;
 
         for (var i = 0; i < lines.length; i++) {
           final line = lines[i];
@@ -639,6 +757,7 @@ final class DriftBillingRepository implements BillingRepository {
                   appliedOfferId: Value(line.appliedOffer?.offerId),
                   appliedOfferName: Value(line.appliedOffer?.offerName),
                   appliedOfferType: Value(line.appliedOffer?.offerType.wire),
+                  consumed: Value(consumedByItem[i]),
                 ),
               );
           saleItems.add(
@@ -660,6 +779,7 @@ final class DriftBillingRepository implements BillingRepository {
               appliedOfferId: line.appliedOffer?.offerId,
               appliedOfferName: line.appliedOffer?.offerName,
               appliedOfferType: line.appliedOffer?.offerType,
+              consumed: consumedByItem[i],
             ),
           );
         }
@@ -717,6 +837,10 @@ final class DriftBillingRepository implements BillingRepository {
             appliedOfferId: line.appliedOffer?.offerId,
             appliedOfferName: line.appliedOffer?.offerName,
             appliedOfferType: line.appliedOffer?.offerType,
+            // The fallback carries no snapshot (the lines list has no recipe
+            // state); the void falls back to the recorded SALE movements, which
+            // are local on this device.
+            consumed: null,
           ),
         );
       }
@@ -725,12 +849,77 @@ final class DriftBillingRepository implements BillingRepository {
     return CompletedSale(sale: sale, items: saleItems);
   }
 
+  /// Captures each line's consumption snapshot from the live recipe mapping.
+  /// Returns one entry per line: a JSON array (possibly `[]` for a line with
+  /// no recipe rows) or null when the read failed. Null is a failed read, not
+  /// a valid state for a new sale: the caller rejects the checkout so the sale
+  /// is never committed with an incomplete consumption history.
+  Future<List<String?>> _consumptionSnapshots(
+    List<CartLine> lines,
+    String shopId,
+  ) async {
+    final snapshots = <String?>[];
+    for (final line in lines) {
+      String? snapshot;
+      try {
+        final recipes = await _recipesForSaleLine(
+          productId: line.productId,
+          variantId: line.variantId,
+          shopId: shopId,
+        );
+        // Always encode: an empty list means "known no ingredients" (the
+        // line's own stock may still be tracked), which is distinct from the
+        // NULL returned when the read fails.
+        snapshot = jsonEncode([
+          for (final recipe in recipes)
+            {
+              'ip': recipe.ingredientProductId,
+              'iv': recipe.ingredientVariantId,
+              'q': recipe.quantity,
+            },
+        ]);
+      } catch (error, stackTrace) {
+        // The read failed, so the line's snapshot stays null. The caller
+        // (_completeSaleViaCloud) treats any null as a failed read and rejects
+        // the checkout before the RPC, so no sale is committed with a NULL
+        // (void-unrestorable) consumption snapshot.
+        AppLog.warning(
+          'Consumption snapshot skipped for line ${line.productId}',
+          tag: tag,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      snapshots.add(snapshot);
+    }
+    return snapshots;
+  }
+
   Future<bool> _isTracked(String productId) async {
     final row = await (_database.select(
       _database.products,
     )..where((t) => t.id.equals(productId))).getSingleOrNull();
     if (row == null) return false;
     return row.stockUnit != StockUnit.none.dbValue;
+  }
+
+  /// Stock level observed after the mirror deducted [need] units of one
+  /// shared ingredient. Missing rows read as 0 (the caller already skipped
+  /// the movement when the update matched nothing).
+  Future<int> _ingredientStockAfter(
+    String ingredientProductId,
+    String? ingredientVariantId,
+  ) async {
+    if (ingredientVariantId != null) {
+      final row = await (_database.select(
+        _database.productVariants,
+      )..where((t) => t.id.equals(ingredientVariantId))).getSingleOrNull();
+      return row?.stockQuantity ?? 0;
+    }
+    final row = await (_database.select(
+      _database.products,
+    )..where((t) => t.id.equals(ingredientProductId))).getSingleOrNull();
+    return row?.stockQuantity ?? 0;
   }
 
   Future<int> _localStockBefore(CartLine line) async {
@@ -807,6 +996,11 @@ final class DriftBillingRepository implements BillingRepository {
     final entitiesByKey = await _entitiesById(lines);
     final ordered = <({CartLine line, int lineTotal})>[];
     final movements = <db.StockMovementsCompanion>[];
+    // Per-line consumption snapshot captured from the live recipe mapping
+    // during this checkout, so a later void restores exactly what was
+    // consumed even if the mapping is edited, cleared or remapped afterwards.
+    // Indexed parallel to `ordered`; null for unmapped lines.
+    final consumedByLine = <String?>[];
     // Aggregated ingredient needs across ALL lines: one menu product can
     // appear on several lines (Plain + Cheese + Egg + Veg Maggi sharing one
     // Maggi Packet), so ingredients are deducted once per ingredient AFTER
@@ -937,6 +1131,20 @@ final class DriftBillingRepository implements BillingRepository {
       }
 
       ordered.add((line: line, lineTotal: lineTotal));
+      // Snapshot THIS line's recipe mapping (per line, never the sale-wide
+      // accumulator). An empty array `[]` is meaningful: the line consumed no
+      // ingredients, so a void restores its OWN stock when tracked. It is not
+      // NULL — NULL is reserved for "unknown" (legacy lines).
+      consumedByLine.add(
+        jsonEncode([
+          for (final row in recipeRows)
+            {
+              'ip': row.ingredientProductId,
+              'iv': row.ingredientVariantId,
+              'q': row.quantity,
+            },
+        ]),
+      );
 
       // One SALE movement per tracked line, inside the same transaction.
       // stockBefore is the level read at validation (the cart guarantees each
@@ -1110,25 +1318,28 @@ final class DriftBillingRepository implements BillingRepository {
 
     await _database.batch((batch) {
       batch.insertAll(_database.saleItems, [
-        for (final entry in ordered)
+        for (var i = 0; i < ordered.length; i++)
           db.SaleItemsCompanion.insert(
             id: Value(const Uuid().v4()),
             shopId: Value(shopId),
             saleId: saleId,
-            productId: entry.line.productId,
-            variantId: Value(entry.line.variantId),
-            productName: entry.line.productName,
-            variantName: Value(entry.line.variantName),
-            sku: Value(entry.line.sku),
-            unitPricePaise: entry.line.unitPricePaise,
-            quantity: entry.line.quantity,
-            lineTotalPaise: entry.lineTotal,
+            productId: ordered[i].line.productId,
+            variantId: Value(ordered[i].line.variantId),
+            productName: ordered[i].line.productName,
+            variantName: Value(ordered[i].line.variantName),
+            sku: Value(ordered[i].line.sku),
+            unitPricePaise: ordered[i].line.unitPricePaise,
+            quantity: ordered[i].line.quantity,
+            lineTotalPaise: ordered[i].lineTotal,
             offerDiscountPaise: Value(
-              entry.line.appliedOffer?.discountPaise ?? 0,
+              ordered[i].line.appliedOffer?.discountPaise ?? 0,
             ),
-            appliedOfferId: Value(entry.line.appliedOffer?.offerId),
-            appliedOfferName: Value(entry.line.appliedOffer?.offerName),
-            appliedOfferType: Value(entry.line.appliedOffer?.offerType.wire),
+            appliedOfferId: Value(ordered[i].line.appliedOffer?.offerId),
+            appliedOfferName: Value(ordered[i].line.appliedOffer?.offerName),
+            appliedOfferType: Value(
+              ordered[i].line.appliedOffer?.offerType.wire,
+            ),
+            consumed: Value(consumedByLine[i]),
           ),
       ]);
     });
@@ -1525,77 +1736,83 @@ final class DriftBillingRepository implements BillingRepository {
         throw const SaleAlreadyVoidedFailure();
       }
       final now = DateTime.now().toUtc();
-      final nowStr = now.toIso8601String();
       final items = await _saleItems.bySale(saleId);
+      final soldShopId = saleRow.shopId;
+      // Restore exactly what each line consumed, mirroring 0045's rules and
+      // NEVER reading the live recipe mapping. Overlay lines (sold from a
+      // shelf the seller did not own) restore that seller's `shop_product_stock`
+      // row exactly as they deducted from it, independent of any snapshot.
+      final ownLines = <db.SaleItem>[];
       for (final item in items) {
-        // Mirror the deduction's routing exactly. A line sold from a shelf the
-        // seller did not own came out of that seller's `shop_product_stock`
-        // row, so it must go back to the same row; crediting the owner's
-        // `products.stock_quantity` here would invent Cafe stock the Cafe never
-        // lost, which is how a void silently inflates the Cafe's shelf.
         final product = await (_database.select(
           _database.products,
         )..where((t) => t.id.equals(item.productId))).getSingleOrNull();
-        final soldShopId = saleRow.shopId;
         final usedOverlay =
             product?.shopId != null &&
             soldShopId != null &&
             product!.shopId != soldShopId;
         if (usedOverlay) {
-          final restored = await _shopStock.restoreQuantity(
-            shopId: soldShopId!,
+          // A null restore means the shelf row is gone. There is nothing to put
+          // the units back onto, and inventing a row with a made-up number
+          // would be worse than the loss, so the void leaves it alone.
+          await _shopStock.restoreQuantity(
+            shopId: soldShopId,
             productId: item.productId,
             variantId: item.variantId,
             delta: item.quantity,
           );
-          // A null restore means the shelf row is gone. There is nothing to put
-          // the units back onto, and inventing a row with a made-up number
-          // would be worse than the loss, so the void leaves it alone.
-          if (restored == null) continue;
           continue;
         }
-        // Mirror the sale: a line that consumed recipe ingredients puts each
-        // ingredient back (quantity per unit × line quantity). The menu
-        // product's own stock was never touched by the sale, so it is never
-        // restored here either.
-        final recipeRows = soldShopId == null
-            ? const <db.ProductRecipe>[]
-            : await _recipesForSaleLine(
-                productId: item.productId,
-                variantId: item.variantId,
-                shopId: soldShopId,
-              );
-        if (recipeRows.isNotEmpty) {
-          for (final row in recipeRows) {
-            final restore = row.quantity * item.quantity;
-            if (row.ingredientVariantId != null) {
-              await _database.customStatement(
-                'UPDATE product_variants SET stock_quantity = '
-                'stock_quantity + ?, updated_at = ? WHERE id = ?',
-                [restore, nowStr, row.ingredientVariantId],
-              );
-            } else {
-              await _database.customStatement(
-                'UPDATE products SET stock_quantity = stock_quantity + ?, '
-                'updated_at = ? WHERE id = ?',
-                [restore, nowStr, row.ingredientProductId],
-              );
+        ownLines.add(item);
+      }
+
+      final snapshotLines = ownLines.where((i) => i.consumed != null).toList();
+      final legacyLines = ownLines.where((i) => i.consumed == null).toList();
+
+      if (snapshotLines.isNotEmpty && legacyLines.isNotEmpty) {
+        // One client writes a sale's lines in one transaction, so a mix means
+        // the data cannot be reconciled without double counting the recorded
+        // movements: fail safe, never guess.
+        throw VoidHistoryPrunedFailure(saleRow.receiptNumber);
+      }
+
+      if (legacyLines.isNotEmpty) {
+        // Tier 2: no snapshots anywhere — reverse the sale's recorded SALE
+        // movements ONCE for the whole sale, aggregated per stock entity.
+        final restored = await _reverseSaleLevelMovements(
+          soldShopId,
+          saleId,
+          now,
+        );
+        if (!restored) {
+          // Tier 3: no snapshot and no movement. A tracked line's impact is
+          // unprovable, so fail before mutating; NONE (made-to-order) lines
+          // deducted nothing and must not block the void.
+          var anyTracked = false;
+          for (final item in legacyLines) {
+            final product = await (_database.select(
+              _database.products,
+            )..where((t) => t.id.equals(item.productId))).getSingleOrNull();
+            if (product != null &&
+                product.stockUnit != StockUnit.none.dbValue) {
+              anyTracked = true;
+              break;
             }
           }
-          continue;
+          if (anyTracked) {
+            throw VoidHistoryPrunedFailure(saleRow.receiptNumber);
+          }
         }
-        if (item.variantId != null) {
-          await _database.customStatement(
-            'UPDATE product_variants SET stock_quantity = '
-            'stock_quantity + ?, updated_at = ? WHERE id = ?',
-            [item.quantity, nowStr, item.variantId],
-          );
-        } else {
-          await _database.customStatement(
-            'UPDATE products SET stock_quantity = stock_quantity + ?, '
-            'updated_at = ? WHERE id = ?',
-            [item.quantity, nowStr, item.productId],
-          );
+      } else {
+        // Tier 1: every line carries a consumption snapshot — restore exactly
+        // it (a non-empty entry restores its ingredient; `[]` restores the
+        // line's own stock when tracked).
+        for (final item in snapshotLines) {
+          final restored = await _restoreFromSnapshot(item, soldShopId, now);
+          if (!restored) {
+            // Present but unreadable snapshot — unrecoverable history.
+            throw VoidHistoryPrunedFailure(saleRow.receiptNumber);
+          }
         }
       }
       final payments =
@@ -1628,7 +1845,360 @@ final class DriftBillingRepository implements BillingRepository {
       // Cloud-authoritative void when gateway wired
       if (_cloud != null) {
         try {
-          await _cloud!.voidSaleAtomic(saleId);
+          final result = await _cloud!.voidSaleAtomic(saleId);
+          // Surface whether the server actually restored stock, so a void
+          // that only reversed the header is visible in logs.
+          AppLog.info(
+            'Cloud void $saleId restored=${result['restored']}',
+            tag: tag,
+          );
+        } catch (e) {
+          if (e is TimeoutException) {
+            throw const UnexpectedBillingFailure(
+              'The server is taking too long to respond. Please try again.',
+            );
+          }
+          final msg = e.toString();
+          if (msg.contains('VOID_HISTORY_PRUNED') ||
+              msg.contains('VOID_SNAPSHOT_MIXED')) {
+            // The server proved no automatic restore is safe and rolled the
+            // whole void back; the sale stays open. Offer the no-restore path.
+            final row = await _sales.byId(saleId);
+            throw VoidHistoryPrunedFailure(row?.receiptNumber ?? saleId);
+          }
+          if (msg.contains('ALREADY_VOIDED'))
+            throw const SaleAlreadyVoidedFailure();
+          if (msg.contains('SALE_NOT_FOUND')) throw const SaleNotFoundFailure();
+          if (msg.contains('FORBIDDEN'))
+            throw const UnexpectedBillingFailure(
+              'Access denied for this shop.',
+            );
+          if (msg.contains('SocketException') ||
+              msg.contains('Failed host lookup')) {
+            throw const UnexpectedBillingFailure(
+              'Internet connection required. Please check your connection and try again.',
+            );
+          }
+          rethrow;
+        }
+        // Mirror locally for cache
+        await _database.transaction(write);
+        return;
+      }
+
+      final outbox = _outbox;
+      if (outbox == null) {
+        await _database.transaction(write);
+        return;
+      }
+      await outbox.run(
+        write: () => _database.transaction(write),
+        snapshots: (context, ctx) async {
+          // Read the voided sale row and any reversed payments after the
+          // transaction so the outbox payload reflects the committed state.
+          final saleRow = await (_database.select(
+            _database.sales,
+          )..where((t) => t.id.equals(saleId))).getSingle();
+          final salePayload = SyncSale(
+            id: saleRow.id,
+            shopId: ctx.shopId,
+            customerId: saleRow.customerId,
+            receiptNumber: saleRow.receiptNumber,
+            subtotalPaise: saleRow.subtotalPaise,
+            totalPaise: saleRow.totalPaise,
+            paymentMethod: saleRow.paymentMethod,
+            paymentStatus: saleRow.paymentStatus,
+            createdAt: saleRow.createdAt,
+            voided: saleRow.voided,
+            voidedAt: saleRow.voidedAt,
+            offerDiscountPaise: saleRow.offerDiscountPaise,
+          ).toJson();
+          final out = <OutboxAppend>[
+            OutboxAppend(
+              entity: MasterEntity.sale,
+              entityId: saleId,
+              payload: salePayload,
+            ),
+          ];
+          final payments = await (_database.select(
+            _database.customerPayments,
+          )..where((t) => t.saleId.equals(saleId))).get();
+          for (final p in payments.where((e) => e.reversed)) {
+            out.add(
+              OutboxAppend(
+                entity: MasterEntity.customerPayment,
+                entityId: p.id,
+                payload: SyncCustomerPayment(
+                  id: p.id,
+                  shopId: ctx.shopId,
+                  customerId: p.customerId,
+                  saleId: p.saleId,
+                  amountPaise: p.amountPaise,
+                  paymentMethod: p.paymentMethod,
+                  note: p.note,
+                  paidAt: p.paidAt,
+                  reversed: p.reversed,
+                  reversedAt: p.reversedAt,
+                  createdAt: p.createdAt,
+                ).toJson(),
+              ),
+            );
+          }
+          return out;
+        },
+      );
+    } on BillingFailure {
+      rethrow;
+    } on OfflineException catch (e) {
+      throw UnexpectedBillingFailure(e.message);
+    } on Exception catch (error, stackTrace) {
+      throw _unexpected('Failed to void sale', error, stackTrace);
+    }
+  }
+
+  ///
+  /// Each snapshot entry is `{"ip", "iv"?, "q"}`; the restore multiplies the
+  /// per-unit quantity by the line quantity. A missing ingredient row is
+  /// skipped (no stock to credit — never a phantom restore). Returns false
+  /// when the snapshot is absent or empty.
+  Future<bool> _restoreFromSnapshot(
+    db.SaleItem item,
+    String? soldShopId,
+    DateTime now,
+  ) async {
+    if (item.consumed == null) return false;
+    final List<dynamic> entries;
+    try {
+      entries = jsonDecode(item.consumed!) as List<dynamic>;
+    } catch (error, stackTrace) {
+      AppLog.error(
+        'Corrupt consumption snapshot for line ${item.id}',
+        tag: tag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+    if (entries.isEmpty) {
+      // `[]` = the line consumed no ingredients; its own stock may still be
+      // tracked, so restore that exactly — derived from `stock_unit`, never
+      // from the (possibly edited) live recipe mapping. A NONE line consumed
+      // nothing and is a no-op success (it must NOT fail the void).
+      final product = await (_database.select(
+        _database.products,
+      )..where((t) => t.id.equals(item.productId))).getSingleOrNull();
+      if (product == null || product.stockUnit == StockUnit.none.dbValue) {
+        return true;
+      }
+      final nowStr = now.toIso8601String();
+      if (item.variantId != null) {
+        await _database.customStatement(
+          'UPDATE product_variants SET stock_quantity = '
+          'stock_quantity + ?, updated_at = ? WHERE id = ?',
+          [item.quantity, nowStr, item.variantId],
+        );
+      } else {
+        await _database.customStatement(
+          'UPDATE products SET stock_quantity = stock_quantity + ?, '
+          'updated_at = ? WHERE id = ?',
+          [item.quantity, nowStr, item.productId],
+        );
+      }
+      await _recordVoidMovement(
+        shopId: item.shopId ?? soldShopId,
+        productId: item.productId,
+        variantId: item.variantId,
+        restore: item.quantity,
+        saleId: item.saleId,
+        now: now,
+      );
+      return true;
+    }
+    final nowStr = now.toIso8601String();
+    for (final entry in entries) {
+      final map = entry as Map<String, dynamic>;
+      final ingredientProductId = map['ip'] as String;
+      final ingredientVariantId = map['iv'] as String?;
+      final perUnit = (map['q'] as num).toInt();
+      final restore = perUnit * item.quantity;
+      if (ingredientVariantId != null) {
+        await _database.customStatement(
+          'UPDATE product_variants SET stock_quantity = '
+          'stock_quantity + ?, updated_at = ? WHERE id = ?',
+          [restore, nowStr, ingredientVariantId],
+        );
+      } else {
+        await _database.customStatement(
+          'UPDATE products SET stock_quantity = stock_quantity + ?, '
+          'updated_at = ? WHERE id = ?',
+          [restore, nowStr, ingredientProductId],
+        );
+      }
+      await _recordVoidMovement(
+        shopId: item.shopId ?? soldShopId,
+        productId: ingredientProductId,
+        variantId: ingredientVariantId,
+        restore: restore,
+        saleId: item.saleId,
+        now: now,
+      );
+    }
+    return true;
+  }
+
+  /// Reverses the recorded SALE movements for a whole sale (tier 2, legacy
+  /// lines with no consumption snapshot), aggregated per stock entity and
+  /// applied ONCE. Scoping by the sale — not by one line's product — is what
+  /// makes a legacy MAPPED line correct: its recorded movements live on the
+  /// ingredient products, so a per-line, product-scoped query would miss them.
+  /// Only SALE movements reference a sale, so the filter is exact. Returns
+  /// false when the sale has no recorded movements (pruned/offline history) —
+  /// the caller then fails safe.
+  Future<bool> _reverseSaleLevelMovements(
+    String? soldShopId,
+    String saleId,
+    DateTime now,
+  ) async {
+    final rows = await _movements.saleMovementsFor(saleId, shopId: soldShopId);
+    final totals =
+        <String, ({String productId, String? variantId, int total})>{};
+    for (final row in rows) {
+      final key = '${row.productId}|${row.variantId ?? ''}';
+      final current = totals[key];
+      totals[key] = (
+        productId: row.productId,
+        variantId: row.variantId,
+        total: (current?.total ?? 0) - row.quantity,
+      );
+    }
+    if (totals.isEmpty) return false;
+    final ordered = totals.values.toList()
+      ..sort((a, b) {
+        final byProduct = a.productId.compareTo(b.productId);
+        if (byProduct != 0) return byProduct;
+        return (a.variantId ?? '').compareTo(b.variantId ?? '');
+      });
+    final nowStr = now.toIso8601String();
+    var restoredAny = false;
+    for (final entry in ordered) {
+      final restore = entry.total;
+      if (restore <= 0) continue;
+      if (entry.variantId != null) {
+        await _database.customStatement(
+          'UPDATE product_variants SET stock_quantity = '
+          'stock_quantity + ?, updated_at = ? WHERE id = ?',
+          [restore, nowStr, entry.variantId],
+        );
+      } else {
+        await _database.customStatement(
+          'UPDATE products SET stock_quantity = stock_quantity + ?, '
+          'updated_at = ? WHERE id = ?',
+          [restore, nowStr, entry.productId],
+        );
+      }
+      await _recordVoidMovement(
+        shopId: soldShopId,
+        productId: entry.productId,
+        variantId: entry.variantId,
+        restore: restore,
+        saleId: saleId,
+        now: now,
+      );
+      restoredAny = true;
+    }
+    return restoredAny;
+  }
+
+  /// Writes the VOID audit movement for one restored stock entity. The
+  /// before/after pair is read AFTER the restore update, so it reflects the
+  /// committed level exactly (stock_after = stock_before + restore).
+  Future<void> _recordVoidMovement({
+    required String? shopId,
+    required String productId,
+    required String? variantId,
+    required int restore,
+    required String saleId,
+    required DateTime now,
+  }) async {
+    final int before;
+    if (variantId != null) {
+      final row = await (_database.select(
+        _database.productVariants,
+      )..where((t) => t.id.equals(variantId))).getSingleOrNull();
+      before = (row?.stockQuantity ?? 0) - restore;
+    } else {
+      final row = await (_database.select(
+        _database.products,
+      )..where((t) => t.id.equals(productId))).getSingleOrNull();
+      before = (row?.stockQuantity ?? 0) - restore;
+    }
+    await _movements.insert(
+      db.StockMovementsCompanion.insert(
+        shopId: Value(shopId),
+        productId: productId,
+        variantId: Value(variantId),
+        movementType: StockMovementType.void_.dbValue,
+        quantity: restore,
+        stockBefore: before,
+        stockAfter: before + restore,
+        referenceType: Value(StockMovementType.sale.dbValue),
+        referenceId: Value(saleId),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  @override
+  Future<void> voidSaleWithoutRestore(String saleId) async {
+    if (_connectivity != null) {
+      try {
+        await OnlineGuard(_connectivity!).requireOnline();
+      } on OfflineException catch (e) {
+        throw UnexpectedBillingFailure(e.message);
+      }
+    }
+    Future<void> write() async {
+      final saleRow = await _sales.byId(saleId);
+      if (saleRow == null) {
+        throw const SaleNotFoundFailure();
+      }
+      if (saleRow.voided) {
+        throw const SaleAlreadyVoidedFailure();
+      }
+      await _database.transaction(() async {
+        final payments =
+            await (_database.select(_database.customerPayments)..where(
+                  (t) => t.saleId.equals(saleId) & t.reversed.equals(false),
+                ))
+                .get();
+        for (final payment in payments) {
+          await (_database.update(
+            _database.customerPayments,
+          )..where((t) => t.id.equals(payment.id))).write(
+            db.CustomerPaymentsCompanion(
+              reversed: const Value(true),
+              reversedAt: Value(DateTime.now().toUtc()),
+            ),
+          );
+        }
+        await (_database.update(
+          _database.sales,
+        )..where((t) => t.id.equals(saleId))).write(
+          db.SalesCompanion(
+            voided: const Value(true),
+            voidedAt: Value(DateTime.now().toUtc()),
+            updatedAt: Value(DateTime.now().toUtc()),
+          ),
+        );
+      });
+    }
+
+    try {
+      // Cloud-authoritative void when gateway wired
+      if (_cloud != null) {
+        try {
+          await _cloud!.voidSaleWithoutRestoreAtomic(saleId);
         } catch (e) {
           if (e is TimeoutException) {
             throw const UnexpectedBillingFailure(
@@ -1664,8 +2234,6 @@ final class DriftBillingRepository implements BillingRepository {
       await outbox.run(
         write: () => _database.transaction(write),
         snapshots: (context, ctx) async {
-          // Read the voided sale row and any reversed payments after the
-          // transaction so the outbox payload reflects the committed state.
           final saleRow = await (_database.select(
             _database.sales,
           )..where((t) => t.id.equals(saleId))).getSingle();
@@ -1760,5 +2328,6 @@ final class DriftBillingRepository implements BillingRepository {
     appliedOfferType: row.appliedOfferType == null
         ? null
         : OfferType.fromWire(row.appliedOfferType!),
+    consumed: row.consumed,
   );
 }

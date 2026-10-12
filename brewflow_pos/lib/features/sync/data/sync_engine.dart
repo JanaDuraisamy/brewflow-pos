@@ -59,6 +59,12 @@ final class SyncEngine {
 
   bool _running = false;
 
+  /// True when the latest pull could not apply an attendance row because the
+  /// (shop, authUserId) profile had not arrived yet. The shared cursor is then
+  /// held at the cycle's start (same rule as deferred month cleanups) so the
+  /// skipped row is re-pulled once the profile lands — never silently dropped.
+  bool _attendanceSkipped = false;
+
   bool get isRunning => _running;
 
   /// Runs one full push+pull cycle. Reentrant calls collapse into the
@@ -206,14 +212,19 @@ final class SyncEngine {
           ]);
         }
       case MasterEntity.productRecipe:
-        // Recipes only ever UPSERT (a cleared mapping removes local rows
-        // without a tombstone; product deletes converge via PRODUCT).
         if (entry.operation == 'DELETE') {
-          throw StateError('PRODUCT_RECIPE supports UPSERT sync only');
+          // A cleared/replaced mapping row leaves the cloud FIRST, then the
+          // tombstone broadcasts — same ordering rationale as PRODUCT: a peer
+          // that pulls in between must find the row gone, and a device that
+          // never had the row must not be able to re-pull it from the
+          // still-present remote row.
+          await _gateway.deleteProductRecipe(entry.entityId);
+          await _gateway.recordDeletion(_deletionOf(entry));
+        } else {
+          await _gateway.upsertProductRecipes([
+            SyncProductRecipe.fromJson(decodePayload(entry.payload)),
+          ]);
         }
-        await _gateway.upsertProductRecipes([
-          SyncProductRecipe.fromJson(decodePayload(entry.payload)),
-        ]);
       case MasterEntity.monthlyReportConfirmation:
         // Confirmations only ever UPSERT (re-confirming refreshes the row;
         // nothing ever deletes a confirmation).
@@ -420,6 +431,9 @@ final class SyncEngine {
     final state = await _sync.stateFor(deviceId);
     final since = state?.lastPulledAt?.toUtc() ?? initialCursor;
 
+    // Reset per cycle: the flag only reflects THIS cycle's pull.
+    _attendanceSkipped = false;
+
     final frontiers = <DateTime>[
       await _drainShops(since),
       await _drainCategories(since),
@@ -471,7 +485,15 @@ final class SyncEngine {
     // unapplied, hold the WHOLE cursor at [since]; the next cycle re-pulls
     // everything the marker deletes, and the cursor only advances once the
     // marker has actually applied.
-    if (await _applier.hasUnappliedMonthCleanups()) {
+    //
+    // Attendance gets the same guarantee for a different reason: a row whose
+    // staff profile has not arrived yet cannot be attributed locally and is
+    // skipped, but the profile arrives through a separate owner-login path,
+    // not this pull. Advancing past the skipped row would drop it forever
+    // (unlike a pending-guard skip, whose own push bumps the row's server
+    // updated_at past the cursor on the very next cycle). Holding the cursor
+    // at [since] re-pulls the row until its profile lands.
+    if (await _applier.hasUnappliedMonthCleanups() || _attendanceSkipped) {
       newCursor = since;
     }
 
@@ -597,12 +619,18 @@ final class SyncEngine {
     apply: (rows, at) => _applier.applyOfferPage(rows, at),
   );
 
-  Future<DateTime> _drainStaffAttendance(DateTime since) => _drainPage(
-    since,
-    pull: (since, limit) =>
-        _gateway.pullStaffAttendance(since: since, limit: limit),
-    apply: (rows, at) => _applier.applyStaffAttendancePage(rows, at),
-  );
+  Future<DateTime> _drainStaffAttendance(DateTime since) async {
+    final frontier = await _drainPage(
+      since,
+      pull: (since, limit) =>
+          _gateway.pullStaffAttendance(since: since, limit: limit),
+      apply: (rows, at) async {
+        final skipped = await _applier.applyStaffAttendancePage(rows, at);
+        if (skipped > 0) _attendanceSkipped = true;
+      },
+    );
+    return frontier;
+  }
 
   Future<DateTime> _drainDeletions(DateTime since) async {
     var cursor = since;

@@ -9,7 +9,9 @@ import 'package:brewflow_pos/core/utils/dates.dart';
 import 'package:brewflow_pos/core/utils/money.dart';
 import 'package:brewflow_pos/features/auth/presentation/auth_controller.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
 import 'package:brewflow_pos/features/customers/presentation/customers_controller.dart';
+import 'package:brewflow_pos/features/orders/presentation/sales_breakdown_sheets.dart';
 import 'package:brewflow_pos/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
@@ -18,6 +20,7 @@ import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
+import 'package:brewflow_pos/features/sync/presentation/sync_failures_sheet.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_status_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -100,7 +103,7 @@ final class _DashboardContent extends ConsumerWidget {
                 ownerName: ownerName,
               ),
               const SizedBox(height: AppSpacing.xl),
-              _KpiGrid(snapshot: snapshot),
+              _KpiGrid(snapshot: snapshot, selected: selected),
               const SizedBox(height: AppSpacing.sectionSpacing),
               _SalesOverview(
                 weeklySalesPaise: snapshot.weeklySalesPaise,
@@ -382,17 +385,21 @@ final class _DashboardHeader extends StatelessWidget {
 }
 
 final class _KpiGrid extends StatelessWidget {
-  const _KpiGrid({required this.snapshot});
+  const _KpiGrid({required this.snapshot, required this.selected});
 
   final DashboardSnapshot snapshot;
+
+  /// The selected local day, for the Due Collected drill-down title.
+  final DateTime selected;
 
   @override
   Widget build(BuildContext context) {
     final hasDaySales = snapshot.dayOrderCount > 0;
     final sales = hasDaySales ? Money.formatPaise(snapshot.daySalesPaise) : '—';
-    final profit = snapshot.dayProfitPaise == null
+    final dueCount = snapshot.dayDueCollections.length;
+    final due = dueCount == 0
         ? '—'
-        : Money.formatPaise(snapshot.dayProfitPaise!);
+        : Money.formatPaise(snapshot.dayDueCollectedPaise);
     return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -410,13 +417,14 @@ final class _KpiGrid extends StatelessWidget {
           caption: 'Counter receipts for the selected day',
         ),
         KpiCard(
-          label: 'Profit',
-          value: profit,
-          icon: Icons.trending_up,
-          accent: AppColors.gold,
-          caption: snapshot.dayProfitPaise == null
-              ? 'Add cost prices to see profit'
-              : 'Total minus cost today',
+          label: 'Due Collected',
+          value: due,
+          icon: Icons.account_balance_wallet_outlined,
+          accent: AppColors.success,
+          caption: dueCount == 0
+              ? 'No dues collected'
+              : '$dueCount ${dueCount == 1 ? 'payment' : 'payments'}',
+          onTap: () => _showDueCollections(context, snapshot, selected),
         ),
         KpiCard(
           label: 'Bills',
@@ -424,6 +432,24 @@ final class _KpiGrid extends StatelessWidget {
           icon: Icons.receipt_long_outlined,
           accent: AppColors.secondary,
           caption: 'Completed sales',
+          onTap: () {
+            final dateLabel = DateFormat('d MMM yyyy').format(selected);
+            showBillsBreakdownSheet(
+              context: context,
+              title: 'Bills',
+              subtitle: snapshot.dayBills.isEmpty
+                  ? 'Nothing billed on $dateLabel'
+                  : '${snapshot.dayOrderCount} '
+                        '${snapshot.dayOrderCount == 1 ? 'bill' : 'bills'} · '
+                        '${Money.formatPaise(snapshot.daySalesPaise)} · '
+                        '$dateLabel',
+              bills: snapshot.dayBills,
+              shopLabels: snapshot.shopLabels.isEmpty
+                  ? null
+                  : snapshot.shopLabels,
+              emptyMessage: 'No bills recorded on this day.',
+            );
+          },
         ),
         KpiCard(
           label: 'Items',
@@ -431,8 +457,239 @@ final class _KpiGrid extends StatelessWidget {
           icon: Icons.shopping_basket_outlined,
           accent: AppColors.info,
           caption: 'Pieces sold',
+          onTap: () => showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            showDragHandle: true,
+            builder: (_) => _DayItemsSheet(selected: selected),
+          ),
         ),
       ],
+    );
+  }
+}
+
+/// Item-wise drill-down for one dashboard day, loaded lazily when the Items
+/// card opens ([dashboardDayItemsProvider]). Loading, error and empty states
+/// are explicit — never mock figures.
+final class _DayItemsSheet extends ConsumerWidget {
+  const _DayItemsSheet({required this.selected});
+
+  final DateTime selected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final items = ref.watch(dashboardDayItemsProvider);
+    final dateLabel = DateFormat('d MMM yyyy').format(selected);
+    return items.when(
+      skipLoadingOnRefresh: true,
+      loading: () => SafeArea(
+        child: Padding(
+          padding: AppInsets.screen,
+          child: const LoadingState(message: 'Crunching item sales…'),
+        ),
+      ),
+      error: (error, _) => SafeArea(
+        child: Padding(
+          padding: AppInsets.screen,
+          child: ErrorState(
+            message: dashboardErrorMessage(error),
+            onRetry: () => ref.invalidate(dashboardDayItemsProvider),
+          ),
+        ),
+      ),
+      data: (rows) {
+        final units = rows.fold(0, (sum, row) => sum + row.unitsSold);
+        final revenue = rows.fold(0, (sum, row) => sum + row.revenuePaise);
+        return ItemsBreakdownSheet(
+          title: 'Items',
+          subtitle: rows.isEmpty
+              ? 'Nothing sold on $dateLabel'
+              : '$units ${units == 1 ? 'item' : 'items'} · '
+                    '${Money.formatPaise(revenue)} · '
+                    '$dateLabel',
+          rows: rows,
+          emptyMessage: 'No items sold on this day.',
+        );
+      },
+    );
+  }
+}
+
+/// Opens the day's due-collection drill-down: the total plus every
+/// customer-wise payment (amount, method, local time), newest first.
+Future<void> _showDueCollections(
+  BuildContext context,
+  DashboardSnapshot snapshot,
+  DateTime selected,
+) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    builder: (sheetContext) =>
+        _DueCollectionsSheet(snapshot: snapshot, selected: selected),
+  );
+}
+
+/// Display label for a due-collection payment method.
+String _dueMethodLabel(PaymentMethod method) => switch (method) {
+  PaymentMethod.cash => 'Cash',
+  PaymentMethod.upi => 'UPI',
+  PaymentMethod.bank => 'Bank',
+};
+
+/// Due-collection drill-down for one dashboard day: every ledger payment
+/// recorded on the selected day, newest first, with its customer, amount,
+/// method and local payment time, plus the day total.
+///
+/// Phone-first: single-column, scrollable, no fixed widths — safe at
+/// 360–480dp. Mirrors [_PayableExpensesSheet]'s bounded sheet pattern.
+final class _DueCollectionsSheet extends StatelessWidget {
+  const _DueCollectionsSheet({required this.snapshot, required this.selected});
+
+  final DashboardSnapshot snapshot;
+  final DateTime selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final collections = snapshot.dayDueCollections;
+    final dateLabel = DateFormat('d MMM yyyy').format(selected);
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (context, scrollController) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: AppInsets.screen,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Due Collected',
+                      style: textTheme.titleMedium?.copyWith(
+                        color: context.appColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      collections.isEmpty
+                          ? 'Nothing collected on $dateLabel'
+                          : '${Money.formatPaise(snapshot.dayDueCollectedPaise)} · '
+                                '${collections.length} ${collections.length == 1 ? 'payment' : 'payments'} · '
+                                '$dateLabel',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: context.appColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: collections.isEmpty
+                    ? Padding(
+                        padding: AppInsets.screen,
+                        child: Text(
+                          'No dues collected on this day.',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: context.appColors.textSecondary,
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        controller: scrollController,
+                        padding: AppInsets.screen,
+                        itemCount: collections.length,
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(height: AppSpacing.sm),
+                        itemBuilder: (context, index) =>
+                            _DueCollectionRow(collection: collections[index]),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One due-collection payment: customer (and business, in the Combined view)
+/// with amount on the first line, method and local payment time on the
+/// second, and the recorded note when the payment carries one.
+final class _DueCollectionRow extends StatelessWidget {
+  const _DueCollectionRow({required this.collection});
+
+  final DueCollection collection;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final name = collection.shopLabel == null
+        ? collection.customerName
+        : '${collection.customerName} · ${collection.shopLabel}';
+    return AppCard(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: context.appColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  Money.formatPaise(collection.amountPaise),
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${_dueMethodLabel(collection.paymentMethod)} · '
+              '${formatDateTime(collection.paidAt)}',
+              style: textTheme.bodySmall?.copyWith(
+                color: context.appColors.textSecondary,
+              ),
+            ),
+            if (collection.note != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                collection.note!,
+                style: textTheme.bodySmall?.copyWith(
+                  color: context.appColors.textSecondary,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1307,20 +1564,44 @@ final class _SyncStatusCard extends ConsumerWidget {
             Icon(Icons.refresh_outlined, size: 20, color: color),
           if (!status.isSyncing && status.failedCount > 0) ...[
             const SizedBox(width: AppSpacing.sm),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.sm,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '${status.failedCount} failed',
-                style: textTheme.labelSmall?.copyWith(
-                  color: AppColors.error,
-                  fontWeight: FontWeight.w600,
+            // Tappable, distinct pill: opens the failures detail sheet instead
+            // of the card's sync-now gesture. The innermost InkWell wins the
+            // tap, so the rest of the card keeps triggering a manual sync.
+            Material(
+              color: AppColors.error.withValues(alpha: 0.1),
+              borderRadius: AppBorderRadius.sm,
+              child: InkWell(
+                onTap: () => showSyncFailuresSheet(context),
+                borderRadius: AppBorderRadius.sm,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        size: 14,
+                        color: AppColors.error,
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Text(
+                        '${status.failedCount} failed',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      const Icon(
+                        Icons.chevron_right,
+                        size: 16,
+                        color: AppColors.error,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

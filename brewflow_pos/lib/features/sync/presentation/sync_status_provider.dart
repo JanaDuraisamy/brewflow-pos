@@ -4,6 +4,7 @@ import 'package:brewflow_pos/app/providers.dart';
 import 'package:brewflow_pos/core/identity/device_identity.dart';
 import 'package:brewflow_pos/core/services/connectivity_service.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
+import 'package:brewflow_pos/features/sync/domain/sync_failures.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_controller.dart';
 import 'package:brewflow_pos/features/sync/presentation/sync_invalidation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -349,5 +350,49 @@ final class SyncStatusController extends Notifier<SyncStatusSnapshot> {
   void _setIfChanged(SyncStatusSnapshot next) {
     if (state == next) return;
     state = next;
+  }
+}
+
+/// Failures presented by the dashboard "N failed" badge and the failures
+/// sheet. Loads FAILED outbox entries and offers safe manual retries: the
+/// repository requeues the selected entries as PENDING (fresh counters, same
+/// payload) and a sync cycle then re-pushes them idempotently.
+final syncFailuresProvider =
+    AsyncNotifierProvider<SyncFailuresController, List<SyncFailureEntry>>(
+      SyncFailuresController.new,
+    );
+
+final class SyncFailuresController
+    extends AsyncNotifier<List<SyncFailureEntry>> {
+  @override
+  Future<List<SyncFailureEntry>> build() {
+    return ref.watch(syncRepositoryProvider).failedOutboxBatch();
+  }
+
+  Future<void> reload() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(
+      () => ref.read(syncRepositoryProvider).failedOutboxBatch(),
+    );
+  }
+
+  /// Requeues one FAILED entry as PENDING and kicks a sync cycle.
+  Future<void> retryOne(String id) async {
+    await ref.read(syncRepositoryProvider).retryFailedEntries(ids: [id]);
+    await _kickSync();
+    await reload();
+  }
+
+  /// Requeues every FAILED entry as PENDING and kicks a sync cycle. Safe by
+  /// construction: each re-push is an idempotent upsert/recorded deletion keyed
+  /// by the change's stable id.
+  Future<void> retryAll() async {
+    await ref.read(syncRepositoryProvider).retryFailedEntries();
+    await _kickSync();
+    await reload();
+  }
+
+  Future<void> _kickSync() async {
+    await ref.read(syncStatusProvider.notifier).syncNow();
   }
 }

@@ -375,7 +375,7 @@ void main() {
       },
     );
 
-    test('day sales and profit use variant prices and costs', () async {
+    test('day sales use variant prices', () async {
       await seedCategory();
       final product = await seedProduct(
         'Filter Coffee',
@@ -398,7 +398,6 @@ void main() {
       expect(snapshot.daySalesPaise, 30000);
       expect(snapshot.dayOrderCount, 1);
       expect(snapshot.dayItemCount, 2);
-      expect(snapshot.dayProfitPaise, 30000 - 2 * 8000);
     });
   });
 

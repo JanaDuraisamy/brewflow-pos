@@ -216,11 +216,10 @@ void main() {
         expect(await notifier.shopIdsForRead(BusinessContext.foodTruck), [
           truckId,
         ]);
-        expect(
-          await notifier.shopIdsForRead(BusinessContext.all),
-          [cafeId, truckId],
-          reason: 'Combined must span both real businesses',
-        );
+        expect(await notifier.shopIdsForRead(BusinessContext.all), [
+          cafeId,
+          truckId,
+        ], reason: 'Combined must span both real businesses');
       },
     );
 

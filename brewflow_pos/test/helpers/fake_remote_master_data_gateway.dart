@@ -267,6 +267,19 @@ final class FakeRemoteMasterDataGateway implements RemoteMasterDataGateway {
   }
 
   @override
+  Future<void> deleteProductRecipe(String id) async {
+    pushAttempts++;
+    if (pushesFail) {
+      _ensureOnline();
+    }
+    // The row really leaves the cloud, exactly like the Supabase gateway's
+    // `delete from product_recipes`. Recording only a tombstone here would
+    // hide a production bug: a device that had not yet pulled the mapping
+    // would pull it again from the still-present row and resurrect it.
+    _store.productRecipes.remove(id);
+  }
+
+  @override
   Future<PullPage<SyncProductRecipe>> pullProductRecipes({
     required DateTime since,
     required int limit,

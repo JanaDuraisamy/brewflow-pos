@@ -17,7 +17,11 @@ enum StockMovementType {
   sale('SALE'),
   purchase('PURCHASE'),
   adjustmentIn('ADJUSTMENT_IN'),
-  adjustmentOut('ADJUSTMENT_OUT');
+  adjustmentOut('ADJUSTMENT_OUT'),
+
+  /// A void reversing exactly what one sale consumed, written by the void
+  /// path (never by hand). Positive: stock coming back.
+  void_('VOID');
 
   const StockMovementType(this.dbValue);
 
@@ -32,6 +36,7 @@ enum StockMovementType {
     'PURCHASE' => StockMovementType.purchase,
     'ADJUSTMENT_IN' => StockMovementType.adjustmentIn,
     'ADJUSTMENT_OUT' => StockMovementType.adjustmentOut,
+    'VOID' => StockMovementType.void_,
     _ => null,
   };
 }
@@ -73,6 +78,7 @@ String stockMovementTypeLabel(StockMovementType type) => switch (type) {
   StockMovementType.purchase => 'Purchase',
   StockMovementType.adjustmentIn => 'Adjustment in',
   StockMovementType.adjustmentOut => 'Adjustment out',
+  StockMovementType.void_ => 'Void restore',
 };
 
 /// Short display label for an adjustment reason.
@@ -115,14 +121,14 @@ final class StockMovement {
   final String? variantId;
 
   /// What changed the stock (OPENING / SALE / PURCHASE / ADJUSTMENT_IN /
-  /// ADJUSTMENT_OUT).
+  /// ADJUSTMENT_OUT / VOID).
   final StockMovementType movementType;
 
   /// Signed delta applied to stock; never zero.
   ///
-  /// Positive for stock added (OPENING, PURCHASE, ADJUSTMENT_IN); negative
-  /// for stock removed (SALE, ADJUSTMENT_OUT). The domain model preserves the
-  /// sign exactly as stored.
+  /// Positive for stock added (OPENING, PURCHASE, ADJUSTMENT_IN, VOID);
+  /// negative for stock removed (SALE, ADJUSTMENT_OUT). The domain model
+  /// preserves the sign exactly as stored.
   final int quantity;
 
   /// Stock level before the movement (>= 0).

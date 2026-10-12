@@ -8,6 +8,7 @@ import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/orders/presentation/sales_breakdown_sheets.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_controller.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_page.dart';
 import 'package:flutter/material.dart';
@@ -268,6 +269,92 @@ void main() {
     expect(find.text('2'), findsOneWidget);
     expect(find.text('8'), findsOneWidget);
     expect(find.text('₹265.00'), findsOneWidget);
+  });
+
+  testWidgets('orders card opens the range bill breakdown', (tester) async {
+    final world = await _seededWorld();
+    await _pumpReports(
+      tester,
+      orders: world.$1,
+      inventory: world.$2,
+      expenses: world.$3,
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.widgetWithText(KpiCard, 'Orders');
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+
+    final sheet = find.byType(BillsBreakdownSheet);
+    expect(sheet, findsOneWidget);
+    Finder inSheet(String text) =>
+        find.descendant(of: sheet, matching: find.text(text));
+    // Default Today window: R-001 only, R-002 is yesterday.
+    expect(inSheet('R-001'), findsOneWidget);
+    expect(inSheet('R-002'), findsNothing);
+    expect(inSheet('₹430.00'), findsOneWidget);
+    expect(
+      find.descendant(of: sheet, matching: find.textContaining('Cash ·')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('items card opens the range item breakdown', (tester) async {
+    final world = await _seededWorld();
+    await _pumpReports(
+      tester,
+      orders: world.$1,
+      inventory: world.$2,
+      expenses: world.$3,
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.widgetWithText(KpiCard, 'Items');
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+
+    final sheet = find.byType(ItemsBreakdownSheet);
+    expect(sheet, findsOneWidget);
+    Finder inSheet(String text) =>
+        find.descendant(of: sheet, matching: find.text(text));
+    expect(inSheet('Chai'), findsOneWidget);
+    expect(inSheet('Cafe Latte'), findsOneWidget);
+    // Cookie sold yesterday, outside the default Today window.
+    expect(inSheet('Cookie'), findsNothing);
+    expect(inSheet('₹30.00'), findsOneWidget);
+    expect(inSheet('₹400.00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('orders and items cards show empty states without sales', (
+    tester,
+  ) async {
+    await _pumpReports(tester);
+    await tester.pumpAndSettle();
+
+    var card = find.widgetWithText(KpiCard, 'Orders');
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    expect(find.text('No bills recorded in this range.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    card = find.widgetWithText(KpiCard, 'Items');
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    expect(find.text('No items sold in this range.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('payment methods show amounts and shares', (tester) async {

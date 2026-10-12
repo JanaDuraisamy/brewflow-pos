@@ -49,5 +49,17 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- UPI app discovery for the payable-payment handoff: only packages
+             that resolve these exact payment intents are visible to
+             PackageManager.queryIntentActivities on Android 11+. No broad
+             package enumeration, no extra permission. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="upi"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="tez"/>
+        </intent>
     </queries>
 </manifest>

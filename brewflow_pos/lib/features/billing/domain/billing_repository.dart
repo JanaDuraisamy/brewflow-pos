@@ -85,6 +85,21 @@ final class SaleNotFoundFailure extends BillingFailure {
   const SaleNotFoundFailure([super.message = 'Sale not found.']);
 }
 
+/// The sale's stock history is gone (cleaned up) so the void cannot prove
+/// what was deducted. Stock is left untouched — nothing is invented — and
+/// the bill stays open until the owner voids it without restore (audited
+/// manual adjustment afterwards) via [BillingRepository.voidSaleWithoutRestore].
+final class VoidHistoryPrunedFailure extends BillingFailure {
+  VoidHistoryPrunedFailure(this.receiptNumber)
+    : super(
+        'Stock history for $receiptNumber was cleaned up, so an automatic '
+        'restore is unsafe. Void the bill without stock changes, then '
+        'adjust stock manually.',
+      );
+
+  final String receiptNumber;
+}
+
 /// Anything else — logged, and shown as a generic failure.
 final class UnexpectedBillingFailure extends BillingFailure {
   const UnexpectedBillingFailure([super.message = 'Please try again.']);
@@ -158,7 +173,18 @@ abstract interface class BillingRepository {
   /// same transaction.
   ///
   /// Throws [SaleNotFoundFailure] when [saleId] does not exist,
-  /// [SaleAlreadyVoidedFailure] when the sale is already voided, or
-  /// [UnexpectedBillingFailure] on unexpected errors.
+  /// [SaleAlreadyVoidedFailure] when the sale is already voided,
+  /// [VoidHistoryPrunedFailure] when the sale's consumption history is gone
+  /// and no automatic restore is safe, or [UnexpectedBillingFailure] on
+  /// unexpected errors.
   Future<void> voidSale(String saleId);
+
+  /// Marks a sale as voided and reverses customer payments WITHOUT touching
+  /// stock. The audited recovery half of [VoidHistoryPrunedFailure]: the
+  /// owner records the true restore afterwards through the normal stock
+  /// adjustment flow (which writes its own adjustment movements).
+  ///
+  /// Same guards as [voidSale] (missing/already-voided sales throw); stock
+  /// rows and the movement ledger are never written by this call.
+  Future<void> voidSaleWithoutRestore(String saleId);
 }

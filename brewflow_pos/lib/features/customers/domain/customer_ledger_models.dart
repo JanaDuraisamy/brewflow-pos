@@ -149,6 +149,67 @@ final class CustomerLedgerSummary {
   final int paymentCount;
 }
 
+/// One valid due-collection payment inside a day window — money received
+/// against a customer's credit bill, read-only for the dashboard's Today Due
+/// Collection surface.
+///
+/// Unlike [CustomerPayment] (the per-customer history row), this carries the
+/// display attribution the dashboard needs: the customer name joined from the
+/// customers table and the owning shop. Only non-reversed `customer_payments`
+/// rows are ever returned; new-sale money (`sales` / `sale_payments`) never
+/// appears here by construction — the query reads the ledger table only.
+final class DueCollection {
+  const DueCollection({
+    required this.id,
+    required this.customerId,
+    required this.customerName,
+    required this.saleId,
+    required this.amountPaise,
+    required this.paymentMethod,
+    this.note,
+    required this.paidAt,
+    this.shopId,
+    this.shopLabel,
+  });
+
+  final String id;
+  final String customerId;
+
+  /// Display name joined from the customers table; 'Deleted customer' when
+  /// the profile row no longer exists (the debt outlives the profile, per
+  /// the schema v25 → v26 contract).
+  final String customerName;
+
+  /// The credit bill this payment is allocated to.
+  final String saleId;
+  final int amountPaise;
+  final PaymentMethod paymentMethod;
+  final String? note;
+
+  /// Exact UTC instant the money moved (business timestamp).
+  final DateTime paidAt;
+
+  /// Owning shop of the payment row; null only for legacy rows.
+  final String? shopId;
+
+  /// User-facing business label (Cafe / Food Truck) resolved by the caller;
+  /// null in single-shop reads where no label is needed.
+  final String? shopLabel;
+
+  DueCollection copyWith({String? shopLabel}) => DueCollection(
+    id: id,
+    customerId: customerId,
+    customerName: customerName,
+    saleId: saleId,
+    amountPaise: amountPaise,
+    paymentMethod: paymentMethod,
+    note: note,
+    paidAt: paidAt,
+    shopId: shopId,
+    shopLabel: shopLabel ?? this.shopLabel,
+  );
+}
+
 /// App-wide due totals for the dashboard Due Reminders surface.
 final class DueCustomersSummary {
   const DueCustomersSummary({

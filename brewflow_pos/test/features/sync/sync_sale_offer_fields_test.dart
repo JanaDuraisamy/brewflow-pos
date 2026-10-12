@@ -102,4 +102,56 @@ void main() {
       expect(restored.appliedOfferType, isNull);
     });
   });
+  group('SyncSaleItem consumption snapshot', () {
+    test('round-trip preserves a non-empty consumed array', () {
+      final item = SyncSaleItem(
+        id: 'item-1',
+        shopId: 'shop-1',
+        saleId: 'sale-1',
+        productId: 'plain',
+        productName: 'Plain Maggi',
+        unitPricePaise: 4500,
+        quantity: 2,
+        lineTotalPaise: 9000,
+        consumed: '[{"ip":"maggi-packet","q":1}]',
+      );
+
+      final restored = SyncSaleItem.fromJson(item.toJson());
+
+      expect(restored.consumed, '[{"ip":"maggi-packet","q":1}]');
+    });
+
+    test('round-trip preserves the empty (known-no-ingredient) snapshot', () {
+      final item = SyncSaleItem(
+        id: 'item-1',
+        shopId: 'shop-1',
+        saleId: 'sale-1',
+        productId: 'water',
+        productName: 'Water',
+        unitPricePaise: 2000,
+        quantity: 1,
+        lineTotalPaise: 2000,
+        consumed: '[]',
+      );
+
+      final restored = SyncSaleItem.fromJson(item.toJson());
+
+      expect(restored.consumed, '[]');
+    });
+
+    test('legacy payloads without consumed read back null', () {
+      final restored = SyncSaleItem.fromJson({
+        'id': 'item-1',
+        'shopId': 'shop-1',
+        'saleId': 'sale-1',
+        'productId': 'p1',
+        'productName': 'Filter Coffee',
+        'unitPricePaise': 12000,
+        'quantity': 2,
+        'lineTotalPaise': 24000,
+      });
+
+      expect(restored.consumed, isNull);
+    });
+  });
 }

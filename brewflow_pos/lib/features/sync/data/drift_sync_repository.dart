@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:brewflow_pos/core/database/app_database.dart' as db;
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
+import 'package:brewflow_pos/features/sync/domain/sync_failures.dart';
 import 'package:drift/drift.dart';
 
 /// ---------------------------------------------------------------------------
@@ -207,6 +208,30 @@ final class DriftSyncRepository {
     return <SyncOutboxEntry>[for (final r in rows) _outboxFromRow(r)];
   }
 
+  /// FAILED entries, newest attempt first, for the failures inspection
+  /// sheet. Last-attempt time and raw error ride along so the sheet can show
+  /// supporting detail without re-querying per row.
+  Future<List<SyncFailureEntry>> failedOutboxBatch({int limit = 100}) async {
+    final rows =
+        await (_database.select(_database.syncOutbox)
+              ..where((t) => t.status.equals('FAILED'))
+              ..orderBy([(t) => OrderingTerm.desc(t.lastAttemptAt)])
+              ..limit(limit))
+            .get();
+    return [
+      for (final r in rows)
+        SyncFailureEntry(
+          id: r.id,
+          entity: r.entity,
+          operation: r.operation,
+          entityId: r.entityId,
+          lastError: r.lastError,
+          lastAttemptAt: r.lastAttemptAt,
+          attemptCount: r.attemptCount,
+        ),
+    ];
+  }
+
   Future<void> markDone(String id) {
     return (_database.update(
       _database.syncOutbox,
@@ -306,6 +331,41 @@ final class DriftSyncRepository {
         count++;
       }
       return count;
+    });
+  }
+
+  /// Resets FAILED outbox entries (optionally only the given [ids]) back to
+  /// PENDING with fresh retry counters, so a manual retry re-queues exactly
+  /// those changes. The payload is untouched: re-pushes are idempotent
+  /// server-side upserts/recorded deletions keyed by the change's stable id,
+  /// so a manual retry can never duplicate existing rows.
+  ///
+  /// Unlike [reviveFailedEntries] this does NOT patch the shopId — it is for
+  /// ordinary transient failures, not shop-identity recovery.
+  ///
+  /// Returns the number of entries requeued.
+  Future<int> retryFailedEntries({List<String>? ids}) {
+    return _database.transaction(() async {
+      final failed =
+          await (_database.select(_database.syncOutbox)..where((t) {
+                final isFailed = t.status.equals('FAILED');
+                if (ids == null || ids.isEmpty) return isFailed;
+                return isFailed & t.id.isIn(ids);
+              }))
+              .get();
+      for (final row in failed) {
+        await (_database.update(
+          _database.syncOutbox,
+        )..where((t) => t.id.equals(row.id))).write(
+          db.SyncOutboxCompanion(
+            status: const Value('PENDING'),
+            attemptCount: const Value(0),
+            lastAttemptAt: const Value(null),
+            lastError: const Value(null),
+          ),
+        );
+      }
+      return failed.length;
     });
   }
 

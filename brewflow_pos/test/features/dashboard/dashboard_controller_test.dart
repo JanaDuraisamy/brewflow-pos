@@ -10,6 +10,7 @@ import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:brewflow_pos/features/settings/domain/settings_models.dart';
 import 'package:brewflow_pos/features/settings/presentation/settings_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -99,7 +100,8 @@ void main() {
 
     final snapshot = await settle(container);
     expect(snapshot.daySalesPaise, 0);
-    expect(snapshot.dayProfitPaise, isNull);
+    expect(snapshot.dayDueCollectedPaise, 0);
+    expect(snapshot.dayDueCollections, isEmpty);
     expect(snapshot.totalBills, 0);
     expect(snapshot.dayOrderCount, 0);
     expect(snapshot.dayItemCount, 0);
@@ -200,52 +202,313 @@ void main() {
     expect(snapshot.dayNotPaidPaise, 0);
   });
 
-  test('profit uses recorded cost prices for the selected day', () async {
-    final inventory = FakeInventoryRepository();
-    await inventory.createCategory('Drinks');
-    await inventory.createProduct(
-      categoryId: 'category-1',
-      name: 'Filter Coffee',
-      sellingPricePaise: 1000,
-      costPricePaise: 400,
-      stockQuantity: 10,
-      isActive: true,
+  group('due collections', () {
+    FakeLedgerBill dueBill({
+      required String id,
+      required String customerId,
+      required int totalPaise,
+      String? shopId,
+      String? customerName,
+    }) => FakeLedgerBill(
+      id: id,
+      customerId: customerId,
+      receiptNumber: 'BF-$id',
+      createdAt: DateTime.utc(2026, 1, 1),
+      totalPaise: totalPaise,
+      shopId: shopId ?? kTestCafeShopId,
+      customerName: customerName,
     );
-    final container = buildContainer(
-      orders: ordersWith([
-        (
-          0,
-          2000,
+
+    /// A UTC instant for [hour] o'clock on [day] (a local-midnight day).
+    DateTime atHour(DateTime day, int hour) =>
+        DateTime(day.year, day.month, day.day, hour).toUtc();
+
+    test(
+      'today\'s ledger payments total into the card, newest first',
+      () async {
+        final ledger = FakeCustomerLedgerRepository();
+        ledger.bills.addAll([
+          dueBill(
+            id: 's1',
+            customerId: 'c1',
+            totalPaise: 10000,
+            customerName: 'Asha',
+          ),
+          dueBill(
+            id: 's2',
+            customerId: 'c2',
+            totalPaise: 20000,
+            customerName: 'Bala',
+          ),
+        ]);
+        final day = today();
+        ledger.seedPayment(
+          customerId: 'c1',
+          saleId: 's1',
+          amountPaise: 4000,
+          paymentMethod: PaymentMethod.cash,
+          paidAt: atHour(day, 9),
+        );
+        ledger.seedPayment(
+          customerId: 'c2',
+          saleId: 's2',
+          amountPaise: 7000,
+          paymentMethod: PaymentMethod.upi,
+          paidAt: atHour(day, 18),
+        );
+
+        final snapshot = await settle(buildContainer(ledger: ledger));
+
+        expect(snapshot.dayDueCollectedPaise, 11000);
+        expect(snapshot.dayDueCollections.length, 2);
+        expect(snapshot.dayDueCollections.first.customerName, 'Bala');
+        expect(snapshot.dayDueCollections.first.amountPaise, 7000);
+        expect(
+          snapshot.dayDueCollections.first.paymentMethod,
+          PaymentMethod.upi,
+        );
+        expect(snapshot.dayDueCollections.last.customerName, 'Asha');
+        expect(snapshot.dayDueCollections.last.amountPaise, 4000);
+        expect(
+          snapshot.dayDueCollections.last.paymentMethod,
           PaymentMethod.cash,
-          [exampleItem(productId: 'product-1', quantity: 2)],
+        );
+        // Single-shop reads carry no business label.
+        expect(
+          snapshot.dayDueCollections.every((c) => c.shopLabel == null),
+          isTrue,
+        );
+      },
+    );
+
+    test('day bounds are inclusive on both ends', () async {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.add(dueBill(id: 's1', customerId: 'c1', totalPaise: 50000));
+      final day = today();
+      final from = day.toUtc();
+      final to = DateTime(day.year, day.month, day.day)
+          .add(const Duration(days: 1))
+          .subtract(const Duration(microseconds: 1))
+          .toUtc();
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 1000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: from,
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 2000,
+        paymentMethod: PaymentMethod.upi,
+        paidAt: to,
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 4000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: from.subtract(const Duration(microseconds: 1)),
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 8000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: to.add(const Duration(microseconds: 1)),
+      );
+
+      final snapshot = await settle(buildContainer(ledger: ledger));
+
+      expect(snapshot.dayDueCollectedPaise, 3000);
+      expect(snapshot.dayDueCollections.length, 2);
+    });
+
+    test('selecting a past date shifts due collections to that day', () async {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.add(dueBill(id: 's1', customerId: 'c1', totalPaise: 50000));
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 9000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: atHour(today(), 10),
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 5000,
+        paymentMethod: PaymentMethod.upi,
+        paidAt: atHour(daysAgo(1), 10),
+      );
+      final container = buildContainer(ledger: ledger);
+
+      var snapshot = await settle(container);
+      expect(snapshot.dayDueCollectedPaise, 9000);
+      expect(snapshot.dayDueCollections.length, 1);
+
+      container.read(dashboardDateProvider.notifier).select(daysAgo(1));
+      snapshot = await refresh(container);
+      expect(snapshot.dayDueCollectedPaise, 5000);
+      expect(snapshot.dayDueCollections.length, 1);
+      expect(
+        snapshot.dayDueCollections.single.paymentMethod,
+        PaymentMethod.upi,
+      );
+    });
+
+    test('collections are scoped to the signed-in shop', () async {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.addAll([
+        dueBill(
+          id: 's1',
+          customerId: 'c1',
+          totalPaise: 10000,
+          shopId: kTestCafeShopId,
+          customerName: 'Asha',
         ),
-      ]),
-      inventory: inventory,
-    );
+        dueBill(
+          id: 's2',
+          customerId: 'c2',
+          totalPaise: 20000,
+          shopId: kTestFoodTruckShopId,
+          customerName: 'Bala',
+        ),
+      ]);
+      final day = today();
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 4000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: atHour(day, 10),
+      );
+      ledger.seedPayment(
+        customerId: 'c2',
+        saleId: 's2',
+        amountPaise: 9000,
+        paymentMethod: PaymentMethod.upi,
+        paidAt: atHour(day, 11),
+      );
 
-    final snapshot = await settle(container);
-    expect(snapshot.dayProfitPaise, 1200);
-  });
+      final snapshot = await settle(buildContainer(ledger: ledger));
 
-  test('profit is null when no sold line resolves to a cost price', () async {
-    final inventory = FakeInventoryRepository();
-    await inventory.createCategory('Drinks');
-    await inventory.createProduct(
-      categoryId: 'category-1',
-      name: 'Filter Coffee',
-      sellingPricePaise: 1000,
-      stockQuantity: 10,
-      isActive: true,
-    );
-    final container = buildContainer(
-      orders: ordersWith([
-        (0, 1000, PaymentMethod.cash, [exampleItem(productId: 'product-1')]),
-      ]),
-      inventory: inventory,
-    );
+      expect(snapshot.dayDueCollectedPaise, 4000);
+      expect(snapshot.dayDueCollections.length, 1);
+      expect(snapshot.dayDueCollections.single.customerName, 'Asha');
+    });
 
-    final snapshot = await settle(container);
-    expect(snapshot.dayProfitPaise, isNull);
+    test('combined view labels each collection with its business', () async {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.add(
+        dueBill(
+          id: 's1',
+          customerId: 'c1',
+          totalPaise: 10000,
+          shopId: kTestCafeShopId,
+          customerName: 'Asha',
+        ),
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 4000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: atHour(today(), 10),
+      );
+      final container = buildContainer(ledger: ledger);
+      await container
+          .read(businessSwitcherProvider.notifier)
+          .select(BusinessContext.all);
+
+      final snapshot = await refresh(container);
+
+      expect(snapshot.dayDueCollectedPaise, 4000);
+      expect(snapshot.dayDueCollections.single.shopLabel, 'Cafe');
+    });
+
+    test('reversed payments never count (void semantics)', () async {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.add(dueBill(id: 's1', customerId: 'c1', totalPaise: 10000));
+      final day = today();
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 6000,
+        paymentMethod: PaymentMethod.cash,
+        paidAt: atHour(day, 10),
+        reversed: true,
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 2500,
+        paymentMethod: PaymentMethod.upi,
+        paidAt: atHour(day, 11),
+      );
+
+      final snapshot = await settle(buildContainer(ledger: ledger));
+
+      expect(snapshot.dayDueCollectedPaise, 2500);
+      expect(snapshot.dayDueCollections.length, 1);
+    });
+
+    test('collections on opening-balance dues count', () async {
+      final ledger = FakeCustomerLedgerRepository();
+      ledger.bills.add(
+        FakeLedgerBill(
+          id: 'opening-1',
+          customerId: 'c1',
+          receiptNumber: 'BF-9001',
+          createdAt: DateTime.utc(2026, 1, 1),
+          totalPaise: 5000,
+          shopId: kTestCafeShopId,
+          customerName: 'Asha',
+          isOpeningBalance: true,
+        ),
+      );
+      ledger.seedPayment(
+        customerId: 'c1',
+        saleId: 'opening-1',
+        amountPaise: 5000,
+        paymentMethod: PaymentMethod.upi,
+        paidAt: atHour(today(), 11),
+      );
+
+      final snapshot = await settle(buildContainer(ledger: ledger));
+
+      expect(snapshot.dayDueCollectedPaise, 5000);
+      expect(snapshot.dayDueCollections.single.customerName, 'Asha');
+    });
+
+    test('counter sales without ledger payments collect nothing', () async {
+      final container = buildContainer(
+        orders: ordersWith([
+          (0, 100000, PaymentMethod.cash, [exampleItem()]),
+        ]),
+      );
+
+      final snapshot = await settle(container);
+
+      expect(snapshot.daySalesPaise, 100000);
+      expect(snapshot.dayDueCollectedPaise, 0);
+      expect(snapshot.dayDueCollections, isEmpty);
+    });
+
+    test('due-collections failure surfaces as a safe AsyncError', () async {
+      final ledger = FakeCustomerLedgerRepository()
+        ..dueCollectionsError = const UnexpectedLedgerFailure();
+      final container = buildContainer(ledger: ledger);
+
+      await _waitFor(
+        () => container.read(dashboardControllerProvider).hasError,
+      );
+      expect(
+        container.read(dashboardControllerProvider).error,
+        isA<UnexpectedLedgerFailure>(),
+      );
+    });
   });
 
   test('weekly sales buckets orders into their local days', () async {
@@ -414,6 +677,261 @@ void main() {
     orders.ordersError = null;
     final snapshot = await refresh(container);
     expect(snapshot.dayOrderCount, 0);
+  });
+
+  group('day bills and items', () {
+    OrderItem variantItem(
+      String product,
+      String variant, {
+      int price = 5000,
+      int quantity = 1,
+    }) => OrderItem(
+      productName: product,
+      variantName: variant,
+      variantId: 'v-$variant',
+      unitPricePaise: price,
+      quantity: quantity,
+      lineTotalPaise: price * quantity,
+      productId: 'product-1',
+    );
+
+    DateTime atHour(DateTime day, int hour) => day.add(Duration(hours: hour));
+
+    test('dayBills lists the selected day newest first', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'BF-OLD',
+        createdAt: daysAgo(1),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 5000,
+        items: [exampleItem()],
+        shopId: kTestCafeShopId,
+      );
+      orders.add(
+        receiptNumber: 'BF-1',
+        createdAt: atHour(today(), 9),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 3000,
+        items: [exampleItem(quantity: 3)],
+        shopId: kTestCafeShopId,
+      );
+      orders.add(
+        receiptNumber: 'BF-2',
+        createdAt: atHour(today(), 18),
+        paymentMethod: PaymentMethod.upi,
+        totalPaise: 7000,
+        items: [exampleItem()],
+        shopId: kTestCafeShopId,
+      );
+
+      final snapshot = await settle(buildContainer(orders: orders));
+
+      expect(snapshot.dayBills.map((b) => b.receiptNumber).toList(), [
+        'BF-2',
+        'BF-1',
+      ]);
+      expect(snapshot.dayBills.first.totalPaise, 7000);
+      expect(snapshot.dayBills.first.paymentMethod, PaymentMethod.upi);
+      expect(snapshot.dayBills.first.itemCount, 1);
+      expect(snapshot.dayBills.last.itemCount, 3);
+    });
+
+    test('selecting a past date shifts dayBills to that day', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'BF-TODAY',
+        createdAt: atHour(today(), 10),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 3000,
+        items: [exampleItem()],
+        shopId: kTestCafeShopId,
+      );
+      orders.add(
+        receiptNumber: 'BF-YESTERDAY',
+        createdAt: atHour(daysAgo(1), 10),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 9000,
+        items: [exampleItem()],
+        shopId: kTestCafeShopId,
+      );
+      final container = buildContainer(orders: orders);
+
+      var snapshot = await settle(container);
+      expect(snapshot.dayBills.map((b) => b.receiptNumber).toList(), [
+        'BF-TODAY',
+      ]);
+
+      container.read(dashboardDateProvider.notifier).select(daysAgo(1));
+      snapshot = await refresh(container);
+      expect(snapshot.dayBills.map((b) => b.receiptNumber).toList(), [
+        'BF-YESTERDAY',
+      ]);
+    });
+
+    test('dayBills are scoped to the signed-in shop', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'BF-CAFE',
+        createdAt: atHour(today(), 10),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 3000,
+        items: [exampleItem()],
+        shopId: kTestCafeShopId,
+      );
+      orders.add(
+        receiptNumber: 'FT-1',
+        createdAt: atHour(today(), 11),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 8000,
+        items: [exampleItem()],
+        shopId: kTestFoodTruckShopId,
+      );
+
+      final snapshot = await settle(buildContainer(orders: orders));
+
+      expect(snapshot.dayBills.map((b) => b.receiptNumber).toList(), [
+        'BF-CAFE',
+      ]);
+    });
+
+    test(
+      'dayItemBreakdown aggregates by product and variant, revenue first',
+      () async {
+        final orders = FakeOrdersRepository();
+        orders.add(
+          receiptNumber: 'BF-1',
+          createdAt: atHour(today(), 9),
+          paymentMethod: PaymentMethod.cash,
+          totalPaise: 11000,
+          items: [variantItem('Maggi', 'Cheese', quantity: 2), exampleItem()],
+          shopId: kTestCafeShopId,
+        );
+        orders.add(
+          receiptNumber: 'BF-2',
+          createdAt: atHour(today(), 18),
+          paymentMethod: PaymentMethod.upi,
+          totalPaise: 17000,
+          items: [
+            variantItem('Maggi', 'Cheese'),
+            variantItem('Maggi', 'Plain', price: 4000, quantity: 3),
+          ],
+          shopId: kTestCafeShopId,
+        );
+        final container = buildContainer(orders: orders);
+        await settle(container);
+
+        final rows = await container
+            .read(dashboardControllerProvider.notifier)
+            .dayItemBreakdown();
+
+        // Same product, two variants plus the plain line: three rows.
+        expect(rows.map((r) => r.displayName).toList(), [
+          'Maggi — Cheese',
+          'Maggi — Plain',
+          'Filter Coffee',
+        ]);
+        expect(rows[0].unitsSold, 3);
+        expect(rows[0].revenuePaise, 15000);
+        expect(rows[1].unitsSold, 3);
+        expect(rows[1].revenuePaise, 12000);
+        expect(rows[2].unitsSold, 1);
+        expect(rows[2].revenuePaise, 1000);
+      },
+    );
+
+    test(
+      'dayItemBreakdown is empty without sales and ignores other days',
+      () async {
+        final orders = FakeOrdersRepository();
+        orders.add(
+          receiptNumber: 'BF-OLD',
+          createdAt: atHour(daysAgo(2), 10),
+          paymentMethod: PaymentMethod.cash,
+          totalPaise: 3000,
+          items: [exampleItem()],
+          shopId: kTestCafeShopId,
+        );
+        final container = buildContainer(orders: orders);
+        await settle(container);
+
+        final rows = await container
+            .read(dashboardControllerProvider.notifier)
+            .dayItemBreakdown();
+        expect(rows, isEmpty);
+      },
+    );
+
+    test('dayItemBreakdown respects the shop scope', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'BF-CAFE',
+        createdAt: atHour(today(), 10),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 3000,
+        items: [exampleItem(quantity: 3)],
+        shopId: kTestCafeShopId,
+      );
+      orders.add(
+        receiptNumber: 'FT-1',
+        createdAt: atHour(today(), 11),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 8000,
+        items: [exampleItem(quantity: 8)],
+        shopId: kTestFoodTruckShopId,
+      );
+      final container = buildContainer(orders: orders);
+      await settle(container);
+
+      final rows = await container
+          .read(dashboardControllerProvider.notifier)
+          .dayItemBreakdown();
+      expect(rows.length, 1);
+      expect(rows.single.unitsSold, 3);
+      expect(rows.single.revenuePaise, 3000);
+    });
+
+    test('dashboardDayItemsProvider serves the breakdown lazily', () async {
+      final orders = FakeOrdersRepository();
+      orders.add(
+        receiptNumber: 'BF-1',
+        createdAt: atHour(today(), 10),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 3000,
+        items: [exampleItem(quantity: 3)],
+        shopId: kTestCafeShopId,
+      );
+      final container = buildContainer(orders: orders);
+      await settle(container);
+
+      // The snapshot itself carries no item rows: they load on demand.
+      expect(
+        container.read(dashboardControllerProvider).requireValue.dayItemCount,
+        3,
+      );
+      final rows = await container.read(dashboardDayItemsProvider.future);
+      expect(rows.single.displayName, 'Filter Coffee');
+      expect(rows.single.unitsSold, 3);
+      expect(rows.single.revenuePaise, 3000);
+    });
+
+    test('dayItemBreakdown surfaces order failures safely', () async {
+      final orders = FakeOrdersRepository()..detailError = Exception('db');
+      orders.add(
+        receiptNumber: 'BF-1',
+        createdAt: atHour(today(), 10),
+        paymentMethod: PaymentMethod.cash,
+        totalPaise: 3000,
+        items: [exampleItem()],
+        shopId: kTestCafeShopId,
+      );
+      final container = buildContainer(orders: orders);
+      await settle(container);
+
+      await expectLater(
+        container.read(dashboardControllerProvider.notifier).dayItemBreakdown(),
+        throwsA(isA<UnexpectedOrdersFailure>()),
+      );
+    });
   });
 
   group('due reminders', () {

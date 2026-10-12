@@ -10344,6 +10344,17 @@ class $SaleItemsTable extends SaleItems
     $customConstraints:
         'CHECK (applied_offer_type IS NULL OR applied_offer_type IN (\'PERCENTAGE\',\'COMBO\',\'BUY_X_GET_Y\',\'QUANTITY_TIER\'))',
   );
+  static const VerificationMeta _consumedMeta = const VerificationMeta(
+    'consumed',
+  );
+  @override
+  late final GeneratedColumn<String> consumed = GeneratedColumn<String>(
+    'consumed',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -10361,6 +10372,7 @@ class $SaleItemsTable extends SaleItems
     appliedOfferId,
     appliedOfferName,
     appliedOfferType,
+    consumed,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -10497,6 +10509,12 @@ class $SaleItemsTable extends SaleItems
         ),
       );
     }
+    if (data.containsKey('consumed')) {
+      context.handle(
+        _consumedMeta,
+        consumed.isAcceptableOrUnknown(data['consumed']!, _consumedMeta),
+      );
+    }
     return context;
   }
 
@@ -10566,6 +10584,10 @@ class $SaleItemsTable extends SaleItems
         DriftSqlType.string,
         data['${effectivePrefix}applied_offer_type'],
       ),
+      consumed: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}consumed'],
+      ),
     );
   }
 
@@ -10630,6 +10652,14 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
   /// type vocabulary (including QUANTITY_TIER) so a tier-priced line can be
   /// snapshotted on the sale.
   final String? appliedOfferType;
+
+  /// What this line consumed, as a JSON array snapshot written at sale time:
+  /// `[{"ip": ingredient product id, "iv": ingredient variant id or null,
+  /// "q": units consumed per ONE unit sold}]`. NULL for unmapped lines and
+  /// for sales that predate snapshots. A void restores exactly this (times
+  /// the line quantity) instead of re-reading the live recipe mapping, so
+  /// later edits, clears and remaps can never corrupt the restore.
+  final String? consumed;
   const SaleItem({
     required this.id,
     this.shopId,
@@ -10646,6 +10676,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     this.appliedOfferId,
     this.appliedOfferName,
     this.appliedOfferType,
+    this.consumed,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -10679,6 +10710,9 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     if (!nullToAbsent || appliedOfferType != null) {
       map['applied_offer_type'] = Variable<String>(appliedOfferType);
     }
+    if (!nullToAbsent || consumed != null) {
+      map['consumed'] = Variable<String>(consumed);
+    }
     return map;
   }
 
@@ -10711,6 +10745,9 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       appliedOfferType: appliedOfferType == null && nullToAbsent
           ? const Value.absent()
           : Value(appliedOfferType),
+      consumed: consumed == null && nullToAbsent
+          ? const Value.absent()
+          : Value(consumed),
     );
   }
 
@@ -10735,6 +10772,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       appliedOfferId: serializer.fromJson<String?>(json['appliedOfferId']),
       appliedOfferName: serializer.fromJson<String?>(json['appliedOfferName']),
       appliedOfferType: serializer.fromJson<String?>(json['appliedOfferType']),
+      consumed: serializer.fromJson<String?>(json['consumed']),
     );
   }
   @override
@@ -10756,6 +10794,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       'appliedOfferId': serializer.toJson<String?>(appliedOfferId),
       'appliedOfferName': serializer.toJson<String?>(appliedOfferName),
       'appliedOfferType': serializer.toJson<String?>(appliedOfferType),
+      'consumed': serializer.toJson<String?>(consumed),
     };
   }
 
@@ -10775,6 +10814,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     Value<String?> appliedOfferId = const Value.absent(),
     Value<String?> appliedOfferName = const Value.absent(),
     Value<String?> appliedOfferType = const Value.absent(),
+    Value<String?> consumed = const Value.absent(),
   }) => SaleItem(
     id: id ?? this.id,
     shopId: shopId.present ? shopId.value : this.shopId,
@@ -10797,6 +10837,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     appliedOfferType: appliedOfferType.present
         ? appliedOfferType.value
         : this.appliedOfferType,
+    consumed: consumed.present ? consumed.value : this.consumed,
   );
   SaleItem copyWithCompanion(SaleItemsCompanion data) {
     return SaleItem(
@@ -10831,6 +10872,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
       appliedOfferType: data.appliedOfferType.present
           ? data.appliedOfferType.value
           : this.appliedOfferType,
+      consumed: data.consumed.present ? data.consumed.value : this.consumed,
     );
   }
 
@@ -10851,7 +10893,8 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
           ..write('offerDiscountPaise: $offerDiscountPaise, ')
           ..write('appliedOfferId: $appliedOfferId, ')
           ..write('appliedOfferName: $appliedOfferName, ')
-          ..write('appliedOfferType: $appliedOfferType')
+          ..write('appliedOfferType: $appliedOfferType, ')
+          ..write('consumed: $consumed')
           ..write(')'))
         .toString();
   }
@@ -10873,6 +10916,7 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
     appliedOfferId,
     appliedOfferName,
     appliedOfferType,
+    consumed,
   );
   @override
   bool operator ==(Object other) =>
@@ -10892,7 +10936,8 @@ class SaleItem extends DataClass implements Insertable<SaleItem> {
           other.offerDiscountPaise == this.offerDiscountPaise &&
           other.appliedOfferId == this.appliedOfferId &&
           other.appliedOfferName == this.appliedOfferName &&
-          other.appliedOfferType == this.appliedOfferType);
+          other.appliedOfferType == this.appliedOfferType &&
+          other.consumed == this.consumed);
 }
 
 class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
@@ -10911,6 +10956,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
   final Value<String?> appliedOfferId;
   final Value<String?> appliedOfferName;
   final Value<String?> appliedOfferType;
+  final Value<String?> consumed;
   final Value<int> rowid;
   const SaleItemsCompanion({
     this.id = const Value.absent(),
@@ -10928,6 +10974,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     this.appliedOfferId = const Value.absent(),
     this.appliedOfferName = const Value.absent(),
     this.appliedOfferType = const Value.absent(),
+    this.consumed = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   SaleItemsCompanion.insert({
@@ -10946,6 +10993,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     this.appliedOfferId = const Value.absent(),
     this.appliedOfferName = const Value.absent(),
     this.appliedOfferType = const Value.absent(),
+    this.consumed = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : saleId = Value(saleId),
        productId = Value(productId),
@@ -10969,6 +11017,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     Expression<String>? appliedOfferId,
     Expression<String>? appliedOfferName,
     Expression<String>? appliedOfferType,
+    Expression<String>? consumed,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -10988,6 +11037,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
       if (appliedOfferId != null) 'applied_offer_id': appliedOfferId,
       if (appliedOfferName != null) 'applied_offer_name': appliedOfferName,
       if (appliedOfferType != null) 'applied_offer_type': appliedOfferType,
+      if (consumed != null) 'consumed': consumed,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -11008,6 +11058,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     Value<String?>? appliedOfferId,
     Value<String?>? appliedOfferName,
     Value<String?>? appliedOfferType,
+    Value<String?>? consumed,
     Value<int>? rowid,
   }) {
     return SaleItemsCompanion(
@@ -11026,6 +11077,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
       appliedOfferId: appliedOfferId ?? this.appliedOfferId,
       appliedOfferName: appliedOfferName ?? this.appliedOfferName,
       appliedOfferType: appliedOfferType ?? this.appliedOfferType,
+      consumed: consumed ?? this.consumed,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -11078,6 +11130,9 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
     if (appliedOfferType.present) {
       map['applied_offer_type'] = Variable<String>(appliedOfferType.value);
     }
+    if (consumed.present) {
+      map['consumed'] = Variable<String>(consumed.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -11102,6 +11157,7 @@ class SaleItemsCompanion extends UpdateCompanion<SaleItem> {
           ..write('appliedOfferId: $appliedOfferId, ')
           ..write('appliedOfferName: $appliedOfferName, ')
           ..write('appliedOfferType: $appliedOfferType, ')
+          ..write('consumed: $consumed, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -11809,7 +11865,7 @@ class $StockMovementsTable extends StockMovements
     type: DriftSqlType.string,
     requiredDuringInsert: true,
     $customConstraints:
-        'NOT NULL CHECK (movement_type IN (\'OPENING\', \'SALE\', \'PURCHASE\', \'ADJUSTMENT_IN\', \'ADJUSTMENT_OUT\'))',
+        'NOT NULL CHECK (movement_type IN (\'OPENING\', \'SALE\', \'PURCHASE\', \'ADJUSTMENT_IN\', \'ADJUSTMENT_OUT\', \'VOID\'))',
   );
   static const VerificationMeta _quantityMeta = const VerificationMeta(
     'quantity',
@@ -12137,8 +12193,9 @@ class StockMovement extends DataClass implements Insertable<StockMovement> {
   /// product itself. Plain column, as above.
   final String? variantId;
 
-  /// What happened to stock: OPENING, SALE, PURCHASE, ADJUSTMENT_IN or
-  /// ADJUSTMENT_OUT.
+  /// What happened to stock: OPENING, SALE, PURCHASE, ADJUSTMENT_IN,
+  /// ADJUSTMENT_OUT or VOID (a void reversing exactly what one sale
+  /// consumed; always positive, always referencing that sale).
   final String movementType;
 
   /// Signed delta applied to stock; never zero.
@@ -33724,6 +33781,7 @@ typedef $$SaleItemsTableCreateCompanionBuilder =
       Value<String?> appliedOfferId,
       Value<String?> appliedOfferName,
       Value<String?> appliedOfferType,
+      Value<String?> consumed,
       Value<int> rowid,
     });
 typedef $$SaleItemsTableUpdateCompanionBuilder =
@@ -33743,6 +33801,7 @@ typedef $$SaleItemsTableUpdateCompanionBuilder =
       Value<String?> appliedOfferId,
       Value<String?> appliedOfferName,
       Value<String?> appliedOfferType,
+      Value<String?> consumed,
       Value<int> rowid,
     });
 
@@ -33858,6 +33917,11 @@ class $$SaleItemsTableFilterComposer
 
   ColumnFilters<String> get appliedOfferType => $composableBuilder(
     column: $table.appliedOfferType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get consumed => $composableBuilder(
+    column: $table.consumed,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -33982,6 +34046,11 @@ class $$SaleItemsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get consumed => $composableBuilder(
+    column: $table.consumed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$ShopsTableOrderingComposer get shopId {
     final $$ShopsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -34093,6 +34162,9 @@ class $$SaleItemsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get consumed =>
+      $composableBuilder(column: $table.consumed, builder: (column) => column);
+
   $$ShopsTableAnnotationComposer get shopId {
     final $$ShopsTableAnnotationComposer composer = $composerBuilder(
       composer: this,
@@ -34183,6 +34255,7 @@ class $$SaleItemsTableTableManager
                 Value<String?> appliedOfferId = const Value.absent(),
                 Value<String?> appliedOfferName = const Value.absent(),
                 Value<String?> appliedOfferType = const Value.absent(),
+                Value<String?> consumed = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => SaleItemsCompanion(
                 id: id,
@@ -34200,6 +34273,7 @@ class $$SaleItemsTableTableManager
                 appliedOfferId: appliedOfferId,
                 appliedOfferName: appliedOfferName,
                 appliedOfferType: appliedOfferType,
+                consumed: consumed,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -34219,6 +34293,7 @@ class $$SaleItemsTableTableManager
                 Value<String?> appliedOfferId = const Value.absent(),
                 Value<String?> appliedOfferName = const Value.absent(),
                 Value<String?> appliedOfferType = const Value.absent(),
+                Value<String?> consumed = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => SaleItemsCompanion.insert(
                 id: id,
@@ -34236,6 +34311,7 @@ class $$SaleItemsTableTableManager
                 appliedOfferId: appliedOfferId,
                 appliedOfferName: appliedOfferName,
                 appliedOfferType: appliedOfferType,
+                consumed: consumed,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

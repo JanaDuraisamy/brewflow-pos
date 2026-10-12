@@ -249,6 +249,7 @@ IconData _iconFor(StockMovementType type) => switch (type) {
   StockMovementType.purchase => Icons.local_shipping_outlined,
   StockMovementType.adjustmentIn => Icons.add_circle_outline,
   StockMovementType.adjustmentOut => Icons.remove_circle_outline,
+  StockMovementType.void_ => Icons.undo_outlined,
 };
 
 String _unitSuffix(StockUnit unit) => switch (unit) {

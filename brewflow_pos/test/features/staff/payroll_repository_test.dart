@@ -771,4 +771,78 @@ void main() {
       expect(shifts, hasLength(1));
     });
   });
+
+  group('cross-device Leave', () {
+    const device2StaffId = 'staff-1-on-device-2';
+
+    Future<List<StaffAttendanceRecord>> device2Month(
+      DriftStaffPayrollRepository repo2,
+    ) => repo2.attendanceFor(
+      staffUserId: device2StaffId,
+      startDate: DateTime.utc(2025, 7, 1),
+      endExclusiveDate: DateTime.utc(2025, 8, 1),
+      shopIds: [cafeShop],
+    );
+
+    Future<DriftStaffPayrollRepository> device2() async {
+      final db2 = AppDatabase(NativeDatabase.memory());
+      addTearDown(db2.close);
+      await seedProfile(db: db2, userId: device2StaffId);
+      return DriftStaffPayrollRepository(db2, cloudGateway: cloud);
+    }
+
+    test(
+      'a Leave day marked on device A reads as Leave on a fresh device B',
+      () async {
+        await repository.markLeave(
+          staffUserId: staffId,
+          attendanceDate: day(20),
+          reason: 'Sick',
+        );
+        expect(cloud.storedShifts.single.isLeave, isTrue);
+
+        // Device B mints its own local profile id and shares the auth id. It
+        // has NO pull history, so the mirror insert is the ONLY writer of the
+        // Leave flag — the regression that used to render "0 hrs" instead of
+        // Leave on the peer device.
+        final repo2 = await device2();
+
+        final shifts = await device2Month(repo2);
+        expect(shifts, hasLength(1));
+        expect(shifts.single.staffUserId, device2StaffId);
+        expect(shifts.single.isLeave, isTrue);
+        expect(shifts.single.leaveReason, 'Sick');
+        expect(shifts.single.workedMinutes, 0);
+        expect(shifts.single.isOpen, isFalse);
+      },
+    );
+
+    test(
+      'a Leave reason change on device A refreshes device B on re-read',
+      () async {
+        final repo2 = await device2();
+
+        await repository.markLeave(
+          staffUserId: staffId,
+          attendanceDate: day(21),
+          reason: 'First',
+        );
+        expect((await device2Month(repo2)).single.leaveReason, 'First');
+
+        // The owner rewrites the Leave (same id, new reason) on device A.
+        await repository.markLeave(
+          staffUserId: staffId,
+          attendanceDate: day(21),
+          reason: 'Updated',
+        );
+
+        // The row already exists on B, so the UPDATE path must carry the new
+        // leave reason too — not just clock-in/out columns.
+        final shifts = await device2Month(repo2);
+        expect(shifts, hasLength(1));
+        expect(shifts.single.isLeave, isTrue);
+        expect(shifts.single.leaveReason, 'Updated');
+      },
+    );
+  });
 }

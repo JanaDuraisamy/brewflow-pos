@@ -28,6 +28,7 @@ import 'package:brewflow_pos/features/inventory/presentation/category_management
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_history_page.dart';
 import 'package:brewflow_pos/features/inventory/presentation/product_form_page.dart';
+import 'package:brewflow_pos/features/inventory/presentation/shared_stock_page.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/order_detail_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_page.dart';
@@ -181,6 +182,11 @@ GoRouter buildAppRouter({
                         ? state.extra! as StockHistoryArgs
                         : null,
                   ),
+                ),
+                GoRoute(
+                  path: 'recipes',
+                  name: 'inventory_recipes',
+                  builder: (context, state) => const SharedStockPage(),
                 ),
               ],
             ),

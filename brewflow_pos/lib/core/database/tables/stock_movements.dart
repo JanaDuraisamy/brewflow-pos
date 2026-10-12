@@ -63,11 +63,13 @@ class StockMovements extends Table {
   /// product itself. Plain column, as above.
   TextColumn get variantId => text().nullable()();
 
-  /// What happened to stock: OPENING, SALE, PURCHASE, ADJUSTMENT_IN or
-  /// ADJUSTMENT_OUT.
+  /// What happened to stock: OPENING, SALE, PURCHASE, ADJUSTMENT_IN,
+  /// ADJUSTMENT_OUT or VOID (a void reversing exactly what one sale
+  /// consumed; always positive, always referencing that sale).
   TextColumn get movementType => text().customConstraint(
     "NOT NULL CHECK (movement_type IN "
-    "('OPENING', 'SALE', 'PURCHASE', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT'))",
+    "('OPENING', 'SALE', 'PURCHASE', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT', "
+    "'VOID'))",
   )();
 
   /// Signed delta applied to stock; never zero.

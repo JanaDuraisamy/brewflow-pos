@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:brewflow_pos/features/sync/domain/device_registration.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_gateway.dart';
 import 'package:brewflow_pos/features/sync/domain/master_data_models.dart';
@@ -207,6 +209,11 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'product_recipes',
     [for (final row in rows) _recipeToServer(row)],
   );
+
+  @override
+  Future<void> deleteProductRecipe(String id) async {
+    await _client.from('product_recipes').delete().eq('id', id);
+  }
 
   @override
   Future<PullPage<SyncProductRecipe>> pullProductRecipes({
@@ -518,6 +525,9 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     'applied_offer_id': row.appliedOfferId,
     'applied_offer_name': row.appliedOfferName,
     'applied_offer_type': row.appliedOfferType,
+    // The server column is jsonb and the model holds JSON text, so decode on
+    // the way up and encode on the way down.
+    'consumed': row.consumed == null ? null : jsonDecode(row.consumed!),
     'client_created_at': DateTime.now().toUtc().toIso8601String(),
   };
 
@@ -538,6 +548,8 @@ final class SupabaseMasterDataGateway implements RemoteMasterDataGateway {
     appliedOfferId: json['applied_offer_id'] as String?,
     appliedOfferName: json['applied_offer_name'] as String?,
     appliedOfferType: json['applied_offer_type'] as String?,
+    // jsonb comes back decoded; the model stores JSON text.
+    consumed: json['consumed'] == null ? null : jsonEncode(json['consumed']),
   );
 
   // ---- Expenses ---------------------------------------------------------------

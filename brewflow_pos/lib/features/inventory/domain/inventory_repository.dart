@@ -78,6 +78,67 @@ final class UnexpectedInventoryFailure extends InventoryFailure {
   ]);
 }
 
+/// A recipe line names fewer than 1 unit of an ingredient per sale.
+final class RecipeQuantityFailure extends InventoryFailure {
+  const RecipeQuantityFailure()
+    : super('Each ingredient needs at least 1 unit per sale.');
+}
+
+/// A recipe names its own dish as an ingredient.
+final class RecipeSelfConsumptionFailure extends InventoryFailure {
+  const RecipeSelfConsumptionFailure() : super('A dish cannot consume itself.');
+}
+
+/// A recipe names a product whose stock is not tracked (`NONE`).
+final class RecipeUntrackedIngredientFailure extends InventoryFailure {
+  const RecipeUntrackedIngredientFailure()
+    : super(
+        'Only ingredients that track stock can be used in a recipe. '
+        'Pick a tracked ingredient instead.',
+      );
+}
+
+/// A recipe scopes to a variant that is not part of the dish.
+final class RecipeVariantMismatchFailure extends InventoryFailure {
+  const RecipeVariantMismatchFailure()
+    : super('This variant is not part of the dish.');
+}
+
+/// A recipe consumes a variant that is not part of the ingredient.
+final class RecipeIngredientVariantMismatchFailure extends InventoryFailure {
+  const RecipeIngredientVariantMismatchFailure()
+    : super('This variant is not part of the ingredient.');
+}
+
+/// A save would leave product-level and variant-specific rows on one dish.
+///
+/// Both scopes match the same sale at checkout, so the ingredient would be
+/// deducted twice. The owner must clear the other scope first; the message
+/// names it.
+final class RecipeOverlapFailure extends InventoryFailure {
+  const RecipeOverlapFailure(super.message);
+}
+
+/// A recipe write was attempted from a view with no writable shop (the All
+/// businesses view is read-only).
+final class RecipeReadOnlyScopeFailure extends InventoryFailure {
+  const RecipeReadOnlyScopeFailure()
+    : super(
+        'Switch to the Cafe or Food Truck to edit recipes. '
+        'The All businesses view is read-only.',
+      );
+}
+
+/// An ingredient with the same name already exists in the writable shop.
+///
+/// The repository itself allows duplicate product names, but the ingredient
+/// pickers search by name — a twin would risk mapping the wrong source — so
+/// the ingredient flow refuses instead of creating a confusing duplicate.
+final class DuplicateIngredientNameFailure extends InventoryFailure {
+  const DuplicateIngredientNameFailure(String name)
+    : super('An ingredient named "$name" already exists.');
+}
+
 /// Local-first inventory persistence contract. Implementations must be
 /// offline-capable (Drift) and never require network access.
 abstract interface class InventoryRepository {

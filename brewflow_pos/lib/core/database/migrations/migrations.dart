@@ -81,6 +81,12 @@ final class AppMigrations {
   /// - v32 → v33 adds shared-stock recipes: `products.is_ingredient`
   ///   (default false, so every existing product stays sellable) and the new
   ///   `product_recipes` mapping table with its indexes. Purely additive.
+  /// - v34 → v35 supports exact void restoration: `sale_items.consumed`
+  ///   (nullable per-line consumption snapshot, NULL for unmapped and legacy
+  ///   lines) is purely additive, and `stock_movements` is recreated in
+  ///   place (TableMigration, per the v6→v7 convention) so the
+  ///   `movement_type` CHECK also accepts VOID. Every existing row keeps its
+  ///   values.
   ///
   /// Everything lives in the drift-generated [versions.stepByStep]; unknown
   /// versions fail loudly.
@@ -1128,6 +1134,55 @@ final class AppMigrations {
           await m.createIndex(schema.idxMonthCleanupMarkersShop);
           await m.createIndex(schema.idxMonthCleanupMarkersMonth);
         }
+      },
+      from34To35: (m, schema) async {
+        // Exact void restoration: `sale_items.consumed` is a nullable
+        // snapshot column, so a plain addColumn suffices — existing (and
+        // legacy NULL) lines read back as "no snapshot", which is exactly
+        // what the void fallback expects. Guarded like every additive step.
+        if (await _hasTable(m.database, 'sale_items') &&
+            !await _hasColumn(m.database, 'sale_items', 'consumed')) {
+          await m.addColumn(schema.saleItems, schema.saleItems.consumed);
+        }
+        // The movement_type CHECK gains 'VOID'. SQLite cannot alter a CHECK,
+        // so the table is rebuilt through the same column-intersecting helper
+        // every other rebuild in this file uses: it names the columns it
+        // copies and only carries the ones the stored table really has, so a
+        // device whose `stock_movements` predates (or never gained) a column
+        // cannot abort the upgrade with a bare `SELECT *` copy.
+        await _rebuildTablePreservingRows(
+          m,
+          table: 'stock_movements',
+          backup: 'stock_movements_bak_v35',
+          columns: const [
+            'id',
+            'shop_id',
+            'product_id',
+            'variant_id',
+            'movement_type',
+            'quantity',
+            'stock_before',
+            'stock_after',
+            'reason',
+            'note',
+            'reference_type',
+            'reference_id',
+            'created_at',
+            'updated_at',
+          ],
+          needsRebuild: await _checkLacksValue(
+            m.database,
+            'stock_movements',
+            'movement_type',
+            'VOID',
+          ),
+          create: () async {
+            await m.createTable(schema.stockMovements);
+            await m.createIndex(schema.idxStockMovementsShop);
+            await m.createIndex(schema.idxStockMovementsProductCreatedAt);
+            await m.createIndex(schema.idxStockMovementsVariantCreatedAt);
+          },
+        );
       },
     )(migrator, from, to);
   }

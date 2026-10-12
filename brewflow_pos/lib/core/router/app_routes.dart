@@ -55,6 +55,11 @@ abstract final class AppRoutes {
   static const String productStockHistory = '/inventory/products/history';
   static const String foodTruckStock = '/inventory/food-truck-stock';
 
+  /// Read-only shared-stock (ingredient/recipe) overview, pushed on top of
+  /// the inventory branch. Recipe editing arrives in a later phase; this
+  /// route only ever displays existing mappings.
+  static const String inventoryRecipes = '/inventory/recipes';
+
   // Orders module sub-routes (pushed on top of the orders branch)
   static const String orderDetail = '/orders/detail';
 

@@ -5,7 +5,9 @@ import 'package:brewflow_pos/core/theme/app_spacing.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/stock_movement_repository.dart';
+import 'package:brewflow_pos/features/inventory/presentation/food_truck_stock_sheet.dart';
 import 'package:brewflow_pos/features/inventory/presentation/stock_movement_controller.dart';
+import 'package:brewflow_pos/features/staff/presentation/business_switcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -308,4 +310,88 @@ final class StockAdjustmentDialogState
       ],
     );
   }
+}
+
+/// Opens the stock editor for [product] in the active business.
+///
+/// The two businesses keep separate stock, so the editor has to route: a Cafe
+/// product adjust writes `products.stock_quantity`, while a product the Cafe
+/// shares into the Food Truck has no truck stock of its own and must be edited
+/// through the `shop_product_stock` overlay instead. Sending a shared product
+/// down the Cafe path is how a truck adjustment would silently move the Cafe's
+/// shelf, so the routing is explicit rather than inferred from the UI.
+///
+/// Fails closed whenever no single concrete shop can be named, because a stock
+/// write is a movement row plus a quantity update and both are irreversible
+/// from the user's point of view:
+///
+///  * `BusinessContext.all` is a read-only view spanning two independent
+///    shelves. There is no correct shelf to write, so guessing Cafe would move
+///    the Cafe's stock on a tap the user made while looking at both.
+///  * Food Truck with no persisted truck id has no shelf to move. Falling
+///    through to the Cafe path would let a truck action edit Cafe stock.
+Future<void> showStockAdjustmentDialog(
+  BuildContext context,
+  WidgetRef ref,
+  Product product, {
+  ProductVariant? variant,
+}) async {
+  final switcher = ref.read(businessSwitcherProvider.notifier);
+  final business = ref.watch(businessSwitcherProvider);
+  if (business == BusinessContext.all) {
+    showAmbiguousScopeNotice(context);
+    return;
+  }
+  if (business == BusinessContext.foodTruck) {
+    final truckShopId = await switcher.existingFoodTruckShopId();
+    if (!context.mounted) return;
+    if (truckShopId == null) {
+      // No persisted truck: there is no Food Truck shelf to move, and the Cafe
+      // path would write the wrong business. Refuse rather than guess.
+      showAmbiguousScopeNotice(context);
+      return;
+    }
+    // A product the truck owns outright edits its own stock row, exactly like
+    // the Cafe. Only a shared product needs the overlay editor.
+    if (product.shopId == truckShopId) {
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) =>
+            StockAdjustmentDialog(product: product, variant: variant),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => FoodTruckStockDialog(
+        shopId: truckShopId,
+        product: product,
+        variant: variant,
+      ),
+    );
+    return;
+  }
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (_) => StockAdjustmentDialog(product: product, variant: variant),
+  );
+}
+
+/// Explains, in the user's own terms, why stock cannot be edited right now.
+///
+/// Deliberately not an error dialog: nothing failed, and the fix is on screen
+/// already (pick the single business, or let the Food Truck finish setting up).
+void showAmbiguousScopeNotice(BuildContext context) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text(
+        'Pick a single business to adjust stock. The All businesses view is '
+        'read-only, and stock is kept separately for the Cafe and the '
+        'Food Truck.',
+      ),
+    ),
+  );
 }

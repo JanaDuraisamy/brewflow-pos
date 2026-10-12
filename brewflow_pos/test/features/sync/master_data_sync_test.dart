@@ -967,4 +967,251 @@ void main() {
       ]);
     });
   });
+
+  group('recipe sync (shared-stock mappings)', () {
+    Future<({String dish, String ingredient})> seedSharedCatalog(
+      Device d,
+    ) async {
+      final category = await d.inventory.createCategory('Maggi');
+      final ingredient = await d.inventory.createProduct(
+        categoryId: category.id,
+        name: 'Maggi Packet',
+        sellingPricePaise: 2000,
+        stockQuantity: 60,
+        isActive: true,
+        isIngredient: true,
+        shopId: d.shopId,
+      );
+      final dish = await d.inventory.createProduct(
+        categoryId: category.id,
+        name: 'Plain Maggi',
+        sellingPricePaise: 4500,
+        stockQuantity: 0,
+        stockUnit: StockUnit.none,
+        isActive: true,
+        shopId: d.shopId,
+      );
+      return (dish: dish.id, ingredient: ingredient.id);
+    }
+
+    test('A maps a recipe → cloud → B receives the mapping', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      final ids = await seedSharedCatalog(a);
+      await a.inventory.setRecipe(
+        productId: ids.dish,
+        ingredients: [
+          RecipeIngredientInput(
+            ingredientProductId: ids.ingredient,
+            quantity: 2,
+          ),
+        ],
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      expect(cloud.productRecipes, hasLength(1));
+
+      await b.runCycle();
+      final rows = await b.inventory.recipesForProduct(
+        ids.dish,
+        shopIds: const ['shop-1'],
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single.ingredientProductId, ids.ingredient);
+      expect(rows.single.quantity, 2);
+      // Deterministic slot UUID: the mapping has one identity everywhere.
+      expect(rows.single.id, cloud.productRecipes.values.single.row.id);
+    });
+
+    test(
+      'replacing a mapping tombstones the dropped slot on every peer',
+      () async {
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
+        addTearDown(a.database.close);
+        addTearDown(b.database.close);
+
+        final ids = await seedSharedCatalog(a);
+        // A second ingredient to swap to, so the old slot really disappears.
+        final category = (await a.inventory.categories()).single;
+        final other = await a.inventory.createProduct(
+          categoryId: category.id,
+          name: 'Cheese Slice',
+          sellingPricePaise: 1000,
+          stockQuantity: 40,
+          isActive: true,
+          isIngredient: true,
+          shopId: 'shop-1',
+        );
+        await a.inventory.setRecipe(
+          productId: ids.dish,
+          ingredients: [
+            RecipeIngredientInput(ingredientProductId: ids.ingredient),
+          ],
+          shopId: 'shop-1',
+        );
+        await a.runCycle();
+        await b.runCycle();
+        final oldRowId = (await b.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        )).single.id;
+
+        // Replace the ingredient: the old slot must leave, the new one arrive.
+        await a.inventory.setRecipe(
+          productId: ids.dish,
+          ingredients: [
+            RecipeIngredientInput(ingredientProductId: other.id, quantity: 3),
+          ],
+          shopId: 'shop-1',
+        );
+        await a.runCycle();
+        // The cloud holds only the new slot — the old one was deleted, not
+        // stacked alongside a stale duplicate.
+        expect(cloud.productRecipes, hasLength(1));
+        expect(cloud.productRecipes.values.single.row.id, isNot(oldRowId));
+
+        await b.runCycle();
+        final rows = await b.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        );
+        expect(rows, hasLength(1));
+        expect(rows.single.id, isNot(oldRowId));
+        expect(rows.single.ingredientProductId, other.id);
+      },
+    );
+
+    test('clearing a mapping leaves the cloud and every device', () async {
+      final a = await makeDevice('A', 'shop-1');
+      final b = await makeDevice('B', 'shop-1');
+      addTearDown(a.database.close);
+      addTearDown(b.database.close);
+
+      final ids = await seedSharedCatalog(a);
+      await a.inventory.setRecipe(
+        productId: ids.dish,
+        ingredients: [
+          RecipeIngredientInput(ingredientProductId: ids.ingredient),
+        ],
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      await b.runCycle();
+      expect(
+        await b.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        ),
+        hasLength(1),
+      );
+
+      await a.inventory.setRecipe(
+        productId: ids.dish,
+        ingredients: const [],
+        shopId: 'shop-1',
+      );
+      await a.runCycle();
+      expect(cloud.productRecipes, isEmpty);
+      expect(cloud.deletions, isNotEmpty, reason: 'a tombstone was recorded');
+
+      await b.runCycle();
+      expect(
+        await b.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        ),
+        isEmpty,
+      );
+
+      // A device provisioned afterwards has nothing to resurrect: the row is
+      // gone from the cloud table, not merely tombstoned locally.
+      final fresh = await makeDevice('C', 'shop-1');
+      addTearDown(fresh.database.close);
+      await fresh.runCycle();
+      expect(
+        await fresh.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'a pending local mapping survives an incoming cloud tombstone',
+      () async {
+        final a = await makeDevice('A', 'shop-1');
+        final b = await makeDevice('B', 'shop-1');
+        addTearDown(a.database.close);
+        addTearDown(b.database.close);
+
+        final ids = await seedSharedCatalog(a);
+        await a.inventory.setRecipe(
+          productId: ids.dish,
+          ingredients: [
+            RecipeIngredientInput(ingredientProductId: ids.ingredient),
+          ],
+          shopId: 'shop-1',
+        );
+        await a.runCycle();
+        await b.runCycle();
+
+        // B re-saves the same slot offline: the write queues a PENDING outbox
+        // row for the deterministic slot UUID (same slot → same id).
+        b.gateway.pushesFail = true;
+        await b.inventory.setRecipe(
+          productId: ids.dish,
+          ingredients: [
+            RecipeIngredientInput(
+              ingredientProductId: ids.ingredient,
+              quantity: 5,
+            ),
+          ],
+          shopId: 'shop-1',
+        );
+        final slotId = (await b.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        )).single.id;
+
+        // A clears the mapping meanwhile and broadcasts the tombstone.
+        await a.inventory.setRecipe(
+          productId: ids.dish,
+          ingredients: const [],
+          shopId: 'shop-1',
+        );
+        await a.runCycle();
+
+        await b.runCycle();
+        // The guard defers the tombstone while B's own edit is unresolved, so
+        // the edit is never silently discarded — even though the cloud row is
+        // already gone.
+        final survivor = await b.inventory.recipesForProduct(
+          ids.dish,
+          shopIds: const ['shop-1'],
+        );
+        expect(survivor, hasLength(1));
+        expect(survivor.single.id, slotId);
+        expect(survivor.single.quantity, 5);
+
+        // Once online, B's edit wins the arrival-order race and re-creates the
+        // cloud row; A then sees the mapping again.
+        b.gateway.pushesFail = false;
+        await b.runCycle();
+        await a.runCycle();
+        expect(cloud.productRecipes, hasLength(1));
+        expect(
+          await a.inventory.recipesForProduct(
+            ids.dish,
+            shopIds: const ['shop-1'],
+          ),
+          hasLength(1),
+        );
+      },
+    );
+  });
 }

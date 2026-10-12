@@ -72,17 +72,25 @@ abstract interface class RemoteMasterDataGateway
   // ---- Product recipes ------------------------------------------------------
 
   /// Pushes shared-stock recipe rows. Idempotent UPSERTS keyed by the row
-  /// UUID: re-saving the same mapping converges, never duplicates. Clearing
-  /// a mapping removes local rows without a tombstone (peers keep their copy
-  /// until the mapping is re-saved); deleting a product converges through
-  /// the PRODUCT tombstone, whose local CASCADE drops the mapping rows on
-  /// every device.
+  /// UUID: re-saving the same mapping converges, never duplicates. Replacing
+  /// or clearing a mapping emits DELETE outbox rows (row removal + tombstone,
+  /// see [deleteProductRecipe]) so every peer converges on the cleared mapping
+  /// instead of re-pulling the still-present remote row.
   Future<void> upsertProductRecipes(List<SyncProductRecipe> rows);
 
   Future<PullPage<SyncProductRecipe>> pullProductRecipes({
     required DateTime since,
     required int limit,
   });
+
+  /// Hard-deletes the `product_recipes` row in the cloud.
+  ///
+  /// Same reasoning as [deleteProduct], and needed for the same reason: the
+  /// PRODUCT_RECIPE tombstone alone makes peers converge — `_drainDeletions`
+  /// runs last in the pull — but the row would otherwise linger in
+  /// `product_recipes` and be re-pulled by every freshly provisioned device
+  /// on every first sync. Shop scoping is enforced by RLS on the delete.
+  Future<void> deleteProductRecipe(String id);
 
   // ---- Monthly report confirmations -----------------------------------------
 

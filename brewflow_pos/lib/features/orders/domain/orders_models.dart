@@ -145,6 +145,38 @@ final class OrderItem {
   final String? variantName;
 }
 
+/// One row of an item-wise sales breakdown: snapshot names from the sale
+/// lines, aggregated by (product, variant) so variants of one product stay
+/// distinguishable from each other and from the plain product row.
+///
+/// Shared by the dashboard Items drill-down and the Reports Items drill-down;
+/// both aggregate the same persisted line snapshots, only the window differs.
+final class ItemSalesRow {
+  const ItemSalesRow({
+    required this.productName,
+    this.variantName,
+    required this.unitsSold,
+    required this.revenuePaise,
+  });
+
+  /// Product name snapshot stored on the sale lines.
+  final String productName;
+
+  /// Variant name snapshot; null for plain product lines.
+  final String? variantName;
+
+  /// Total pieces sold.
+  final int unitsSold;
+
+  /// Total receipts (sum of line totals).
+  final int revenuePaise;
+
+  /// Display name: plain lines read the product alone, variant lines the
+  /// pair — never the product name alone.
+  String get displayName =>
+      variantName == null ? productName : '$productName — $variantName';
+}
+
 /// Date-range presets offered by the orders filter bar. Custom ranges picked
 /// through the date range picker collapse to [custom].
 enum OrdersDatePreset { all, today, last7, last30, last90, custom }

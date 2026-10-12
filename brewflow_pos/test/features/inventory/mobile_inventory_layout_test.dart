@@ -7,6 +7,7 @@ import 'package:brewflow_pos/features/customers/presentation/customer_ledger_con
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_page.dart';
+import 'package:brewflow_pos/features/inventory/presentation/shared_stock_page.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -338,4 +339,52 @@ void main() {
       },
     );
   }
+
+  group('compact shared-stock entry', () {
+    testWidgets('owner sees Shared Stock and reaches the page at 390dp', (
+      tester,
+    ) async {
+      seedCatalog();
+      await pumpAt(tester, 390.0);
+
+      expect(find.text('Shared Stock'), findsOneWidget);
+      await tester.tap(find.text('Shared Stock'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SharedStockPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('staff with inventory access sees no Shared Stock at 390dp', (
+      tester,
+    ) async {
+      seedCatalog();
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.physicalSize = const Size(390.0, 800);
+      addTearDown(tester.view.resetPhysicalSize);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            ...businessScopeOverrides(profile: testStaffProfile()),
+            authRepositoryProvider.overrideWithValue(fakeAuth),
+            inventoryRepositoryProvider.overrideWithValue(fakeInventory),
+            ordersRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+            customerLedgerRepositoryProvider.overrideWithValue(
+              FakeCustomerLedgerRepository(),
+            ),
+          ],
+          child: const BrewFlowApp(),
+        ),
+      );
+      fakeAuth.emit(_owner);
+      await tester.pumpAndSettle();
+      await openInventory(tester);
+
+      expect(find.byType(InventoryPage), findsOneWidget);
+      expect(find.text('Add Product'), findsOneWidget);
+      expect(find.text('Shared Stock'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

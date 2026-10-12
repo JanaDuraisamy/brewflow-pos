@@ -237,11 +237,9 @@ void main() {
       await engine.runCycle(deviceId: 'A', shopId: 'shop-1');
 
       final items = await (database.select(database.saleItems)).get();
-      expect(
-        items.map((r) => r.id),
-        ['i-valid'],
-        reason: 'valid item lands while the orphan is deferred',
-      );
+      expect(items.map((r) => r.id), [
+        'i-valid',
+      ], reason: 'valid item lands while the orphan is deferred');
       final sales = await (database.select(database.sales)).get();
       expect(sales.map((s) => s.id), ['s-valid']);
     });

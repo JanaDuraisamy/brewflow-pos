@@ -17,7 +17,17 @@ abstract interface class BillingCloudGateway {
     List<Map<String, dynamic>>? payments,
   });
 
+  /// Calls void_sale_atomic: voids the sale and restores exactly what it
+  /// consumed (snapshot, else recorded SALE movements). The response carries
+  /// `restored` (and `restored_rows`) so callers can observe whether stock
+  /// moved.
   Future<Map<String, dynamic>> voidSaleAtomic(String saleId);
+
+  /// Calls void_sale_without_restore_atomic: voids the sale and reverses
+  /// payments WITHOUT touching stock or movements. The recovery half of a
+  /// pruned/unsafe history (`VOID_HISTORY_PRUNED`), for sales the owner
+  /// chooses to void without an automatic restore.
+  Future<Map<String, dynamic>> voidSaleWithoutRestoreAtomic(String saleId);
 }
 
 final class SupabaseBillingGateway implements BillingCloudGateway {
@@ -66,6 +76,22 @@ final class SupabaseBillingGateway implements BillingCloudGateway {
         params: {'p_sale_id': saleId},
       ),
       name: 'void_sale_atomic',
+    );
+    if (res is Map<String, dynamic>) return res;
+    if (res is Map) return Map<String, dynamic>.from(res);
+    return {'id': saleId};
+  }
+
+  @override
+  Future<Map<String, dynamic>> voidSaleWithoutRestoreAtomic(
+    String saleId,
+  ) async {
+    final res = await rpcWithTimeout(
+      () => _client.rpc<dynamic>(
+        'void_sale_without_restore_atomic',
+        params: {'p_sale_id': saleId},
+      ),
+      name: 'void_sale_without_restore_atomic',
     );
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);

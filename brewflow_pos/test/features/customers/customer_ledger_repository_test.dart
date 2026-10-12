@@ -2047,4 +2047,359 @@ void main() {
       expect(await orders.saleById('s1'), isNotNull);
     });
   });
+
+  group('dueCollections', () {
+    /// `customer_payments.shop_id` is a real foreign key, so any shop-scoped
+    /// fixture has to create the shop rows first.
+    Future<void> seedShops(List<String> ids) async {
+      for (final id in ids) {
+        await database
+            .into(database.shops)
+            .insert(
+              ShopsCompanion.insert(
+                id: Value(id),
+                name: 'Shop $id',
+                createdAt: Value(DateTime.utc(2026, 1, 1)),
+                updatedAt: Value(DateTime.utc(2026, 1, 1)),
+              ),
+            );
+      }
+    }
+
+    Future<void> seedPayment({
+      required String id,
+      required String customerId,
+      required String saleId,
+      required int amountPaise,
+      String paymentMethod = 'CASH',
+      required DateTime paidAt,
+      bool reversed = false,
+      String? shopId,
+    }) async {
+      final now = DateTime.now().toUtc();
+      await database
+          .into(database.customerPayments)
+          .insert(
+            CustomerPaymentsCompanion.insert(
+              id: Value(id),
+              shopId: Value(shopId),
+              customerId: customerId,
+              saleId: Value(saleId),
+              amountPaise: amountPaise,
+              paymentMethod: paymentMethod,
+              paidAt: paidAt,
+              reversed: Value(reversed),
+              reversedAt: reversed ? Value(now) : const Value(null),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+            ),
+          );
+    }
+
+    (DateTime, DateTime) todayBounds() {
+      final local = DateTime.now();
+      final start = DateTime(local.year, local.month, local.day);
+      final end = start
+          .add(const Duration(days: 1))
+          .subtract(const Duration(microseconds: 1));
+      return (start.toUtc(), end.toUtc());
+    }
+
+    test(
+      'returns window payments newest first with customer, method and time',
+      () async {
+        await seedCustomer('c1');
+        await seedCustomer('c2');
+        await database
+            .into(database.customers)
+            .insert(
+              CustomersCompanion.insert(id: const Value('c3'), name: 'Asha'),
+            );
+        await seedSale(
+          id: 's1',
+          customerId: 'c1',
+          receiptNumber: 'BF-000001',
+          totalPaise: 10000,
+        );
+        await seedSale(
+          id: 's2',
+          customerId: 'c3',
+          receiptNumber: 'BF-000002',
+          totalPaise: 20000,
+        );
+        final (from, to) = todayBounds();
+        final morning = from.add(const Duration(hours: 9));
+        final evening = from.add(const Duration(hours: 18));
+        await seedPayment(
+          id: 'p1',
+          customerId: 'c1',
+          saleId: 's1',
+          amountPaise: 4000,
+          paymentMethod: 'CASH',
+          paidAt: morning,
+        );
+        await seedPayment(
+          id: 'p2',
+          customerId: 'c3',
+          saleId: 's2',
+          amountPaise: 7000,
+          paymentMethod: 'UPI',
+          paidAt: evening,
+        );
+
+        final rows = await repository.dueCollections(fromUtc: from, toUtc: to);
+
+        expect(rows.map((r) => r.id).toList(), ['p2', 'p1']);
+        expect(rows.first.customerName, 'Asha');
+        expect(rows.first.amountPaise, 7000);
+        expect(rows.first.paymentMethod, PaymentMethod.upi);
+        expect(rows.first.paidAt, evening);
+        expect(rows.first.saleId, 's2');
+        // c1 has no profile name seeded with a display name, so the id shows.
+        expect(rows.last.customerName, 'Customer c1');
+      },
+    );
+
+    test('window bounds are inclusive on both ends', () async {
+      await seedCustomer('c1');
+      await seedSale(
+        id: 's1',
+        customerId: 'c1',
+        receiptNumber: 'BF-000001',
+        totalPaise: 50000,
+      );
+      final (from, to) = todayBounds();
+      await seedPayment(
+        id: 'p-from',
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 1000,
+        paidAt: from,
+      );
+      await seedPayment(
+        id: 'p-to',
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 2000,
+        paidAt: to,
+      );
+      await seedPayment(
+        id: 'p-before',
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 4000,
+        paidAt: from.subtract(const Duration(microseconds: 1)),
+      );
+      await seedPayment(
+        id: 'p-after',
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 8000,
+        paidAt: to.add(const Duration(microseconds: 1)),
+      );
+
+      final rows = await repository.dueCollections(fromUtc: from, toUtc: to);
+
+      expect(rows.map((r) => r.id).toList(), ['p-to', 'p-from']);
+      expect(rows.fold(0, (sum, row) => sum + row.amountPaise), 3000);
+    });
+
+    test('reversed payments never count (void semantics)', () async {
+      await seedCustomer('c1');
+      await seedSale(
+        id: 's1',
+        customerId: 'c1',
+        receiptNumber: 'BF-000001',
+        totalPaise: 10000,
+        voided: true,
+      );
+      final (from, to) = todayBounds();
+      // Mirrors DriftBillingRepository.voidSale: the bill is flagged voided
+      // and every payment on it is reversed in the same transaction.
+      await seedPayment(
+        id: 'p-reversed',
+        customerId: 'c1',
+        saleId: 's1',
+        amountPaise: 6000,
+        paidAt: from.add(const Duration(hours: 10)),
+        reversed: true,
+      );
+
+      final rows = await repository.dueCollections(fromUtc: from, toUtc: to);
+
+      expect(rows, isEmpty);
+    });
+
+    test('collections on opening-balance dues count', () async {
+      await seedShops(const ['shop-1']);
+      await seedCustomer('c1');
+      await seedSale(
+        id: 's1',
+        customerId: 'c1',
+        receiptNumber: 'BF-000001',
+        totalPaise: 10000,
+        shopId: 'shop-1',
+      );
+      await repository.recordOpeningDue(
+        customerId: 'c1',
+        amountPaise: 5000,
+        shopId: 'shop-1',
+      );
+      final opening = await (database.select(
+        database.sales,
+      )..where((t) => t.isOpeningBalance.equals(true))).getSingle();
+      final (from, to) = todayBounds();
+      await seedPayment(
+        id: 'p-opening',
+        customerId: 'c1',
+        saleId: opening.id,
+        amountPaise: 5000,
+        paymentMethod: 'UPI',
+        paidAt: from.add(const Duration(hours: 11)),
+        shopId: 'shop-1',
+      );
+
+      final rows = await repository.dueCollections(
+        shopIds: ['shop-1'],
+        fromUtc: from,
+        toUtc: to,
+      );
+
+      expect(rows.map((r) => r.id).toList(), ['p-opening']);
+      expect(rows.single.amountPaise, 5000);
+    });
+
+    test('counter-sale money is never a due collection', () async {
+      await seedShops(const ['shop-1']);
+      await seedCustomer('c-walkin');
+      // A customer-linked sale settled at the counter: paid in full, no
+      // ledger rows, plus a split leg for good measure.
+      await seedSale(
+        id: 's-paid',
+        customerId: 'c-walkin',
+        receiptNumber: 'BF-000009',
+        totalPaise: 10000,
+        paymentStatus: 'PAID',
+        shopId: 'shop-1',
+      );
+      final now = DateTime.now().toUtc();
+      // A split leg on the paid sale: still new-sale money, not a collection.
+      await database
+          .into(database.salePayments)
+          .insert(
+            SalePaymentsCompanion.insert(
+              saleId: 's-paid',
+              paymentMethod: 'UPI',
+              amountPaise: 10000,
+              createdAt: Value(now),
+            ),
+          );
+      final (from, to) = todayBounds();
+
+      final rows = await repository.dueCollections(
+        shopIds: ['shop-1'],
+        fromUtc: from,
+        toUtc: to,
+      );
+
+      expect(rows, isEmpty);
+    });
+
+    test(
+      'shop scope isolates businesses and fails closed when empty',
+      () async {
+        await seedShops(const ['cafe-shop', 'truck-shop']);
+        await seedCustomer('c1');
+        await seedCustomer('c2');
+        await seedSale(
+          id: 's-cafe',
+          customerId: 'c1',
+          receiptNumber: 'BF-C1',
+          totalPaise: 10000,
+          shopId: 'cafe-shop',
+        );
+        await seedSale(
+          id: 's-truck',
+          customerId: 'c2',
+          receiptNumber: 'FT-000001',
+          totalPaise: 20000,
+          shopId: 'truck-shop',
+        );
+        final (from, to) = todayBounds();
+        final at = from.add(const Duration(hours: 10));
+        await seedPayment(
+          id: 'p-cafe',
+          customerId: 'c1',
+          saleId: 's-cafe',
+          amountPaise: 3000,
+          paidAt: at,
+          shopId: 'cafe-shop',
+        );
+        await seedPayment(
+          id: 'p-truck',
+          customerId: 'c2',
+          saleId: 's-truck',
+          amountPaise: 9000,
+          paidAt: at,
+          shopId: 'truck-shop',
+        );
+
+        final cafe = await repository.dueCollections(
+          shopIds: ['cafe-shop'],
+          fromUtc: from,
+          toUtc: to,
+        );
+        expect(cafe.map((r) => r.id).toList(), ['p-cafe']);
+        expect(cafe.single.shopId, 'cafe-shop');
+
+        final combined = await repository.dueCollections(
+          shopIds: ['cafe-shop', 'truck-shop'],
+          fromUtc: from,
+          toUtc: to,
+        );
+        expect(
+          combined.map((r) => r.amountPaise).fold(0, (a, b) => a + b),
+          12000,
+        );
+
+        expect(
+          await repository.dueCollections(
+            shopIds: [],
+            fromUtc: from,
+            toUtc: to,
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'a deleted customer keeps its attribution as Deleted customer',
+      () async {
+        await seedCustomer('c-gone');
+        await seedSale(
+          id: 's1',
+          customerId: 'c-gone',
+          receiptNumber: 'BF-000001',
+          totalPaise: 10000,
+        );
+        final (from, to) = todayBounds();
+        await seedPayment(
+          id: 'p1',
+          customerId: 'c-gone',
+          saleId: 's1',
+          amountPaise: 2500,
+          paidAt: from.add(const Duration(hours: 10)),
+        );
+        await (database.delete(
+          database.customers,
+        )..where((t) => t.id.equals('c-gone'))).go();
+
+        final rows = await repository.dueCollections(fromUtc: from, toUtc: to);
+
+        expect(rows.single.customerName, 'Deleted customer');
+        expect(rows.single.amountPaise, 2500);
+      },
+    );
+  });
 }

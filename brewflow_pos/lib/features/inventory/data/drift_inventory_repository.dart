@@ -1219,6 +1219,7 @@ final class DriftInventoryRepository implements InventoryRepository {
   }) async {
     // Every rule is validated BEFORE anything is written, so a bad mapping
     // can never leave a half-replaced recipe behind.
+    final resolvedShopId = await resolveWritableShopId(_database, shopId);
     final menu = await _products.byId(productId);
     if (menu == null) {
       throw const UnexpectedInventoryFailure('Product not found.');
@@ -1251,6 +1252,16 @@ final class DriftInventoryRepository implements InventoryRepository {
           'Recipe ingredients must track stock.',
         );
       }
+      // Same-shop / shared-catalog only: an ingredient owned by ANOTHER shop
+      // (e.g. a Cafe product the Food Truck merely sees for sale) must never
+      // feed a recipe in this shop's scope — consumption would silently spend
+      // the other shop's stock. A null-owner row is shared catalog and is
+      // allowed, exactly like `isOwnedBy` elsewhere.
+      if (!await _products.isOwnedBy(input.ingredientProductId, [
+        resolvedShopId,
+      ])) {
+        throw const ForeignShopRowFailure();
+      }
       if (input.ingredientVariantId != null) {
         final ingredientVariants = await _variants.forProduct(
           input.ingredientProductId,
@@ -1262,7 +1273,31 @@ final class DriftInventoryRepository implements InventoryRepository {
         }
       }
     }
-    final resolvedShopId = await resolveWritableShopId(_database, shopId);
+    // Overlap rejection (defence-in-depth; the controller validates first):
+    // product-level AND variant-specific scopes both match the same sale, so
+    // both must never coexist. Refused BEFORE any write. Clearing this scope
+    // (empty [ingredients]) is exempt — it can only remove rows, never create
+    // the overlap, and is the path an owner uses to untangle one.
+    final existingRows = await recipesForProduct(
+      productId,
+      shopIds: [resolvedShopId],
+    );
+    final conflicting = existingRows.where((row) => row.variantId != variantId);
+    if (ingredients.isNotEmpty && conflicting.isNotEmpty) {
+      throw RecipeOverlapFailure(
+        variantId == null
+            ? '$productId already has a recipe for a variant. Clear the '
+                  'variant recipe first, or edit that variant.'
+            : '$productId already has a recipe for every variant. Clear it '
+                  'first, or edit every variant.',
+      );
+    }
+    // Rows of the exact scope BEFORE the write: slots that vanish are
+    // tombstoned below, so a replacement or clear converges on every peer
+    // instead of resurrecting from the still-present cloud row.
+    final beforeRows = existingRows
+        .where((row) => row.variantId == variantId)
+        .toList();
     Future<void> doWrite() {
       // Replace semantics: the scope's rows are removed first, then the new
       // mapping is inserted — one transaction, so readers never see a mix.
@@ -1324,15 +1359,39 @@ final class DriftInventoryRepository implements InventoryRepository {
         write: doWrite,
         snapshots: (_, context) async {
           // Snapshots describe the just-written scope from real state, so a
-          // peer applying them converges on this exact mapping.
+          // peer applying them converges on this exact mapping. Slots that
+          // this write REMOVED (replace/clear) are tombstoned: the cloud row
+          // is deleted and a PRODUCT_RECIPE deletion recorded, so a cleared
+          // mapping cannot be re-pulled by peers or future devices.
           final rows = await recipesForProduct(
             productId,
             shopIds: [resolvedShopId],
           );
-          return [
-            for (final row in rows)
-              if (row.variantId == variantId) _recipeAppend(row, context),
+          final afterRows = rows
+              .where((row) => row.variantId == variantId)
+              .toList();
+          final afterIds = {for (final row in afterRows) row.id};
+          final appends = <OutboxAppend>[
+            for (final row in beforeRows)
+              if (!afterIds.contains(row.id))
+                OutboxAppend(
+                  entity: MasterEntity.productRecipe,
+                  entityId: row.id,
+                  operation: 'DELETE',
+                  payload: SyncProductRecipe(
+                    id: row.id,
+                    shopId: row.shopId ?? context.shopId,
+                    productId: row.productId,
+                    variantId: row.variantId,
+                    ingredientProductId: row.ingredientProductId,
+                    ingredientVariantId: row.ingredientVariantId,
+                    quantity: row.quantity,
+                    createdAt: row.createdAt,
+                  ).toJson(),
+                ),
+            for (final row in afterRows) _recipeAppend(row, context),
           ];
+          return appends;
         },
       );
     } on InventoryFailure {

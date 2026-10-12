@@ -252,12 +252,12 @@ final class LocalMasterDataApplier {
     DateTime appliedAt,
   ) async {
     await _database.transaction(() async {
-      final skipped = await _pendingIds(
+      final unresolved = await _unresolvedIds(
         MasterEntity.productRecipe,
         rows.map((r) => r.id),
       );
       for (final row in rows) {
-        if (skipped.contains(row.id)) continue;
+        if (unresolved.contains(row.id)) continue;
         await _database
             .into(_database.productRecipes)
             .insertOnConflictUpdate(
@@ -360,13 +360,41 @@ final class LocalMasterDataApplier {
           id: stored.id,
           shopId: stored.shopId ?? '',
           month: stored.month,
-          tables: const [],
-          deletedCounts: const {},
+          tables: _decodeTables(stored.tablesJson),
+          deletedCounts: _decodeCounts(stored.deletedCountsJson),
           completedAt: stored.completedAt,
           createdAt: stored.createdAt,
         ),
         appliedAt,
       );
+    }
+  }
+
+  /// Decodes a stored marker's `tablesJson` back into the affected-key list so
+  /// a deferred peer cleanup still honors the owner's original selection when
+  /// it is retried (a marker deferred by a busy queue must not widen to the
+  /// full month scope). Malformed JSON yields an empty list, which the caller
+  /// treats as "no selection recorded" (full scope), matching the previous
+  /// behavior for legacy rows.
+  List<String> _decodeTables(String raw) {
+    try {
+      return SyncMonthCleanupMarker.parseTables(
+        const JsonDecoder().convert(raw),
+      );
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Decodes a stored marker's `deletedCountsJson` (audit data); malformed
+  /// entries are dropped rather than thrown.
+  Map<String, int> _decodeCounts(String raw) {
+    try {
+      return SyncMonthCleanupMarker.parseDeletedCounts(
+        const JsonDecoder().convert(raw),
+      );
+    } catch (_) {
+      return const {};
     }
   }
 
@@ -389,6 +417,10 @@ final class LocalMasterDataApplier {
               id: Value(row.id),
               shopId: Value(row.shopId),
               month: row.month,
+              tablesJson: Value(const JsonEncoder().convert(row.tables)),
+              deletedCountsJson: Value(
+                const JsonEncoder().convert(row.deletedCounts),
+              ),
               completedAt: row.completedAt,
               createdAt: Value(row.createdAt),
               updatedAt: Value(appliedAt),
@@ -398,7 +430,12 @@ final class LocalMasterDataApplier {
       return false;
     }
     await _database.transaction(() async {
-      await deleteShopMonth(_database, row.shopId, row.month);
+      await deleteShopMonth(
+        _database,
+        row.shopId,
+        row.month,
+        scope: row.tables.isEmpty ? null : row.tables.toSet(),
+      );
       await _database
           .into(_database.monthCleanupMarkers)
           .insertOnConflictUpdate(
@@ -857,6 +894,7 @@ final class LocalMasterDataApplier {
                 appliedOfferId: Value(row.appliedOfferId),
                 appliedOfferName: Value(row.appliedOfferName),
                 appliedOfferType: Value(row.appliedOfferType),
+                consumed: Value(row.consumed),
               ),
             );
       }
@@ -1006,10 +1044,18 @@ final class LocalMasterDataApplier {
   /// FK-violating). Rows with a PENDING or FAILED local change are skipped so
   /// an incoming pull can never revert an edit that has not pushed yet; after
   /// the local change pushes, the next cycle reconciles.
-  Future<void> applyStaffAttendancePage(
+  ///
+  /// Returns the number of rows skipped because their (shop, authUserId)
+  /// profile has not arrived yet. The engine holds the pull cursor at the
+  /// cycle start while that count is non-zero, so such a row is re-pulled
+  /// once the profile lands instead of being dropped behind an advanced
+  /// cursor (unlike pending-guard skips, a profile-missing skip never bumps
+  /// the row's own server timestamp).
+  Future<int> applyStaffAttendancePage(
     List<SyncStaffAttendance> rows,
     DateTime appliedAt,
   ) async {
+    var missingProfile = 0;
     await _database.transaction(() async {
       final skipped = await _unresolvedStaffAttendanceIds(
         rows.map((r) => r.id),
@@ -1027,6 +1073,7 @@ final class LocalMasterDataApplier {
             'cloud identity)',
             tag: 'SyncEngine',
           );
+          missingProfile++;
           continue;
         }
         final existing = await (_database.select(
@@ -1070,6 +1117,7 @@ final class LocalMasterDataApplier {
         );
       }
     });
+    return missingProfile;
   }
 
   /// Resolves the cloud staff identity to this device's own profile id.
@@ -1107,24 +1155,8 @@ final class LocalMasterDataApplier {
   /// push lands. FAILED is included (unlike the generic pending guard):
   /// a parked entry still holds a user edit nobody has inspected, and a
   /// tombstone arriving meanwhile must not silently discard it.
-  Future<Set<String>> _unresolvedStaffAttendanceIds(
-    Iterable<String> ids,
-  ) async {
-    final idList = ids.toList();
-    if (idList.isEmpty) return const {};
-    final query = _database.selectOnly(_database.syncOutbox)
-      ..addColumns([_database.syncOutbox.entityId])
-      ..where(
-        _database.syncOutbox.entity.equals(MasterEntity.staffAttendance.wire) &
-            (_database.syncOutbox.status.equals('PENDING') |
-                _database.syncOutbox.status.equals('FAILED')) &
-            _database.syncOutbox.entityId.isIn(idList),
-      );
-    final found = await query
-        .map((row) => row.read(_database.syncOutbox.entityId))
-        .get();
-    return found.whereType<String>().toSet();
-  }
+  Future<Set<String>> _unresolvedStaffAttendanceIds(Iterable<String> ids) =>
+      _unresolvedIds(MasterEntity.staffAttendance, ids);
 
   /// Applies a pulled deletion. Categories and offers hard-delete; customers
   /// hard-delete as of schema v25 -> v26; every other entity soft-deactivates
@@ -1178,6 +1210,26 @@ final class LocalMasterDataApplier {
       case MasterEntity.customerPayment:
       case MasterEntity.expensePayment:
       case MasterEntity.productRecipe:
+        // A real delete, exactly as on the deleting device: a cleared or
+        // replaced mapping slot leaves every device. The recipe id is a
+        // deterministic UUID over the mapping slot, so the tombstone addresses
+        // the same row everywhere. Guarded against tombstones racing an
+        // unsynced local edit — a PENDING or FAILED recipe change for the same
+        // slot means this device's own write has not landed yet, so the
+        // tombstone waits for the push to win first.
+        if ((await _unresolvedIds(MasterEntity.productRecipe, [
+          deletion.id,
+        ])).isNotEmpty) {
+          AppLog.info(
+            'Product recipe ${deletion.id} tombstone deferred (local change '
+            'still unresolved)',
+            tag: 'SyncEngine',
+          );
+          break;
+        }
+        await (_database.delete(
+          _database.productRecipes,
+        )..where((t) => t.id.equals(deletion.id))).go();
       case MasterEntity.monthlyReportConfirmation:
       case MasterEntity.monthCleanup:
         // Immutable append-only: sync never deletes these. Confirmations
@@ -1326,6 +1378,32 @@ final class LocalMasterDataApplier {
       ..where(
         _database.syncOutbox.entity.equals(entity.wire) &
             _database.syncOutbox.status.equals('PENDING') &
+            _database.syncOutbox.entityId.isIn(idList),
+      );
+    final found = await query
+        .map((row) => row.read(_database.syncOutbox.entityId))
+        .get();
+    return found.whereType<String>().toSet();
+  }
+
+  /// Entity ids among [ids] carrying a PENDING or FAILED local change — those
+  /// rows are NOT overwritten by pulls, and tombstones for them wait, until
+  /// their push lands. FAILED is included (unlike the generic [_pendingIds]):
+  /// a parked entry still holds a user edit nobody has inspected, and
+  /// incoming data (whether an upsert or a cloud tombstone) must not silently
+  /// discard it.
+  Future<Set<String>> _unresolvedIds(
+    MasterEntity entity,
+    Iterable<String> ids,
+  ) async {
+    final idList = ids.toList();
+    if (idList.isEmpty) return const {};
+    final query = _database.selectOnly(_database.syncOutbox)
+      ..addColumns([_database.syncOutbox.entityId])
+      ..where(
+        _database.syncOutbox.entity.equals(entity.wire) &
+            (_database.syncOutbox.status.equals('PENDING') |
+                _database.syncOutbox.status.equals('FAILED')) &
             _database.syncOutbox.entityId.isIn(idList),
       );
     final found = await query

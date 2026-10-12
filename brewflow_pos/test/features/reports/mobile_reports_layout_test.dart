@@ -1,3 +1,4 @@
+import 'package:brewflow_pos/app/widgets/widgets.dart';
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
 import 'package:brewflow_pos/features/customers/presentation/customer_ledger_controller.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
@@ -5,6 +6,7 @@ import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/presentation/orders_controller.dart';
+import 'package:brewflow_pos/features/orders/presentation/sales_breakdown_sheets.dart';
 import 'package:brewflow_pos/features/reports/presentation/reports_page.dart';
 import 'package:brewflow_pos/features/staff/presentation/staff_controller.dart';
 import 'package:flutter/material.dart';
@@ -117,4 +119,55 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  // The seeded phone world holds R-001 today (2x Chai) and R-002 yesterday;
+  // the default Today window admits only R-001.
+  testWidgets('phone orders card opens the range bill breakdown', (
+    tester,
+  ) async {
+    await _pumpPhone(tester, 390.0);
+
+    final card = find.widgetWithText(KpiCard, 'Orders');
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+
+    final sheet = find.byType(BillsBreakdownSheet);
+    expect(sheet, findsOneWidget);
+    expect(
+      find.descendant(of: sheet, matching: find.text('R-001')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sheet, matching: find.text('R-002')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('phone items card opens the range item breakdown', (
+    tester,
+  ) async {
+    await _pumpPhone(tester, 390.0);
+
+    final card = find.widgetWithText(KpiCard, 'Items');
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+
+    final sheet = find.byType(ItemsBreakdownSheet);
+    expect(sheet, findsOneWidget);
+    expect(
+      find.descendant(of: sheet, matching: find.text('Chai')),
+      findsOneWidget,
+    );
+    // Cookie sold yesterday, outside the default Today window.
+    expect(
+      find.descendant(of: sheet, matching: find.text('Cookie')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

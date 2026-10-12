@@ -428,11 +428,10 @@ void main() {
           .split("','")
           .map((s) => s.replaceAll("'", '').trim())
           .toSet();
-      expect(
-        allowed,
-        <String>{'CASH', 'UPI'},
-        reason: 'Bank is not a user-facing option and must not be storable',
-      );
+      expect(allowed, <String>{
+        'CASH',
+        'UPI',
+      }, reason: 'Bank is not a user-facing option and must not be storable');
       expect(allowed, isNot(contains('BANK')));
     });
 
@@ -519,6 +518,192 @@ void main() {
           ') to authenticated',
         ),
       );
+    });
+  });
+
+  group('recipe-aware sales (0044 keeps both paths on one stock)', () {
+    late String recipeSql;
+
+    setUpAll(() {
+      final file = File('$migrationsDir/0044_recipe_aware_sales.sql');
+      expect(file.existsSync(), isTrue, reason: 'migration 0044 must exist');
+      recipeSql = file.readAsStringSync().replaceAll('\r\n', '\n');
+    });
+
+    test('both functions keep their exact signatures (no new overload)', () {
+      // A CREATE OR REPLACE with a changed parameter list silently creates a
+      // second overload (the 0035 outage). Same signatures mean no drops are
+      // needed and 0015's per-function guards carry over untouched.
+      expect(
+        recipeSql,
+        contains('create or replace function public.create_sale_atomic('),
+      );
+      expect(recipeSql, contains('p_payments jsonb default null'));
+      expect(
+        recipeSql,
+        contains('create or replace function public.void_sale_atomic('),
+      );
+      expect(
+        recipeSql,
+        isNot(contains('drop function')),
+        reason:
+            'dropping would discard 0015 guards and risk a two-candidate '
+            'PostgREST catalog; same-signature OR REPLACE needs none',
+      );
+      expect(
+        recipeSql,
+        contains(
+          'grant execute on function public.create_sale_atomic(\n'
+          '  uuid, uuid, integer, integer, integer, text, text, jsonb, jsonb\n'
+          ') to authenticated',
+        ),
+      );
+      expect(
+        recipeSql,
+        contains('grant execute on function public.void_sale_atomic(uuid)'),
+      );
+    });
+
+    test('the receipt allocation block is byte-identical to 0036', () {
+      // The counter handling is copied verbatim: per-shop row, row lock,
+      // prefix labelling. Any drift here would renumber receipts.
+      expect(
+        recipeSql,
+        contains(
+          'insert into public.sale_sequences (shop_id, next_value) '
+          'values (p_shop_id, 0)\n'
+          '    on conflict (shop_id) do nothing;',
+        ),
+      );
+      expect(
+        recipeSql,
+        contains(
+          'select next_value into v_new_stock from public.sale_sequences '
+          'where shop_id = p_shop_id for update',
+        ),
+      );
+      expect(
+        recipeSql,
+        contains('v_prefix := public.shop_receipt_prefix(p_shop_id)'),
+      );
+    });
+
+    test(
+      'mapped lines consult product_recipes with the local matching rule',
+      () {
+        // NULL variant_id maps every variant; a named one maps that variant
+        // alone — the exact predicate the local checkout uses, in the sale
+        // loop, the movement loop and the void loop.
+        final matches =
+            RegExp(
+              r'variant_id is null or variant_id = v_variant_id',
+            ).allMatches(recipeSql).length +
+            RegExp(
+              r'variant_id is null or variant_id = v_item\.variant_id',
+            ).allMatches(recipeSql).length;
+        expect(
+          matches,
+          3,
+          reason:
+              'the rule must appear in the sale deduction loop, the movement '
+              'loop and the void restore loop',
+        );
+        expect(
+          recipeSql,
+          contains('where shop_id = p_shop_id and product_id = v_product_id'),
+        );
+        expect(
+          recipeSql,
+          contains(
+            'where shop_id = v_shop_id and product_id = v_item.product_id',
+          ),
+        );
+      },
+    );
+
+    test('ingredient needs aggregate across lines before any deduction', () {
+      expect(recipeSql, contains('create temporary table t_recipe_needs'));
+      expect(recipeSql, contains('on commit drop'));
+      expect(
+        recipeSql,
+        contains('group by ingredient_product_id, ingredient_variant_id'),
+      );
+    });
+
+    test('ingredients are row-locked, guarded and named after the menu dish', () {
+      // The client maps INSUFFICIENT_STOCK/UNAVAILABLE_PRODUCT by prefix and
+      // shows the name after the colon — the menu name, exactly like local.
+      expect(recipeSql, contains('for update'));
+      expect(
+        recipeSql,
+        contains("raise exception 'INSUFFICIENT_STOCK: %', v_recipe.menu"),
+      );
+      expect(
+        recipeSql,
+        contains("raise exception 'UNAVAILABLE_PRODUCT: %', v_recipe.menu"),
+      );
+      expect(
+        recipeSql,
+        contains(
+          'update public.products set stock_quantity = stock_quantity - v_recipe.total',
+        ),
+      );
+      expect(
+        recipeSql,
+        contains(
+          'update public.product_variants set stock_quantity = stock_quantity - v_recipe.total',
+        ),
+      );
+    });
+
+    test(
+      'mapped lines skip their own stock and write ingredient movements',
+      () {
+        expect(
+          recipeSql,
+          contains("'SALE', -v_recipe.total"),
+          reason:
+              'one SALE movement per aggregated ingredient, negative quantity',
+        );
+        expect(
+          recipeSql,
+          contains("'SALE', v_sale_id"),
+          reason: 'ingredient movements link the sale like every other leg',
+        );
+      },
+    );
+
+    test('void restores ingredients, never the untouched menu rows', () {
+      expect(recipeSql, contains('create temporary table t_recipe_restore'));
+      expect(recipeSql, contains('if v_mapped is null then'));
+      expect(
+        recipeSql,
+        contains(
+          'update public.products set stock_quantity = stock_quantity + v_recipe.total',
+        ),
+      );
+      expect(
+        recipeSql,
+        contains(
+          'update public.product_variants set stock_quantity = stock_quantity + v_recipe.total',
+        ),
+      );
+      // The rest of the void contract is unchanged.
+      expect(recipeSql, contains('set reversed = true'));
+      expect(recipeSql, contains('set voided = true'));
+      expect(recipeSql, contains("raise exception 'ALREADY_VOIDED'"));
+    });
+
+    test('0044 preserves the security and validation envelope', () {
+      expect(recipeSql, contains('set search_path = public'));
+      expect(
+        recipeSql,
+        contains('if not public.is_shop_member(p_shop_id) then'),
+      );
+      expect(recipeSql, contains("raise exception 'FORBIDDEN'"));
+      expect(recipeSql, contains('SPLIT_PAYMENT_MISMATCH'));
+      expect(recipeSql, contains('EMPTY_CART'));
+      expect(recipeSql, contains('MISSING_CUSTOMER'));
     });
   });
 

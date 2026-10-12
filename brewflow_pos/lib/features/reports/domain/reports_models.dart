@@ -238,6 +238,9 @@ final class ReportsSnapshot {
     required this.shopPayables,
     required this.totalPayablePaise,
     this.businessBreakdown = const [],
+    this.rangeOrders = const [],
+    this.itemBreakdown = const [],
+    this.shopLabels = const {},
   });
 
   final ReportRange range;
@@ -272,6 +275,22 @@ final class ReportsSnapshot {
   /// Combined view. Shops are never aggregated together; each keeps its own
   /// identity so the UI can label it. Read-only.
   final List<ReportsBusinessBreakdown> businessBreakdown;
+
+  /// Completed sales in the window, newest first, backing the Orders card's
+  /// drill-down. Already loaded for the window aggregates — tapping the card
+  /// adds no database reads.
+  final List<OrderSummary> rangeOrders;
+
+  /// Item-wise sales for the window, highest revenue first, backing the
+  /// Items card's drill-down. Aggregated from the same per-order details as
+  /// [topProducts] (which stays the top-5 display list); variants of one
+  /// product stay distinguishable.
+  final List<ItemSalesRow> itemBreakdown;
+
+  /// Business labels by shop id, non-empty only in the Combined view. The
+  /// Orders drill-down tags each bill through this map; single-shop reads
+  /// render no shop text.
+  final Map<String, String> shopLabels;
 }
 
 /// Base for all reports failures. Every subtype carries a user-safe message.

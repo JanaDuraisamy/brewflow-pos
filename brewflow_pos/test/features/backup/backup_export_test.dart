@@ -392,6 +392,8 @@ void main() {
         ManagementStaffRow(
           name: 'Ravi',
           totalMinutes: 480,
+          presentDays: 1,
+          leaveDays: 0,
           salaryPaise: 240000,
           advancePaise: 20000,
         ),

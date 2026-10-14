@@ -14,10 +14,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_customer_ledger_repository.dart';
+import '../../helpers/fake_daily_closing_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/test_providers.dart';
+import 'package:brewflow_pos/features/closing/presentation/closing_controller.dart';
 
 /// One sale line bounded by the repository's snapshot semantics.
 OrderItem _item(
@@ -33,12 +35,13 @@ OrderItem _item(
   productId: productId,
 );
 
-/// Container with the three repositories reports composes, all faked.
+/// Container with the repositories reports composes, all faked.
 ProviderContainer _container({
   FakeOrdersRepository? orders,
   FakeExpensesRepository? expenses,
   FakeInventoryRepository? inventory,
   FakeCustomerLedgerRepository? ledger,
+  FakeDailyClosingRepository? closings,
 }) {
   final container = ProviderContainer(
     // Riverpod retries failing builds with exponential backoff by default;
@@ -56,6 +59,9 @@ ProviderContainer _container({
       ),
       customerLedgerRepositoryProvider.overrideWithValue(
         ledger ?? FakeCustomerLedgerRepository(),
+      ),
+      dailyClosingRepositoryProvider.overrideWithValue(
+        closings ?? FakeDailyClosingRepository(),
       ),
       // Inventory/category reads are shop-scoped, so the fixture has to declare
       // the signed-in owner session (this also supplies the staff repository).

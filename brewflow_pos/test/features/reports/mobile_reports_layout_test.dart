@@ -14,10 +14,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_customer_ledger_repository.dart';
+import '../../helpers/fake_daily_closing_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/fake_staff_repository.dart';
+import 'package:brewflow_pos/features/closing/presentation/closing_controller.dart';
 
 /// One sale line bounded by the repository's snapshot semantics.
 OrderItem _item(
@@ -86,6 +88,9 @@ Future<void> _pumpPhone(WidgetTester tester, double width) async {
       ),
       expensesRepositoryProvider.overrideWithValue(expenses),
       staffRepositoryProvider.overrideWithValue(FakeStaffRepository()),
+      dailyClosingRepositoryProvider.overrideWithValue(
+        FakeDailyClosingRepository(),
+      ),
     ],
   );
   addTearDown(container.dispose);

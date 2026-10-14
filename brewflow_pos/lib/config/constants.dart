@@ -16,7 +16,7 @@ final class AppConstants {
   // -------------------------------------------------------------------------
 
   static const String appName = 'JiggarTea Bill';
-  static const String appVersion = '2.5.15';
+  static const String appVersion = '2.5.16';
 
   /// The app display / brand name shown as the header wordmark. This is the
   /// display identity and (unlike the shop/business name) is editable from

@@ -17,6 +17,7 @@
 library;
 
 import 'package:brewflow_pos/features/billing/domain/billing_models.dart';
+import 'package:brewflow_pos/features/closing/domain/daily_closing_models.dart';
 import 'package:brewflow_pos/features/customers/domain/customer_ledger_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/expenses_models.dart';
 import 'package:brewflow_pos/features/expenses/domain/shop_payables_models.dart';
@@ -241,6 +242,9 @@ final class ReportsSnapshot {
     this.rangeOrders = const [],
     this.itemBreakdown = const [],
     this.shopLabels = const {},
+    this.dailyClosings = const [],
+    this.takenBy = const [],
+    this.talliedBy = const [],
   });
 
   final ReportRange range;
@@ -291,6 +295,23 @@ final class ReportsSnapshot {
   /// Orders drill-down tags each bill through this map; single-shop reads
   /// render no shop text.
   final Map<String, String> shopLabels;
+
+  /// Saved Daily Closing records in the selected From–To range, oldest
+  /// business day first. Read-only; drives the Daily Closing card's per-day
+  /// rows (date, taken-by, tallied-by, cash taken).
+  final List<DailyClosingRecord> dailyClosings;
+
+  /// Cash-taken-out grouped by who took it (same aggregation as the
+  /// management report: only closings with money taken, alphabetical).
+  final List<DailyClosingPersonTotal> takenBy;
+
+  /// Closings grouped by who performed/confirmed the tally (`talliedBy`),
+  /// alphabetical. Total is the cash taken on the days that person tallied.
+  final List<DailyClosingPersonTotal> talliedBy;
+
+  /// Total cash taken out across the range's closings.
+  int get totalCashTakenPaise =>
+      dailyClosings.fold(0, (sum, c) => sum + c.cashTakenOutPaise);
 }
 
 /// Base for all reports failures. Every subtype carries a user-safe message.

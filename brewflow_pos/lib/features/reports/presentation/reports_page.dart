@@ -170,6 +170,8 @@ final class _PhoneReportContent extends ConsumerWidget {
           const SizedBox(height: AppSpacing.xl),
           _ProfitLossCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.xl),
+          _DailyClosingCard(snapshot: snapshot),
+          const SizedBox(height: AppSpacing.xl),
           _TopProductsCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.xl),
           _CategoryPerformanceCard(snapshot: snapshot),
@@ -405,6 +407,8 @@ final class _ReportContent extends ConsumerWidget {
           _ShopPayablesCard(snapshot: snapshot),
           const SizedBox(height: AppSpacing.sectionSpacing),
           _ProfitLossCard(snapshot: snapshot),
+          SizedBox(height: AppSpacing.sectionSpacing),
+          _DailyClosingCard(snapshot: snapshot),
           SizedBox(height: AppSpacing.sectionSpacing),
           _TopProductsCard(snapshot: snapshot),
           SizedBox(height: AppSpacing.sectionSpacing),
@@ -1218,6 +1222,266 @@ final class _PnLRow extends StatelessWidget {
         children: [
           Expanded(child: Text(label, style: emphasized)),
           Text(value, style: emphasized),
+        ],
+      ),
+    );
+  }
+}
+
+final class _DailyClosingCard extends StatelessWidget {
+  const _DailyClosingCard({required this.snapshot});
+
+  final ReportsSnapshot snapshot;
+
+  static String _personOrDash(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? '—' : trimmed;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final closings = snapshot.dailyClosings;
+    return SectionCard(
+      title: 'Daily Closing',
+      subtitle:
+          'Cash taken and tally in ${_rangeLabel(snapshot.range)} · read-only',
+      child: Column(
+        children: [
+          if (closings.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              child: Text(
+                'No closing records in this range',
+                style: textTheme.bodySmall?.copyWith(
+                  color: context.appColors.textSecondary,
+                ),
+              ),
+            )
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Total Cash Taken',
+                    style: textTheme.titleSmall?.copyWith(
+                      color: context.appColors.charcoal,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  Money.formatPaise(snapshot.totalCashTakenPaise),
+                  style: textTheme.titleSmall?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            Divider(height: 20, thickness: 1, color: context.appColors.divider),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Cash taken — by staff',
+                style: textTheme.labelMedium?.copyWith(
+                  color: context.appColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (snapshot.takenBy.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                child: Text(
+                  'No cash taken out recorded in this range.',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              )
+            else
+              for (var i = 0; i < snapshot.takenBy.length; i++) ...[
+                if (i > 0)
+                  Divider(
+                    height: 12,
+                    thickness: 1,
+                    color: context.appColors.divider,
+                  ),
+                _DailyClosingPersonRow(
+                  name: snapshot.takenBy[i].name,
+                  days: snapshot.takenBy[i].days,
+                  daysLabel: snapshot.takenBy[i].days == 1 ? 'day' : 'days',
+                  totalPaise: snapshot.takenBy[i].totalPaise,
+                ),
+              ],
+            Divider(height: 20, thickness: 1, color: context.appColors.divider),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Tallied — by staff',
+                style: textTheme.labelMedium?.copyWith(
+                  color: context.appColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            for (var i = 0; i < snapshot.talliedBy.length; i++) ...[
+              if (i > 0)
+                Divider(
+                  height: 12,
+                  thickness: 1,
+                  color: context.appColors.divider,
+                ),
+              _DailyClosingPersonRow(
+                name: snapshot.talliedBy[i].name,
+                days: snapshot.talliedBy[i].days,
+                daysLabel: snapshot.talliedBy[i].days == 1
+                    ? 'day tallied'
+                    : 'days tallied',
+                totalPaise: snapshot.talliedBy[i].totalPaise,
+              ),
+            ],
+            Divider(height: 20, thickness: 1, color: context.appColors.divider),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Daily records',
+                style: textTheme.labelMedium?.copyWith(
+                  color: context.appColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            for (var i = 0; i < closings.length; i++) ...[
+              if (i > 0)
+                Divider(
+                  height: 12,
+                  thickness: 1,
+                  color: context.appColors.divider,
+                ),
+              _DailyClosingDayRow(
+                dateLabel: DateFormat(
+                  'd MMM yyyy',
+                ).format(closings[i].businessDate),
+                takenBy: _personOrDash(closings[i].takenOutBy),
+                talliedBy: _personOrDash(closings[i].talliedBy),
+                totalPaise: closings[i].cashTakenOutPaise,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _DailyClosingPersonRow extends StatelessWidget {
+  const _DailyClosingPersonRow({
+    required this.name,
+    required this.days,
+    required this.daysLabel,
+    required this.totalPaise,
+  });
+
+  final String name;
+  final int days;
+  final String daysLabel;
+  final int totalPaise;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$days $daysLabel',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            Money.formatPaise(totalPaise),
+            style: textTheme.bodyMedium?.copyWith(
+              color: context.appColors.charcoal,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _DailyClosingDayRow extends StatelessWidget {
+  const _DailyClosingDayRow({
+    required this.dateLabel,
+    required this.takenBy,
+    required this.talliedBy,
+    required this.totalPaise,
+  });
+
+  final String dateLabel;
+  final String takenBy;
+  final String talliedBy;
+  final int totalPaise;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  dateLabel,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: context.appColors.charcoal,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Taken by $takenBy · Tallied by $talliedBy',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: context.appColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            Money.formatPaise(totalPaise),
+            style: textTheme.bodyMedium?.copyWith(
+              color: context.appColors.charcoal,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );

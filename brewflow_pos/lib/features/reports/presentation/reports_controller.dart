@@ -9,6 +9,9 @@ import 'package:brewflow_pos/features/expenses/presentation/expenses_controller.
 import 'package:brewflow_pos/features/inventory/domain/inventory_models.dart';
 import 'package:brewflow_pos/features/inventory/domain/inventory_repository.dart';
 import 'package:brewflow_pos/features/inventory/presentation/inventory_controller.dart';
+import 'package:brewflow_pos/features/closing/domain/daily_closing_models.dart';
+import 'package:brewflow_pos/features/closing/domain/daily_closing_repository.dart';
+import 'package:brewflow_pos/features/closing/presentation/closing_controller.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_models.dart';
 import 'package:brewflow_pos/features/orders/domain/orders_repository.dart';
 import 'package:brewflow_pos/features/orders/domain/payment_attribution.dart';
@@ -128,6 +131,7 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     final expenses = ref.watch(expensesRepositoryProvider);
     final inventory = ref.watch(inventoryRepositoryProvider);
     final ledger = ref.watch(customerLedgerRepositoryProvider);
+    final closings = ref.watch(dailyClosingRepositoryProvider);
     final businessContext = ref.watch(businessSwitcherProvider);
     // Read scope from the business context (owner phone). This is read-only;
     // reports never write.
@@ -308,6 +312,15 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         (sum, row) => sum + row.remainingPaise,
       );
 
+      // ---- Daily Closing (same range, same shop scope) ----------------------
+      // Saved closing records only — never substituted from bills, never
+      // treated as zero. `businessDate` cookies are UTC-midnight, so the
+      // From–To window maps from its local days to cookies (inclusive start,
+      // exclusive end); a 7-day selection aggregates exactly those 7 days.
+      final dailyClosings = await _fetchClosings(closings, range, shopIds);
+      final takenBy = aggregateDailyClosingTakenBy(dailyClosings);
+      final talliedBy = aggregateDailyClosingTalliedBy(dailyClosings);
+
       return ReportsSnapshot(
         range: range,
         sales: SalesSummary(
@@ -351,6 +364,9 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
         rangeOrders: window,
         itemBreakdown: itemBreakdown,
         shopLabels: showBreakdown ? labelsById : const {},
+        dailyClosings: dailyClosings,
+        takenBy: takenBy,
+        talliedBy: talliedBy,
       );
     } on OrdersFailure {
       rethrow;
@@ -359,6 +375,8 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     } on InventoryFailure {
       rethrow;
     } on CustomerLedgerFailure {
+      rethrow;
+    } on DailyClosingFailure {
       rethrow;
     } on PermissionDeniedFailure {
       rethrow;
@@ -441,6 +459,35 @@ final class ReportsController extends AsyncNotifier<ReportsSnapshot> {
     return result;
   }
 
+  /// Loads the saved Daily Closing records inside the same From–To window,
+  /// oldest business day first. `businessDate` cookies are UTC-midnight, so
+  /// the UTC-instant bounds map through their local days to cookies. Null
+  /// bounds (never the default) yield an honest empty list.
+  Future<List<DailyClosingRecord>> _fetchClosings(
+    DailyClosingRepository closings,
+    ReportRange range,
+    List<String> shopIds,
+  ) async {
+    final fromUtc = range.fromUtc;
+    final toUtc = range.toUtc;
+    if (fromUtc == null || toUtc == null) return const [];
+    final fromDay = _localDay(fromUtc.toLocal());
+    final toDay = _localDay(toUtc.toLocal());
+    final startDate = DateTime.utc(fromDay.year, fromDay.month, fromDay.day);
+    final endExclusive = DateTime.utc(
+      toDay.year,
+      toDay.month,
+      toDay.day,
+    ).add(const Duration(days: 1));
+    final records = await closings.closingsFor(
+      startDate: startDate,
+      endExclusiveDate: endExclusive,
+      shopIds: shopIds,
+    );
+    return [...records]
+      ..sort((a, b) => a.businessDate.compareTo(b.businessDate));
+  }
+
   /// Buckets the window's receipts into one total per local day, oldest day
   /// first. [range] supplies the local-day span; orders outside it are
   /// ignored defensively.
@@ -484,6 +531,9 @@ String reportsErrorMessage(Object error, {String? fallback}) {
     return error.message;
   }
   if (error is CustomerLedgerFailure) {
+    return error.message;
+  }
+  if (error is DailyClosingFailure) {
     return error.message;
   }
   return fallback ?? 'Something went wrong. Please try again.';

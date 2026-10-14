@@ -16,10 +16,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/fake_customer_ledger_repository.dart';
+import '../../helpers/fake_daily_closing_repository.dart';
 import '../../helpers/fake_expenses_repository.dart';
 import '../../helpers/fake_inventory_repository.dart';
 import '../../helpers/fake_orders_repository.dart';
 import '../../helpers/test_providers.dart';
+import 'package:brewflow_pos/features/closing/presentation/closing_controller.dart';
 
 /// One sale line bounded by the repository's snapshot semantics.
 OrderItem _item(
@@ -112,6 +114,7 @@ Future<ProviderContainer> _pumpReports(
   FakeInventoryRepository? inventory,
   FakeExpensesRepository? expenses,
   FakeCustomerLedgerRepository? ledger,
+  FakeDailyClosingRepository? closings,
 }) async {
   final container = ProviderContainer(
     // Riverpod retries failing builds by default; tests want deterministic
@@ -129,6 +132,9 @@ Future<ProviderContainer> _pumpReports(
       ),
       expensesRepositoryProvider.overrideWithValue(
         expenses ?? FakeExpensesRepository(),
+      ),
+      dailyClosingRepositoryProvider.overrideWithValue(
+        closings ?? FakeDailyClosingRepository(),
       ),
       // Inventory/category reads are shop-scoped, so the fixture has to declare
       // the signed-in owner session (this also supplies the staff repository).

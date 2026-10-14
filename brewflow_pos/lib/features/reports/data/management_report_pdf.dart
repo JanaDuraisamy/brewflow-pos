@@ -309,8 +309,11 @@ List<pw.Widget> _staffSection(
       [
         staff.name,
         formatHoursMinutes(staff.totalMinutes),
+        '${staff.presentDays}',
+        '${staff.leaveDays}',
         money(staff.salaryPaise),
         money(staff.advancePaise),
+        money(staff.payablePaise),
       ],
   ];
   return [
@@ -319,10 +322,21 @@ List<pw.Widget> _staffSection(
       _muted('No staff salary data recorded in this range.')
     else
       ..._chunkedTable(
-        ['Staff', 'Total Working Hours', 'Total Salary', 'Total Advance'],
+        const [
+          'Staff',
+          'Total Working Hours',
+          'Present Days',
+          'Leave Days',
+          'Total Salary',
+          'Advance Amount',
+          'Final Payable Amount',
+        ],
         rows,
         alignments: const [
           pw.Alignment.centerLeft,
+          pw.Alignment.centerRight,
+          pw.Alignment.centerRight,
+          pw.Alignment.centerRight,
           pw.Alignment.centerRight,
           pw.Alignment.centerRight,
           pw.Alignment.centerRight,

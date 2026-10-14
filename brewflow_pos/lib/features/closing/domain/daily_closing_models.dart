@@ -40,6 +40,98 @@ final class DailyClosingRecord {
   final DateTime createdAt;
 }
 
+/// Display label for a person recorded on a closing (`takenOutBy` /
+/// `talliedBy`): trimmed name, or 'Not recorded' when absent. Single source
+/// for every Daily Closing person grouping so the Reports page and the
+/// management report never diverge.
+String dailyClosingPersonLabel(String? raw) {
+  final name = raw?.trim();
+  return (name == null || name.isEmpty) ? 'Not recorded' : name;
+}
+
+/// One person-wise Daily Closing total: who took/talled, on how many distinct
+/// business days (with the sorted dates), and the summed cash taken out on
+/// those days. Pure read-side aggregation over saved [DailyClosingRecord]s —
+/// never mutates records and never invents amounts.
+final class DailyClosingPersonTotal {
+  const DailyClosingPersonTotal({
+    required this.name,
+    required this.days,
+    required this.totalPaise,
+    required this.dates,
+  });
+
+  final String name;
+
+  /// Distinct business days counted for this person.
+  final int days;
+  final int totalPaise;
+
+  /// Distinct business-day cookies, oldest first.
+  final List<DateTime> dates;
+}
+
+/// Groups [closings] by who took cash (`takenOutBy`). Only closings with
+/// `cashTakenOutPaise > 0` count; days are distinct business dates per person.
+/// Alphabetical by name (case-insensitive). Reused by the Reports page and the
+/// management report loader.
+List<DailyClosingPersonTotal> aggregateDailyClosingTakenBy(
+  List<DailyClosingRecord> closings,
+) {
+  final totals = <String, int>{};
+  final daysByPerson = <String, Set<DateTime>>{};
+  for (final closing in closings) {
+    if (closing.cashTakenOutPaise <= 0) continue;
+    final key = dailyClosingPersonLabel(closing.takenOutBy);
+    totals.update(
+      key,
+      (total) => total + closing.cashTakenOutPaise,
+      ifAbsent: () => closing.cashTakenOutPaise,
+    );
+    daysByPerson.putIfAbsent(key, () => <DateTime>{}).add(closing.businessDate);
+  }
+  final rows = [
+    for (final entry in totals.entries)
+      DailyClosingPersonTotal(
+        name: entry.key,
+        days: daysByPerson[entry.key]!.length,
+        totalPaise: entry.value,
+        dates: [...daysByPerson[entry.key]!]..sort(),
+      ),
+  ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  return rows;
+}
+
+/// Groups [closings] by who performed/confirmed the tally (`talliedBy`).
+/// Every closing counts toward its tally person's day count (even when
+/// nothing was taken); [totalPaise] is the cash taken out on the days that
+/// person tallied. Alphabetical by name (case-insensitive).
+List<DailyClosingPersonTotal> aggregateDailyClosingTalliedBy(
+  List<DailyClosingRecord> closings,
+) {
+  final totals = <String, int>{};
+  final daysByPerson = <String, Set<DateTime>>{};
+  for (final closing in closings) {
+    final key = dailyClosingPersonLabel(closing.talliedBy);
+    totals.update(
+      key,
+      (total) => total + closing.cashTakenOutPaise,
+      ifAbsent: () => closing.cashTakenOutPaise,
+    );
+    daysByPerson.putIfAbsent(key, () => <DateTime>{}).add(closing.businessDate);
+  }
+  final rows = [
+    for (final entry in totals.entries)
+      DailyClosingPersonTotal(
+        name: entry.key,
+        days: daysByPerson[entry.key]!.length,
+        totalPaise: entry.value,
+        dates: [...daysByPerson[entry.key]!]..sort(),
+      ),
+  ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  return rows;
+}
+
 /// Recoverable, user-safe daily closing failures.
 sealed class DailyClosingFailure implements Exception {
   const DailyClosingFailure();

@@ -265,24 +265,25 @@ final class ManagementReportLoader {
         if (attendance.isEmpty && dailySalaries.isEmpty && advances.isEmpty) {
           continue;
         }
-        final totalMinutes = attendance.fold(
-          0,
-          (sum, shift) => sum + shift.workedMinutes,
-        );
-        final salaryPaise = dailySalaries.fold(
-          0,
-          (sum, day) => sum + day.salaryPaise,
-        );
-        final advancePaise = advances.fold(
-          0,
-          (sum, advance) => sum + advance.amountPaise,
+        // Reuses the existing payroll calculation rules: hours/days derive
+        // from attendance records, salary is the daily-sum, payable is
+        // salary − advances. Constructing the summary keeps every rule in
+        // one place instead of duplicating the folds here.
+        final summary = MonthlyPayrollSummary(
+          shifts: attendance,
+          advances: advances,
+          manualSalaryPaise: null,
+          openShift: null,
+          dailySalaries: dailySalaries,
         );
         staffRows.add(
           ManagementStaffRow(
             name: _displayNameOf(member),
-            totalMinutes: totalMinutes,
-            salaryPaise: salaryPaise,
-            advancePaise: advancePaise,
+            totalMinutes: summary.totalMinutes,
+            presentDays: summary.totalWorkingDays,
+            leaveDays: summary.totalLeaveDays,
+            salaryPaise: summary.calculatedSalaryPaise,
+            advancePaise: summary.advancePaise,
           ),
         );
       }
@@ -299,28 +300,16 @@ final class ManagementReportLoader {
       final ascendingClosings = [...closingList]
         ..sort((a, b) => a.businessDate.compareTo(b.businessDate));
 
-      final takenByPaise = <String, int>{};
-      final takenDaysByPerson = <String, Set<DateTime>>{};
-      for (final closing in ascendingClosings) {
-        if (closing.cashTakenOutPaise <= 0) continue;
-        final key = _takenByLabel(closing.takenOutBy);
-        takenByPaise.update(
-          key,
-          (total) => total + closing.cashTakenOutPaise,
-          ifAbsent: () => closing.cashTakenOutPaise,
-        );
-        takenDaysByPerson
-            .putIfAbsent(key, () => <DateTime>{})
-            .add(closing.businessDate);
-      }
+      // Person-wise cash-taken reuses the shared Daily Closing aggregation
+      // so the Reports page and this loader never diverge.
       final takenByRows = [
-        for (final entry in takenByPaise.entries)
+        for (final total in aggregateDailyClosingTakenBy(ascendingClosings))
           ManagementTakenByRow(
-            name: entry.key,
-            daysTaken: takenDaysByPerson[entry.key]!.length,
-            totalPaise: entry.value,
+            name: total.name,
+            daysTaken: total.days,
+            totalPaise: total.totalPaise,
           ),
-      ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      ];
 
       // ---- Actual Collection (Daily Closing) --------------------------------
       // One row per business day in range. A day's cash/UPI come ONLY from
@@ -420,11 +409,6 @@ final class ManagementReportLoader {
     final email = member.email.trim();
     if (email.isNotEmpty) return email;
     return member.id;
-  }
-
-  String _takenByLabel(String? takenOutBy) {
-    final name = takenOutBy?.trim();
-    return (name == null || name.isEmpty) ? 'Not recorded' : name;
   }
 }
 

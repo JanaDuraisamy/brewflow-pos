@@ -14,21 +14,36 @@ library;
 
 import 'package:brewflow_pos/features/closing/domain/daily_closing_models.dart';
 
-/// One staff row of the "Staff Salary Details" section. Hours come from the
-/// closed attendance shifts in range; salary is the sum of the owner-entered
-/// daily salary amounts; advance is the sum of advances paid in range.
+/// One staff row of the "Staff Salary Details" section. Hours and day counts
+/// come from the attendance records in range (worked shifts only for hours
+/// and present days, Leave rows for leave days — same rules as
+/// [MonthlyPayrollSummary]); salary is the sum of the owner-entered daily
+/// salary amounts; advance is the sum of advances paid in range; final
+/// payable is salary − advance (same rule as payroll, no hourly rate).
 final class ManagementStaffRow {
   const ManagementStaffRow({
     required this.name,
     required this.totalMinutes,
+    required this.presentDays,
+    required this.leaveDays,
     required this.salaryPaise,
     required this.advancePaise,
   });
 
   final String name;
   final int totalMinutes;
+
+  /// Distinct business days with a worked shift in range.
+  final int presentDays;
+
+  /// Distinct business days marked Leave in range.
+  final int leaveDays;
   final int salaryPaise;
   final int advancePaise;
+
+  /// Final Payable Amount = Total Salary − Advance Amount. May legitimately
+  /// be negative when advances exceed salary.
+  int get payablePaise => salaryPaise - advancePaise;
 }
 
 /// One row of the expense ledger table. [date] is the local business day;

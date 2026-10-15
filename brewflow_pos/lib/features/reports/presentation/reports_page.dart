@@ -56,8 +56,15 @@ final class ReportsPage extends ConsumerWidget {
               const _RangeSelector(),
               const SizedBox(height: AppSpacing.md),
               Expanded(
+                // skipLoadingOnReload keeps the previous snapshot visible
+                // while a reload is in flight (e.g. after a date-range
+                // change): without it the full-screen loader unmounts the
+                // content list and the scroll position jumps to the top.
+                // Initial loads (no data yet) still show the loader, and
+                // genuine errors still surface via ErrorState.
                 child: report.when(
                   skipLoadingOnRefresh: true,
+                  skipLoadingOnReload: true,
                   loading: () =>
                       const LoadingState(message: 'Crunching your numbers…'),
                   error: (error, stackTrace) => ErrorState(
@@ -111,8 +118,12 @@ final class _PhoneReportsLayout extends ConsumerWidget {
         ),
         const SizedBox(height: AppSpacing.md),
         Expanded(
+          // Same reload treatment as the desktop layout above: keep previous
+          // data visible during reloads so the list (and its scroll offset)
+          // survives; loader only for the initial load, errors still surface.
           child: report.when(
             skipLoadingOnRefresh: true,
+            skipLoadingOnReload: true,
             loading: () =>
                 const LoadingState(message: 'Crunching your numbers…'),
             error: (error, stackTrace) => ErrorState(
@@ -141,7 +152,11 @@ final class _PhoneReportContent extends ConsumerWidget {
         await ref.refresh(reportsControllerProvider.future);
         await syncFuture;
       },
+      // PageStorageKey restores the scroll offset when this list remounts
+      // (e.g. error → data recovery), so a transient failure followed by a
+      // successful reload lands back where the user was instead of the top.
       child: ListView(
+        key: const PageStorageKey('reports-phone-content'),
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.lg,
@@ -384,7 +399,11 @@ final class _ReportContent extends ConsumerWidget {
         await ref.refresh(reportsControllerProvider.future);
         await syncFuture;
       },
+      // PageStorageKey restores the scroll offset when this list remounts
+      // (e.g. error → data recovery), so a transient failure followed by a
+      // successful reload lands back where the user was instead of the top.
       child: ListView(
+        key: const PageStorageKey('reports-content'),
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: AppSpacing.massive),
         children: [
